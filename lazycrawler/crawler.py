@@ -47,6 +47,7 @@ from typing import Any, List, Literal, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 
 from ._log import log
+from .artifacts import Artifact, bytes_sha256, extract_html_artifacts, sniff_image
 from .config import CrawlerConfig, HTTPConfig, LLMConfig
 from .db import CrawlerDB
 from .http import (
@@ -106,6 +107,7 @@ class PageResult(BaseModel):
     error: Optional[str] = None
     from_cache: bool = False
     markdown: Optional[str] = None  # optional HTML->Markdown render (emit_markdown)
+    artifacts: List[Artifact] = Field(default_factory=list)  # tables/images/charts
 
 
 # =============================================================================
@@ -589,6 +591,10 @@ class WebCrawler:
             md = html_to_markdown(html, url)
             result.markdown = (md[: cfg.max_chars_pure] if md else None) or None
 
+        # optional artifacts (tables / images / charts) — HTML and PDF
+        if cfg.extract_artifacts:
+            result.artifacts = self._collect_artifacts(st, html, url, pdf_bytes, is_pdf, res)
+
         self._emit(
             st,
             result,
@@ -597,6 +603,8 @@ class WebCrawler:
             content_hash=chash,
             candidate_links=candidates,
         )
+        if self.db is not None and result.artifacts:
+            self.db.add_artifacts(result.url_hash, result.artifacts)
         return self._select_next(st, candidates, preclean, res)
 
     def _extract_candidates(
@@ -796,6 +804,72 @@ class WebCrawler:
             source_url=source_url,
         )
 
+    # -- artifacts ------------------------------------------------------------
+
+    def _collect_artifacts(self, st, html, url, pdf_bytes, is_pdf, res) -> List[Artifact]:
+        """Extract artifacts (HTML or PDF), then download bytes / enrich as configured."""
+        cfg = self.cfg
+        want = set(cfg.artifact_types or ())
+        if not want:
+            return []
+        arts: List[Artifact] = []
+        try:
+            if is_pdf and pdf_bytes:
+                from .pdf import extract_pdf_artifacts
+
+                for d in extract_pdf_artifacts(
+                    pdf_bytes,
+                    want=want,
+                    max_artifacts=cfg.max_artifacts_per_page,
+                    min_image_dim=cfg.min_image_dim,
+                ):
+                    arts.append(Artifact(**d))
+            elif html:
+                arts = extract_html_artifacts(
+                    html,
+                    url,
+                    types=want,
+                    min_image_dim=cfg.min_image_dim,
+                    context_chars=cfg.artifact_context_chars,
+                    max_artifacts=cfg.max_artifacts_per_page,
+                    same_domain_images=cfg.same_domain_images,
+                )
+        except Exception:
+            if cfg.strict:
+                raise
+            log.exception("artifact extraction failed for %s", url[:80])
+            return []
+        return self._post_process_artifacts(st, arts, res)
+
+    def _post_process_artifacts(self, st, arts: List[Artifact], res) -> List[Artifact]:
+        cfg = self.cfg
+        # download image/chart bytes (HTML images only have a src_url at this point)
+        if cfg.download_artifact_bytes:
+            for a in arts:
+                if a.blob is None and a.src_url and a.artifact_type in ("image", "chart"):
+                    self._rate.wait(a.src_url)
+                    body, ctype, _ = res.http.fetch_bytes(a.src_url)
+                    if body:
+                        mime, w, h = sniff_image(body, ctype)
+                        a.mime = a.mime or mime
+                        a.width = a.width or w
+                        a.height = a.height or h
+                        a.size_bytes = len(body)
+                        a.bytes_hash = bytes_sha256(body)
+                        if len(body) <= cfg.max_artifact_bytes:
+                            a.blob = body
+        # hash any blob (e.g. PDF-embedded images) + finalize the dedup key
+        for a in arts:
+            if a.blob is not None and not a.bytes_hash:
+                a.bytes_hash = bytes_sha256(a.blob)
+                a.size_bytes = a.size_bytes or len(a.blob)
+            a.ensure_content_hash()
+        # optional vision/LLM enrichment (smart mode only, capped)
+        if cfg.enrich_artifacts and st.content_mode == "smart" and res.llm is not None:
+            for a in arts[: cfg.max_artifacts_to_enrich]:
+                res.llm.enrich_artifact(a)
+        return arts
+
     # -- link selection -------------------------------------------------------
 
     def _select_next(self, st, candidates, excerpt, res) -> List[Tuple[str, str]]:
@@ -921,10 +995,21 @@ class WebCrawler:
         )
         self.db.upsert_page(page)
 
+    def _load_artifacts(self, url_hash: str) -> List[Artifact]:
+        """Reconstruct a cached page's artifacts from the DB (blob omitted)."""
+        if self.db is None or not self.cfg.extract_artifacts or not url_hash:
+            return []
+        try:
+            return [Artifact(**a) for a in self.db.get_artifacts(url_hash=url_hash)]
+        except Exception:
+            log.debug("failed loading cached artifacts for %s", url_hash, exc_info=True)
+            return []
+
     def _result_from_row(
         self, row: dict, depth: int, source_url: Optional[str], from_cache: bool
     ) -> PageResult:
         return PageResult(
+            artifacts=self._load_artifacts(row.get("url_hash", "")),
             url=row.get("url", ""),
             url_hash=row.get("url_hash", ""),
             status=row.get("status", "done"),

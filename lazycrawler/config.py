@@ -82,6 +82,32 @@ class CrawlerConfig:
         ``PageResult.markdown`` and persisted. Requires the ``markdown`` extra
         (``pip install lazycrawler[markdown]``); degrades to a basic strip if the
         renderer is unavailable. PDFs are skipped (no HTML). Default False.
+    extract_artifacts : bool
+        If True, extract non-textual content — tables, images, figures, charts,
+        inline SVG — as structured ``Artifact`` records (``PageResult.artifacts``,
+        persisted to the ``artifacts`` table). Works on HTML and, with the pdf
+        extra, on PDFs (tables via pdfplumber, images via PyMuPDF). Default False.
+    artifact_types : tuple[str, ...]
+        Which artifact types to collect (subset of table/image/figure/svg/chart).
+    download_artifact_bytes : bool
+        If True, download image/chart bytes through the crawler's HTTP client
+        (honors SSL + SSRF guard), store a sha256 hash and the bytes (size-capped)
+        in the DB. Default False (reference-only: URL + alt + caption + context).
+    max_artifact_bytes : int
+        Max image size to store as a blob (larger images keep hash/metadata only).
+    min_image_dim : int
+        Drop images whose declared width/height is below this (filters icons).
+    artifact_context_chars : int
+        Characters of surrounding text captured for images lacking a caption.
+    max_artifacts_per_page : int
+        Hard cap on artifacts collected per page.
+    same_domain_images : bool
+        If True, keep only images hosted on the page's own domain.
+    enrich_artifacts : bool
+        If True and content="smart", enrich artifacts with a vision LLM (image
+        caption / chart data / table summary) via LazyBridge. Default False.
+    max_artifacts_to_enrich : int
+        Per-page cap on LLM-enriched artifacts (cost control).
     exclude_patterns : list[str] | None
         Regex fragments used to drop uninteresting links during crawling. None
         uses the built-in default (login/cart/checkout/account, tracking,
@@ -109,6 +135,18 @@ class CrawlerConfig:
     recurse_from_cache: bool = False
 
     emit_markdown: bool = False
+
+    # -- artifacts (tables / images / figures / charts / svg) --
+    extract_artifacts: bool = False
+    artifact_types: tuple = ("table", "image", "figure", "svg", "chart")
+    download_artifact_bytes: bool = False
+    max_artifact_bytes: int = 5_000_000
+    min_image_dim: int = 48
+    artifact_context_chars: int = 200
+    max_artifacts_per_page: int = 100
+    same_domain_images: bool = False
+    enrich_artifacts: bool = False
+    max_artifacts_to_enrich: int = 8
 
     max_chars_content: int = 100_000
     max_chars_pure: int = 10_000
@@ -190,7 +228,7 @@ class HTTPConfig:
         redirects internally).
     """
 
-    user_agent: str = "LazyCrawler/0.6 (+https://github.com/selvaz/lazycrawler)"
+    user_agent: str = "LazyCrawler/0.7 (+https://github.com/selvaz/lazycrawler)"
     timeout_connect: int = 5
     timeout_read: int = 25
     max_retries: int = 4
@@ -232,6 +270,9 @@ class LLMConfig:
     large_doc_model : str
         Model (usually cheaper) for large-document summarization.
         Empty string = use ``model``.
+    vision_model : str
+        Vision-capable model for artifact enrichment (image caption / chart data).
+        Empty string = use ``model`` (which must then support vision).
     temperature : float
         Sampling temperature. LazyBridge handles models that do not support it
         (e.g. reasoning models).
@@ -245,6 +286,7 @@ class LLMConfig:
 
     model: str = "gpt-4o-mini"
     large_doc_model: str = ""
+    vision_model: str = ""  # model for artifact vision enrichment ("" = use model)
     temperature: float = 0.0
     request_timeout: float = 120.0
     max_links_excerpt_chars: int = 3_000

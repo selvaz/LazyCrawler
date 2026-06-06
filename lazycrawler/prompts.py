@@ -119,7 +119,33 @@ TOPIC_EXPANSION_SYSTEM = (
 
 
 # =============================================================================
-# 4. LARGE DOC SUMMARIZATION — map-reduce  (-> str)
+# 4. ARTIFACT ENRICHMENT — vision (image/chart) + table summary
+# =============================================================================
+# Used by: CrawlerLLM.enrich_artifact()
+
+ARTIFACT_VISION_SYSTEM = (
+    "You analyze a single image extracted from a web page (it may be a photo, a\n"
+    "diagram, or a data chart).\n"
+    "\n"
+    "Produce:\n"
+    "- summary: 1-3 sentences describing what the image shows. For a chart, state\n"
+    "  the chart type, axes/units, and the main trend or takeaway.\n"
+    "- is_chart: true only if the image is a data chart/graph/plot.\n"
+    "- data_points: for a chart, the key series/values you can read (label/value\n"
+    "  pairs); otherwise an empty list. Do not invent values you cannot read.\n"
+    "\n"
+    "Be faithful to the image; never fabricate detail that is not visible."
+)
+
+ARTIFACT_TABLE_SYSTEM = (
+    "You summarize a single data table from a web page in 1-2 sentences: what the\n"
+    "table is about and its most salient figures or comparison. Do not restate\n"
+    "every cell; do not invent data not present."
+)
+
+
+# =============================================================================
+# 5. LARGE DOC SUMMARIZATION — map-reduce  (-> str)
 # =============================================================================
 # Used by: CrawlerLLM.summarize_large() for documents above the threshold
 

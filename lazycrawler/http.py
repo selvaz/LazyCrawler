@@ -545,6 +545,31 @@ class HTTPClient:
 
         return FetchResult()
 
+    def fetch_bytes(self, url: str) -> "tuple[Optional[bytes], str, Optional[int]]":
+        """
+        Raw GET for a binary asset (e.g. an image). Honors the SSRF guard and the
+        SSL/verify configuration. Returns ``(bytes, content_type, status)``;
+        ``bytes`` is None on block/failure or a >=400 response.
+        """
+        cfg = self.cfg
+        if cfg.block_private_addresses and is_blocked_address(url):
+            log.info("SSRF guard: refusing to fetch asset %s", url)
+            return None, "", None
+        try:
+            resp = self._session.get(
+                url,
+                timeout=(cfg.timeout_connect, cfg.timeout_read),
+                allow_redirects=True,
+                verify=self._verify,
+            )
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            if resp.status_code >= 400:
+                return None, ctype, resp.status_code
+            return (resp.content or b""), ctype, resp.status_code
+        except Exception as e:
+            log.debug("fetch_bytes failed for %s: %s", url, e)
+            return None, "", None
+
     def get_text(self, url: str) -> Optional[str]:
         """
         Fetch a URL and return the raw response text (no extraction), honoring

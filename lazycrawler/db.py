@@ -111,6 +111,34 @@ CREATE TABLE IF NOT EXISTS crawl_edges (
 );
 CREATE INDEX IF NOT EXISTS idx_edges_session ON crawl_edges(session_id);
 CREATE INDEX IF NOT EXISTS idx_edges_urlhash ON crawl_edges(url_hash);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  url_hash       TEXT NOT NULL,
+  position       INTEGER NOT NULL DEFAULT 0,
+  artifact_type  TEXT NOT NULL,
+  src_url        TEXT,
+  alt            TEXT,
+  caption        TEXT,
+  context        TEXT,
+  content        TEXT,
+  content_format TEXT,
+  data_json      TEXT,
+  summary        TEXT,
+  mime           TEXT,
+  width          INTEGER,
+  height         INTEGER,
+  bytes_hash     TEXT,
+  size_bytes     INTEGER,
+  blob           BLOB,
+  meta_json      TEXT,
+  content_hash   TEXT,
+  created_at     TEXT NOT NULL,
+  UNIQUE(url_hash, content_hash),
+  FOREIGN KEY (url_hash) REFERENCES pages(url_hash) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_artifacts_urlhash ON artifacts(url_hash);
+CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(artifact_type);
 """
 
 _FTS_SQL = """
@@ -434,6 +462,108 @@ class CrawlerDB:
         else:
             row["links"] = []
         return row
+
+    # -- Artifacts ------------------------------------------------------------
+
+    def add_artifacts(self, url_hash: str, artifacts: List[Any]) -> int:
+        """
+        Persist a page's artifacts (tables/images/figures/charts/svg). Idempotent
+        per (url_hash, content_hash). ``artifacts`` is a list of ``Artifact``
+        objects (or dicts with the same keys). Returns the number inserted.
+        """
+        if not artifacts:
+            return 0
+        rows = []
+        for a in artifacts:
+            d = a.model_dump() if hasattr(a, "model_dump") else dict(a)
+            blob = getattr(a, "blob", None) if hasattr(a, "blob") else d.get("blob")
+            rows.append(
+                (
+                    url_hash,
+                    int(d.get("position") or 0),
+                    d.get("artifact_type"),
+                    d.get("src_url"),
+                    d.get("alt"),
+                    d.get("caption"),
+                    d.get("context"),
+                    d.get("content"),
+                    d.get("content_format"),
+                    json.dumps(d.get("data"), ensure_ascii=False)
+                    if d.get("data") is not None
+                    else None,
+                    d.get("summary"),
+                    d.get("mime"),
+                    d.get("width"),
+                    d.get("height"),
+                    d.get("bytes_hash"),
+                    d.get("size_bytes"),
+                    blob,
+                    json.dumps(d.get("meta"), ensure_ascii=False) if d.get("meta") else None,
+                    d.get("content_hash"),
+                    utc_now_iso(),
+                )
+            )
+        with self._lock:
+            cur = self.conn.executemany(
+                "INSERT OR IGNORE INTO artifacts ("
+                "url_hash, position, artifact_type, src_url, alt, caption, context, content, "
+                "content_format, data_json, summary, mime, width, height, bytes_hash, size_bytes, "
+                "blob, meta_json, content_hash, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                rows,
+            )
+            self.conn.commit()
+            return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
+    def get_artifacts(
+        self,
+        url_hash: Optional[str] = None,
+        session_id: Optional[str] = None,
+        artifact_type: Optional[str] = None,
+        include_blob: bool = False,
+        limit: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Artifacts for a page (url_hash) or a whole session, optionally by type.
+
+        ``blob`` (raw image bytes) is dropped unless ``include_blob=True``.
+        """
+        params: List[Any] = []
+        if session_id:
+            sql = (
+                "SELECT a.* FROM artifacts a "
+                "JOIN crawl_edges e ON e.url_hash = a.url_hash WHERE e.session_id=?"
+            )
+            params.append(session_id)
+        else:
+            sql = "SELECT a.* FROM artifacts a WHERE 1=1"
+            if url_hash:
+                sql += " AND a.url_hash=?"
+                params.append(url_hash)
+        if artifact_type:
+            sql += " AND a.artifact_type=?"
+            params.append(artifact_type)
+        sql += " ORDER BY a.url_hash, a.position"
+        if limit:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        with self._lock:
+            rows = self.conn.execute(sql, params).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            if not include_blob:
+                d.pop("blob", None)
+            for src, dst in (("data_json", "data"), ("meta_json", "meta")):
+                raw = d.pop(src, None)
+                if raw:
+                    try:
+                        d[dst] = json.loads(raw)
+                    except Exception:
+                        d[dst] = None
+                else:
+                    d[dst] = None
+            out.append(d)
+        return out
 
     def close(self) -> None:
         self.conn.close()

@@ -31,11 +31,12 @@ An honest evaluation of LazyCrawler against the main web-crawling frameworks.
 | Content dedup + TTL cache | ✅ 3-level | ~ per-URL | ~ | ❌ | ~ URL+HTTP |
 | Persistence + provenance | ✅ relational DB | ❌ | ❌ (API) | ❌ | ~ feed export |
 | Native PDF | ✅ | ~ | ~ | ❌ | ❌ |
+| Non-textual artifacts (tables/images/charts) | ✅ relational + vision | ~ (tables/md) | ~ (md) | ~ | ❌ |
 | robots.txt | ✅ default-on | ~ | ✅ | ~ | ✅ |
 | Anti-bot / proxy | ❌ | ✅ | ✅ | ~ | ~ |
 | SSRF guard | ✅ (agent path) | ❌ | n/a (hosted) | ❌ | ~ |
 | Provider-agnostic LLM | ✅ LazyBridge | ✅ | ~ | ✅ | — |
-| Maturity / community | v0.6, solo | high | high | medium | very high |
+| Maturity / community | v0.7, solo | high | high | medium | very high |
 
 ## Where LazyCrawler is genuinely strong
 

@@ -72,6 +72,24 @@ def _dumps(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
+def _artifact_brief(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Compact, LLM-friendly view of one artifact (no raw bytes)."""
+    content = row.get("content") or ""
+    return {
+        "type": row.get("artifact_type"),
+        "position": row.get("position"),
+        "caption": row.get("caption") or row.get("alt"),
+        "summary": row.get("summary"),
+        "src_url": row.get("src_url"),
+        "content": (content[:800] + " …") if len(content) > 800 else (content or None),
+        "data": row.get("data"),
+        "mime": row.get("mime"),
+        "width": row.get("width"),
+        "height": row.get("height"),
+        "stored_bytes": bool(row.get("bytes_hash")),
+    }
+
+
 class CrawlerTools:
     """
     Crawler / search / cache operations as LazyBridge tools for an agent.
@@ -148,6 +166,7 @@ class CrawlerTools:
         if self.db is not None:
             tools.append(Tool.wrap(self.search_cached, name="search_cached"))
             tools.append(Tool.wrap(self.get_session_pages, name="get_session_pages"))
+            tools.append(Tool.wrap(self.get_artifacts, name="get_artifacts"))
         return tools
 
     # -- tools (LLM-facing; docstrings are the schema the model sees) ---------
@@ -323,6 +342,29 @@ class CrawlerTools:
         return _dumps(
             {"session_id": session_id, "found": len(rows), "pages": [_brief(r) for r in rows]}
         )
+
+    def get_artifacts(self, url: str, artifact_type: str = "") -> str:
+        """Return the non-textual artifacts extracted from an already-crawled page.
+
+        Use this to inspect the tables, images, figures and charts found on a page
+        (after web_crawl/web_search with artifact extraction enabled). Tables come
+        as Markdown + structured rows; images/charts as URL + caption (+ a vision
+        summary when enrichment is on). Reads the local cache — no network call.
+
+        Args:
+            url: The exact page URL whose artifacts to retrieve.
+            artifact_type: Optional filter — "table", "image", "figure", "chart"
+                or "svg". Empty returns all types.
+
+        Returns:
+            A JSON string: {"url", "found", "artifacts": [{type, caption, summary,
+            src_url, content, data, mime, width, height, stored_bytes}]}.
+        """
+        if self.db is None:
+            return _dumps({"error": "no database configured; cannot retrieve artifacts"})
+        rows = self.db.get_artifacts(url_hash=url_hash(url), artifact_type=(artifact_type or None))
+        arts = [_artifact_brief(r) for r in rows]
+        return _dumps({"url": url, "found": len(arts), "artifacts": arts})
 
     def close(self) -> None:
         self._crawler.close()

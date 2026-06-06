@@ -272,6 +272,131 @@ def extract_pdf(
     return extract_pdf_bytes(data)
 
 
+def extract_pdf_artifacts(
+    data: bytes,
+    *,
+    want: Optional[set] = None,
+    max_artifacts: int = 100,
+    min_image_dim: int = 48,
+) -> List[dict]:
+    """
+    Extract artifacts (tables via pdfplumber, images via PyMuPDF) from PDF bytes.
+
+    Returns a list of plain dicts shaped like ``Artifact`` fields (the crawler
+    turns them into ``Artifact`` objects). Degrades to [] if the optional parsers
+    are missing.
+    """
+    want = want or {"table", "image", "figure", "svg", "chart"}
+    out: List[dict] = []
+    pos = 0
+
+    # -- tables (pdfplumber) --------------------------------------------------
+    if "table" in want:
+        try:
+            import pdfplumber
+        except Exception:
+            pdfplumber = None  # type: ignore
+            log.debug("pdfplumber unavailable - no PDF table artifacts")
+        if pdfplumber is not None:
+            try:
+                with pdfplumber.open(io.BytesIO(data)) as pdf:
+                    for page_idx, page in enumerate(pdf.pages, 1):
+                        if len(out) >= max_artifacts:
+                            break
+                        try:
+                            tables = page.extract_tables() or []
+                        except Exception:
+                            tables = []
+                        for table in tables:
+                            rows = [
+                                [re.sub(r"\s+", " ", str(c or "")).strip() for c in row]
+                                for row in table
+                                if row
+                            ]
+                            rows = [r for r in rows if any(r)]
+                            if not rows:
+                                continue
+                            out.append(
+                                {
+                                    "artifact_type": "table",
+                                    "position": pos,
+                                    "caption": f"PDF page {page_idx}",
+                                    "content": _rows_to_md(rows),
+                                    "content_format": "markdown",
+                                    "data": rows,
+                                    "meta": {"page": page_idx, "rows": len(rows)},
+                                }
+                            )
+                            pos += 1
+                            if len(out) >= max_artifacts:
+                                break
+            except Exception:
+                log.debug("PDF table artifact extraction failed", exc_info=True)
+
+    # -- images (PyMuPDF) -----------------------------------------------------
+    if want & {"image", "chart"}:
+        try:
+            import fitz  # PyMuPDF
+        except Exception:
+            fitz = None  # type: ignore
+            log.debug("PyMuPDF unavailable - no PDF image artifacts")
+        if fitz is not None:
+            try:
+                doc = fitz.open(stream=data, filetype="pdf")
+                seen: set = set()
+                for page_idx in range(doc.page_count):
+                    if len(out) >= max_artifacts:
+                        break
+                    for img in doc.get_page_images(page_idx, full=True):
+                        xref = img[0]
+                        if xref in seen:
+                            continue
+                        seen.add(xref)
+                        try:
+                            info = doc.extract_image(xref)
+                        except Exception:
+                            continue
+                        blob = info.get("image")
+                        w, h = info.get("width"), info.get("height")
+                        if not blob or (w and h and (w < min_image_dim or h < min_image_dim)):
+                            continue
+                        ext = (info.get("ext") or "png").lower()
+                        out.append(
+                            {
+                                "artifact_type": "image",
+                                "position": pos,
+                                "caption": f"PDF page {page_idx + 1}",
+                                "content_format": "bytes",
+                                "mime": f"image/{ext}",
+                                "width": w,
+                                "height": h,
+                                "size_bytes": len(blob),
+                                "blob": blob,
+                                "meta": {"page": page_idx + 1, "xref": xref},
+                            }
+                        )
+                        pos += 1
+                        if len(out) >= max_artifacts:
+                            break
+                doc.close()
+            except Exception:
+                log.debug("PDF image artifact extraction failed", exc_info=True)
+
+    return out
+
+
+def _rows_to_md(rows: List[List[str]]) -> str:
+    """Minimal Markdown table renderer for PDF table rows."""
+    if not rows:
+        return ""
+    width = max(len(r) for r in rows)
+    norm = [[*r, *([""] * (width - len(r)))] for r in rows]
+    lines = ["| " + " | ".join(norm[0]) + " |", "| " + " | ".join(["---"] * width) + " |"]
+    for r in norm[1:]:
+        lines.append("| " + " | ".join(r) + " |")
+    return "\n".join(lines)
+
+
 def extract_pdf_bytes(data: bytes) -> Tuple[str, str, Optional[str]]:
     """
     Extract text + metadata from already-downloaded PDF bytes.

@@ -41,6 +41,7 @@ Quick start
 from __future__ import annotations
 
 from ._log import log, set_log_level
+from .artifacts import Artifact, extract_html_artifacts
 from .config import (
     CrawlerConfig,
     DBConfig,
@@ -53,7 +54,7 @@ from .db import CrawlerDB
 from .search import WebSearch, search_ddg_urls
 from .tools import CrawlerTools
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "WebCrawler",
@@ -61,6 +62,8 @@ __all__ = [
     "CrawlerDB",
     "CrawlerTools",
     "PageResult",
+    "Artifact",
+    "extract_html_artifacts",
     "CrawlerConfig",
     "HTTPConfig",
     "LLMConfig",

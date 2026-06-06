@@ -68,6 +68,17 @@ by impact.
       logger (`set_log_level`); `CrawlerConfig.strict` for fail-fast.
 - [x] PDF downloads honor `verify_ssl` / `ca_bundle` (was the §4.1 bug).
 
+## Done (v0.7)
+
+- [x] **Non-textual artifacts** — `CrawlerConfig(extract_artifacts=True)` extracts
+      tables (Markdown + structured rows), images, figures, charts and inline SVG
+      as `Artifact` records, persisted to a dedicated `artifacts` table (FK to
+      `pages`, deduped per content hash) and exposed via `PageResult.artifacts`,
+      `db.get_artifacts(...)` and the agent tool `get_artifacts(url)`. HTML + PDF
+      (pdfplumber tables / PyMuPDF images). Optional layers: `download_artifact_bytes`
+      (image bytes + sha256, honors SSRF/SSL) and `enrich_artifacts` (vision-LLM
+      caption / chart data / table summary, smart mode). New `image` extra (Pillow).
+
 ## Done (v0.6)
 
 - [x] **5. Markdown output** — optional `html_to_markdown` renderer (headings,
