@@ -21,6 +21,7 @@ from typing import List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
+from ._log import log
 from .config import LLMConfig
 from .prompts import (
     CONTENT_EXTRACTION_SYSTEM,
@@ -149,12 +150,13 @@ class CrawlerLLM:
         try:
             env = agent(f"SOURCE URL: {url}\n\n{text}")
         except Exception as e:
-            print(f"    [LLM] extract_content error: {type(e).__name__}: {e}")
+            log.error("LLM extract_content failed for %s: %s: %s",
+                      url, type(e).__name__, e, exc_info=True)
             return None
         if env.ok and isinstance(env.payload, out_type):
             return env.payload
-        print(f"    [LLM] extract_content unexpected output "
-              f"({'error: ' + env.error.message if env.error else 'no payload'})")
+        log.warning("LLM extract_content unexpected output for %s (%s)", url,
+                    "error: " + env.error.message if env.error else "no payload")
         return None
 
     def expand_topic(self, query: str) -> str:
@@ -164,7 +166,8 @@ class CrawlerLLM:
             t = (env.text() or "").strip() if env.ok else ""
             return t if len(t) > 5 else query
         except Exception as e:
-            print(f"    [LLM] expand_topic error: {type(e).__name__}: {e} - using query")
+            log.warning("LLM expand_topic failed (%s: %s) - using raw query",
+                        type(e).__name__, e, exc_info=True)
             return query
 
     def select_links(
@@ -207,7 +210,8 @@ class CrawlerLLM:
                     out.append(subset[idx - 1])
             return out[:max_links]
         except Exception as e:
-            print(f"    [LLM] select_links error: {type(e).__name__}: {e} - fallback first {max_links}")
+            log.warning("LLM select_links failed (%s: %s) - falling back to first %d candidates",
+                        type(e).__name__, e, max_links, exc_info=True)
             return subset[:max_links]
 
     def summarize_large(
@@ -226,7 +230,7 @@ class CrawlerLLM:
         if len(text) <= threshold:
             return text[:max_chars_out]
 
-        print(f"    [LARGE_DOC] {len(text):,} chars - map-reduce summarization")
+        log.info("large document (%d chars) - map-reduce summarization", len(text))
         agent = self._summary_agent()
         chunks = [text[i:i + chunk_chars] for i in range(0, len(text), chunk_chars)][:max_chunks]
 
@@ -236,7 +240,8 @@ class CrawlerLLM:
                 env = agent(f"URL: {url}\nChunk {i}/{len(chunks)}\n\n{chunk}")
                 partials.append((env.text() or "").strip() if env.ok else chunk[:1500])
             except Exception as e:
-                print(f"    [LARGE_DOC] chunk {i} error: {type(e).__name__}: {e}")
+                log.warning("large-doc chunk %d failed (%s: %s) - keeping raw chunk prefix",
+                            i, type(e).__name__, e, exc_info=True)
                 partials.append(chunk[:1500])
 
         merged = "\n\n".join(p for p in partials if p.strip())
@@ -252,5 +257,6 @@ class CrawlerLLM:
             if final:
                 return final[:max_chars_out]
         except Exception as e:
-            print(f"    [LARGE_DOC] final synthesis error: {type(e).__name__}: {e}")
+            log.warning("large-doc final synthesis failed (%s: %s) - returning merged partials",
+                        type(e).__name__, e, exc_info=True)
         return merged[:max_chars_out]

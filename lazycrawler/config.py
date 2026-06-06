@@ -52,6 +52,14 @@ class CrawlerConfig:
         a bounded thread pool crawls level-by-level (BFS) with N workers.
         In parallel mode the per-fetch link_delay is not applied (parallelism
         replaces it); use a polite max_workers for shared/target sites.
+    respect_robots : bool
+        Honor each host's robots.txt (default True). URLs disallowed for the
+        configured User-Agent are skipped (emitted with status='robots_blocked').
+        Set False to ignore robots.txt (authorized crawling of your own sites).
+    strict : bool
+        If True, per-page/worker exceptions propagate (fail-fast) instead of
+        being logged-and-skipped. Default False (resilient: log and continue).
+        Either way exceptions are never silently swallowed — they are logged.
     max_chars_content : int
         Max characters of text sent to the LLM (smart mode).
     max_chars_pure : int
@@ -78,6 +86,8 @@ class CrawlerConfig:
     max_candidate_links: int = 300
     same_domain_only: bool = True
     max_workers: int = 1
+    respect_robots: bool = True
+    strict: bool = False
 
     max_chars_content: int = 100_000
     max_chars_pure: int = 10_000

@@ -24,6 +24,8 @@ from typing import List, Optional, Tuple, Union
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from ._log import log
+
 
 # =============================================================================
 # PDF DETECTION
@@ -126,6 +128,7 @@ def _extract_with_pymupdf(data: bytes) -> Tuple[str, str, Optional[str]]:
     try:
         import fitz  # PyMuPDF
     except Exception:
+        log.debug("PyMuPDF (fitz) not available - trying pypdf fallback")
         return "", "", None
     try:
         doc = fitz.open(stream=data, filetype="pdf")
@@ -134,6 +137,7 @@ def _extract_with_pymupdf(data: bytes) -> Tuple[str, str, Optional[str]]:
             try:
                 page_text = page.get_text("text") or ""
             except Exception:
+                log.debug("PyMuPDF page extraction failed", exc_info=True)
                 page_text = ""
             if page_text.strip():
                 texts.append(page_text)
@@ -145,6 +149,7 @@ def _extract_with_pymupdf(data: bytes) -> Tuple[str, str, Optional[str]]:
         )
         return "\n\n".join(texts).strip(), title, published_iso
     except Exception:
+        log.warning("PyMuPDF failed to parse PDF", exc_info=True)
         return "", "", None
 
 
@@ -153,6 +158,7 @@ def _extract_with_pypdf(data: bytes) -> Tuple[str, str, Optional[str]]:
     try:
         from pypdf import PdfReader
     except Exception:
+        log.debug("pypdf not available (pip install pypdf)")
         return "", "", None
     try:
         reader = PdfReader(io.BytesIO(data))
@@ -161,6 +167,7 @@ def _extract_with_pypdf(data: bytes) -> Tuple[str, str, Optional[str]]:
             try:
                 page_text = page.extract_text() or ""
             except Exception:
+                log.debug("pypdf page extraction failed", exc_info=True)
                 page_text = ""
             if page_text.strip():
                 texts.append(page_text)
@@ -180,6 +187,7 @@ def _extract_with_pypdf(data: bytes) -> Tuple[str, str, Optional[str]]:
                     break
         return "\n\n".join(texts).strip(), title, published_iso
     except Exception:
+        log.warning("pypdf failed to parse PDF", exc_info=True)
         return "", "", None
 
 
@@ -188,6 +196,7 @@ def _extract_tables_with_pdfplumber(data: bytes, max_tables: int = 10) -> str:
     try:
         import pdfplumber
     except Exception:
+        log.debug("pdfplumber not available - skipping PDF tables")
         return ""
     try:
         chunks: List[str] = []
@@ -217,6 +226,7 @@ def _extract_tables_with_pdfplumber(data: bytes, max_tables: int = 10) -> str:
                             break
         return "\n\n".join(chunks).strip()
     except Exception:
+        log.debug("pdfplumber table extraction failed", exc_info=True)
         return ""
 
 
@@ -242,7 +252,8 @@ def extract_pdf(
     """
     try:
         data = fetch_pdf_bytes(url, timeout=timeout, user_agent=user_agent, verify=verify)
-    except Exception:
+    except Exception as e:
+        log.warning("PDF download failed for %s: %s: %s", url, type(e).__name__, e)
         return "", "", None
     return extract_pdf_bytes(data)
 

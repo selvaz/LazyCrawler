@@ -31,7 +31,8 @@ An honest evaluation of LazyCrawler against the main web-crawling frameworks.
 | Content dedup + TTL cache | ✅ 3-level | ~ per-URL | ~ | ❌ | ~ URL+HTTP |
 | Persistence + provenance | ✅ relational DB | ❌ | ❌ (API) | ❌ | ~ feed export |
 | Native PDF | ✅ | ~ | ~ | ❌ | ❌ |
-| Anti-bot / proxy / robots | ❌ | ✅ | ✅ | ~ | ✅ robots |
+| robots.txt | ✅ default-on | ~ | ✅ | ~ | ✅ |
+| Anti-bot / proxy | ❌ | ✅ | ✅ | ~ | ~ |
 | Provider-agnostic LLM | ✅ LazyBridge | ✅ | ~ | ✅ | — |
 | Maturity / community | v0.1, solo | high | high | medium | very high |
 
@@ -58,7 +59,8 @@ An honest evaluation of LazyCrawler against the main web-crawling frameworks.
    parallel mode (`CrawlerConfig(max_workers=N)`).
 3. **Fixed extraction schema** — *now addressed* via a pluggable `schema=` (any
    Pydantic model).
-4. **No anti-bot / proxy / robots.txt** — still missing (politeness + blocking).
+4. **robots.txt** — now honored by default (`respect_robots`). Anti-bot, proxy
+   rotation, and per-domain rate limiting are still missing.
 5. **No markdown output** — plain text / JSON only.
 6. **Weak link frontier** — pure mode is "first N"; no URL scoring / best-first /
    sitemap seeding.

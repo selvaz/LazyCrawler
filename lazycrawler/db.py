@@ -34,6 +34,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from ._log import log
 from .config import DBConfig
 from .http import get_base_domain, url_hash
 
@@ -51,6 +52,7 @@ def _parse_iso(value: str) -> Optional[datetime]:
         dt = datetime.fromisoformat(value)
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except Exception:
+        log.debug("could not parse stored timestamp %r", value)
         return None
 
 
@@ -152,12 +154,14 @@ class CrawlerDB:
         try:
             self.conn.execute("ALTER TABLE pages ADD COLUMN extract_json TEXT")
         except sqlite3.OperationalError:
-            pass  # column already exists
+            log.debug("pages.extract_json column already present (no migration needed)")
         if self.cfg.enable_fts:
             try:
                 self.conn.executescript(_FTS_SQL)
             except sqlite3.OperationalError:
-                # FTS5 not available in this SQLite build - degrade.
+                # FTS5 not available in this SQLite build - degrade to LIKE search.
+                log.warning("FTS5 unavailable in this SQLite build - "
+                            "search_text() falls back to LIKE")
                 self.cfg.enable_fts = False
         self.conn.commit()
 
@@ -279,7 +283,7 @@ class CrawlerDB:
                 (uh, title, clean_text),
             )
         except sqlite3.OperationalError:
-            pass
+            log.debug("FTS index update skipped for %s", uh, exc_info=True)
 
     # -- Edges ----------------------------------------------------------------
 
@@ -346,7 +350,7 @@ class CrawlerDB:
                     ).fetchall()
                 return [self._row_to_page(dict(r)) for r in rows]
             except sqlite3.OperationalError:
-                pass
+                log.debug("FTS MATCH query failed - falling back to LIKE", exc_info=True)
         like = f"%{query}%"
         with self._lock:
             rows = self.conn.execute(
@@ -377,6 +381,7 @@ class CrawlerDB:
                 try:
                     row[dst] = json.loads(raw)
                 except Exception:
+                    log.debug("could not deserialize %s for a page row", src)
                     row[dst] = []
             else:
                 row[dst] = []
@@ -385,6 +390,7 @@ class CrawlerDB:
             try:
                 row["data"] = json.loads(ej)
             except Exception:
+                log.debug("could not deserialize extract_json for a page row")
                 row["data"] = None
         else:
             row["data"] = None

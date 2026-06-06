@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
 from urllib.parse import urljoin
 
+from ._log import log
 from .http import get_base_domain, is_excluded_url, normalize_url
 
 
@@ -106,7 +107,8 @@ def extract_candidate_links(
     try:
         from bs4 import BeautifulSoup
     except ImportError:
-        print("  [LINKS] beautifulsoup4 not installed: pip install beautifulsoup4")
+        log.warning("beautifulsoup4 not installed - no link extraction "
+                    "(pip install beautifulsoup4)")
         return []
 
     soup = BeautifulSoup(html, "html.parser")
@@ -157,6 +159,7 @@ def extract_canonical_url(html: str, base_url: str) -> Optional[str]:
         if link and link.get("href"):
             return urljoin(base_url, link["href"].strip())
     except Exception:
+        log.debug("canonical URL extraction failed for %s", base_url, exc_info=True)
         return None
     return None
 
@@ -219,6 +222,7 @@ def extract_published_datetime(html: str, base_url: str = "") -> Optional[str]:
     try:
         from bs4 import BeautifulSoup
     except Exception:
+        log.debug("beautifulsoup4 not available - skipping publish-date extraction")
         return None
 
     soup = BeautifulSoup(html, "html.parser")
@@ -249,6 +253,7 @@ def extract_published_datetime(html: str, base_url: str = "") -> Optional[str]:
         try:
             obj = json.loads(txt)
         except Exception:
+            log.debug("skipping unparseable JSON-LD block", exc_info=True)
             continue
 
         def _walk(o: Any) -> None:

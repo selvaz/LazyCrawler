@@ -40,6 +40,7 @@ Quick start
 
 from __future__ import annotations
 
+from ._log import log, set_log_level
 from .config import (
     CrawlerConfig,
     DBConfig,
@@ -51,7 +52,7 @@ from .crawler import PageResult, WebCrawler
 from .db import CrawlerDB
 from .search import WebSearch, search_ddg_urls
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "WebCrawler",
@@ -64,5 +65,7 @@ __all__ = [
     "SearchConfig",
     "DBConfig",
     "search_ddg_urls",
+    "set_log_level",
+    "log",
     "__version__",
 ]

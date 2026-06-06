@@ -162,6 +162,46 @@ HTTPConfig(render_js=True)   # requires: pip install playwright && playwright in
 Falls back to plain requests if Playwright is unavailable. (v1 launches a browser
 per page; persistent-browser reuse is a future optimization.)
 
+## robots.txt & politeness
+
+`robots.txt` is honored **by default**. URLs disallowed for the configured
+User-Agent are skipped and reported with `status="robots_blocked"` (never
+silently dropped). robots.txt is fetched once per host through the configured
+HTTP client (so it honors `verify_ssl` / `ca_bundle`), and a
+missing/unreachable robots.txt means "allow".
+
+```python
+CrawlerConfig(respect_robots=True)    # default
+CrawlerConfig(respect_robots=False)   # ignore robots.txt (your own/authorized sites)
+```
+
+Politeness is otherwise a global `HTTPConfig.link_delay` (not applied in parallel
+mode — pick a polite `max_workers`). Per-domain rate limiting / crawl-delay is on
+the roadmap.
+
+## Logging & error handling
+
+Nothing is silently swallowed. Every caught exception is logged through the
+`lazycrawler` logger (with a traceback at WARNING/ERROR); best-effort fallbacks
+(optional libs, date parsing, FTS) log at DEBUG. By default the logger emits to
+stderr at INFO.
+
+```python
+import logging
+from lazycrawler import set_log_level
+
+set_log_level(logging.WARNING)   # quieter (errors/warnings only)
+set_log_level(logging.DEBUG)     # verbose (best-effort failures too)
+logging.getLogger("lazycrawler").handlers.clear()   # take full control
+```
+
+For fail-fast instead of resilient crawling, use **strict mode** — per-page /
+per-worker exceptions then propagate instead of being logged-and-skipped:
+
+```python
+CrawlerConfig(strict=True)   # raise on the first page/worker error
+```
+
 ---
 
 ## Architecture
@@ -231,8 +271,9 @@ HTTPConfig(ca_bundle=r"C:\path\to\proxy_root.pem")
 HTTPConfig(verify_ssl=False)
 ```
 
-> This covers the crawler's own fetches. For smart-mode LLM calls, TLS is handled
-> by LazyBridge / the provider SDK.
+> This covers the crawler's own fetches — HTML, **PDF downloads**, and the
+> robots.txt fetch all honor `verify_ssl` / `ca_bundle`. For smart-mode LLM
+> calls, TLS is handled by LazyBridge / the provider SDK.
 
 ---
 
@@ -241,6 +282,10 @@ HTTPConfig(verify_ssl=False)
 - **PyMuPDF absent** → PDFs degrade (pypdf, then no text). Install
   `pip install pymupdf` for best quality.
 - **Pure mode = zero LLM**: no LazyBridge agent is ever built.
+- **robots.txt** is honored by default (`respect_robots=False` to disable);
+  blocked URLs are reported as `status="robots_blocked"`.
+- **Exceptions are never swallowed** — they go through the `lazycrawler` logger;
+  use `strict=True` to fail fast instead of logging-and-continuing.
 - **WebSearch engine="gemini"**: runs in *answer mode* (the grounded answer as a
   single result). Grounding source URLs do not surface through LazyBridge's Agent
   layer; crawling Gemini seed URLs awaits a grounding passthrough in LazyBridge.

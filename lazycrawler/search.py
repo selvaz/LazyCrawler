@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from ._log import log
 from .config import CrawlerConfig, HTTPConfig, LLMConfig, SearchConfig
 from .crawler import PageResult, WebCrawler
 from .db import CrawlerDB
@@ -69,7 +70,7 @@ def search_ddg_urls(query: str, max_results: int, blacklist: Optional[List[str]]
                 if len(results) >= max_results:
                     break
     except Exception as e:
-        print(f"  [SEARCH] DuckDuckGo error: {type(e).__name__}: {e}")
+        log.warning("DuckDuckGo search failed (%s: %s)", type(e).__name__, e, exc_info=True)
     return results
 
 
@@ -144,12 +145,9 @@ class WebSearch:
             self.crawler._ensure_llm()
             topic = self.crawler._llm.expand_topic(query)
 
-        print("=" * 72)
-        print(f"WEB SEARCH  engine={engine}  content={content_mode}  links={link_mode}")
-        print(f"  query : {query}")
-        if topic != query:
-            print(f"  topic : {topic}")
-        print("=" * 72)
+        log.info("web search: engine=%s content=%s links=%s query=%r%s",
+                 engine, content_mode, link_mode, query,
+                 f" topic={topic!r}" if topic != query else "")
 
         if engine == "gemini":
             results = self._run_gemini(query, topic, content_mode)
@@ -157,7 +155,7 @@ class WebSearch:
             results = self._run_duckduckgo(query, topic, content_mode, link_mode, session_id)
 
         pages_found = sum(1 for r in results if r.status == "done")
-        print(f"  -> {pages_found} pages extracted ({len(results)} entries)")
+        log.info("web search done: %d pages extracted (%d entries)", pages_found, len(results))
         return {
             "query": query, "topic": topic, "engine": engine,
             "pages_found": pages_found, "results": results,
@@ -167,9 +165,9 @@ class WebSearch:
 
     def _run_duckduckgo(self, query, topic, content_mode, link_mode, session_id) -> List[PageResult]:
         urls = search_ddg_urls(query, self.search_cfg.n_results, self.crawler.blacklist)
-        print(f"  {len(urls)} URLs from DuckDuckGo")
+        log.info("%d URLs from DuckDuckGo", len(urls))
         for i, u in enumerate(urls, 1):
-            print(f"    {i:2}. {u[:90]}")
+            log.debug("  %2d. %s", i, u[:90])
         if not urls:
             return []
         return self.crawler.crawl_many(
@@ -198,7 +196,7 @@ class WebSearch:
             )
             answer = (env.text() or "").strip() if env.ok else ""
         except Exception as e:
-            print(f"  [GEMINI] grounding error: {type(e).__name__}: {e}")
+            log.warning("Gemini grounding failed (%s: %s)", type(e).__name__, e, exc_info=True)
             return []
 
         if not answer:

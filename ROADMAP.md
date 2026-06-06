@@ -16,10 +16,18 @@ by impact.
       HTTP/LLM resources, thread-safe DB (`check_same_thread=False` + lock).
       `max_workers=1` keeps the original sequential DFS.
 
+## Done (v0.3)
+
+- [x] **robots.txt** honored by default (`CrawlerConfig.respect_robots`, on by
+      default, disableable); blocked URLs reported as `status="robots_blocked"`.
+- [x] **No swallowed exceptions** — everything routed through the `lazycrawler`
+      logger (`set_log_level`); `CrawlerConfig.strict` for fail-fast.
+- [x] PDF downloads honor `verify_ssl` / `ca_bundle` (was the §4.1 bug).
+
 ## Next
 
-- [ ] **4. Anti-bot / politeness** — `robots.txt` compliance, autothrottle,
-      optional proxy rotation, configurable per-host concurrency.
+- [ ] **4. Politeness (rest)** — autothrottle, optional proxy rotation,
+      per-host concurrency / crawl-delay honoring.
 - [ ] **5. Markdown output** — an optional markdown renderer (heading hierarchy,
       tables, link citations) for RAG ingestion.
 - [ ] **6. Smarter link frontier** — URL scoring / best-first traversal,

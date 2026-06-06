@@ -45,10 +45,12 @@ from typing import Any, List, Literal, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field
 
+from ._log import log
 from .config import CrawlerConfig, HTTPConfig, LLMConfig
 from .db import CrawlerDB
 from .http import (
     HTTPClient,
+    RobotsChecker,
     get_base_domain,
     is_blacklisted_domain,
     load_blacklist_from_excel,
@@ -66,7 +68,7 @@ from .text import (
 )
 
 Mode = Literal["pure", "smart"]
-Status = Literal["done", "fetch_error", "no_text", "llm_error", "blacklisted"]
+Status = Literal["done", "fetch_error", "no_text", "llm_error", "blacklisted", "robots_blocked"]
 
 
 # =============================================================================
@@ -153,6 +155,11 @@ class WebCrawler:
         self._llm = None                          # lazy CrawlerLLM for sequential mode
         self._tls = threading.local()             # per-thread resources (parallel)
         self._created_res: List[_Res] = []        # thread-local resources to close
+        # robots.txt gate (shared, thread-safe, own HTTP client honoring verify)
+        self._robots = (
+            RobotsChecker(HTTPClient(self.http_cfg), self.http_cfg.user_agent)
+            if self.cfg.respect_robots else None
+        )
 
     # -- public API -----------------------------------------------------------
 
@@ -199,9 +206,10 @@ class WebCrawler:
         seeds = [(u, get_base_domain(u)) for u in urls
                  if not is_blacklisted_domain(u, self.blacklist)]
 
-        print(f"  [CRAWL] content={content_mode} links={link_mode} "
-              f"workers={self.cfg.max_workers} depth={self.cfg.max_depth} "
-              f"max_pages={self.cfg.max_pages}")
+        log.info("crawl: content=%s links=%s workers=%d depth=%d max_pages=%d "
+                 "robots=%s strict=%s", content_mode, link_mode, self.cfg.max_workers,
+                 self.cfg.max_depth, self.cfg.max_pages, self.cfg.respect_robots,
+                 self.cfg.strict)
 
         if self.cfg.max_workers > 1:
             self._crawl_parallel(st, seeds)
@@ -214,8 +222,10 @@ class WebCrawler:
                     time.sleep(self.http_cfg.link_delay)
                 try:
                     self._crawl_seq(st, url, 0, None, dom, res)
-                except Exception as e:
-                    print(f"  [CRAWL] error on {url[:80]}: {type(e).__name__}: {e}")
+                except Exception:
+                    if self.cfg.strict:
+                        raise
+                    log.exception("error crawling seed %s", url[:80])
 
         return st.results
 
@@ -270,8 +280,10 @@ class WebCrawler:
                 time.sleep(self.http_cfg.link_delay)
             try:
                 self._crawl_seq(st, link_url, depth + 1, url, start_domain, res)
-            except Exception as e:
-                print(f"  error {link_url[:70]}: {type(e).__name__}: {e}")
+            except Exception:
+                if self.cfg.strict:
+                    raise
+                log.exception("error crawling %s", link_url[:70])
 
     def _crawl_parallel(self, st, seeds) -> None:
         """Native parallel driver: level-by-level BFS over a bounded thread pool."""
@@ -292,8 +304,10 @@ class WebCrawler:
                         parent_url, parent_dom = fut_map[fut]
                         try:
                             links = fut.result() or []
-                        except Exception as e:
-                            print(f"  [PARALLEL] worker error: {type(e).__name__}: {e}")
+                        except Exception:
+                            if self.cfg.strict:
+                                raise
+                            log.exception("parallel worker error on %s", parent_url[:70])
                             links = []
                         for _, link_url in links:
                             nu = normalize_url(link_url)
@@ -310,7 +324,7 @@ class WebCrawler:
                 try:
                     r.http.close()
                 except Exception:
-                    pass
+                    log.debug("failed closing a worker HTTP client", exc_info=True)
 
     def _worker_process(self, st, url, depth, source_url, start_domain):
         return self._process_one(st, url, depth, source_url, start_domain, self._worker_res(st))
@@ -331,7 +345,16 @@ class WebCrawler:
         if not self._mark_visited(st, url):
             return []
         uh = _url_hash(url)
-        print(f"  [d{depth}] {url[:90]}")
+        log.info("[d%d] %s", depth, url[:90])
+
+        # robots.txt gate (enabled by default; CrawlerConfig.respect_robots=False to disable)
+        if self._robots is not None and not self._robots.allowed(url):
+            log.info("robots.txt disallows %s - skipping", url)
+            self._emit(st, PageResult(
+                url=url, url_hash=uh, status="robots_blocked", mode=st.content_mode,
+                depth=depth, source_url=source_url, error="Disallowed by robots.txt",
+            ), count=False)
+            return []
 
         # DEDUP level 1: fresh URL cache (content-mode-aware)
         cached = self._try_cache(st, url, uh, depth, source_url, res)
@@ -414,6 +437,7 @@ class WebCrawler:
                 reused = self.db.get_page(uh) or existing
                 result = self._result_from_row(reused, depth, source_url, from_cache=True)
                 self._add_counted(st, result)
+                log.debug("content-hash dedup - reused stored content, skipped extraction")
                 return self._select_next(st, candidates, reused.get("clean_text") or "", res)
 
         # content extraction
@@ -447,6 +471,7 @@ class WebCrawler:
             return None
 
         if self._satisfies(row, st.content_mode):
+            log.debug("cache hit (fresh, content=%s) - no fetch", st.content_mode)
             result = self._result_from_row(row, depth, source_url, from_cache=True)
             self._add_counted(st, result)
             if self.db:
@@ -456,6 +481,7 @@ class WebCrawler:
         if st.content_mode == "smart":
             base = (row.get("raw_text") or row.get("clean_text") or "")
             if base.strip():
+                log.debug("cache enrich (pure->smart) - no fetch, LLM only")
                 preclean = preprocess_text(base)
                 result = self._smart_extract(
                     st, url, uh, preclean, row.get("title") or "",
@@ -607,8 +633,13 @@ class WebCrawler:
 
     def close(self) -> None:
         self._http.close()
+        if self._robots is not None:
+            try:
+                self._robots._http.close()
+            except Exception:
+                log.debug("failed closing robots HTTP client", exc_info=True)
         for r in self._created_res:
             try:
                 r.http.close()
             except Exception:
-                pass
+                log.debug("failed closing a worker HTTP client", exc_info=True)

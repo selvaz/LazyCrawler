@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
 import time
-from typing import List, Optional, Set, Tuple
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.robotparser import RobotFileParser
 
 import requests
 
+from ._log import log
 from .config import HTTPConfig
 
 
@@ -162,13 +165,15 @@ def load_blacklist_from_excel(
     try:
         from openpyxl import load_workbook
     except Exception:
-        print("  [BLACKLIST] openpyxl not installed - Excel blacklist ignored")
+        log.warning("openpyxl not installed - Excel blacklist ignored "
+                    "(pip install openpyxl)")
         return []
 
     try:
         wb = load_workbook(excel_path, read_only=True, data_only=True)
     except Exception as e:
-        print(f"  [BLACKLIST] Error opening Excel: {type(e).__name__}: {e}")
+        log.warning("error opening Excel blacklist %s: %s: %s",
+                    excel_path, type(e).__name__, e)
         return []
 
     ws = wb[sheet_name] if (sheet_name and sheet_name in wb.sheetnames) else wb[wb.sheetnames[0]]
@@ -185,7 +190,7 @@ def load_blacklist_from_excel(
         wanted = column_name.strip().lower()
         target_idx = next((i for i, n in enumerate(header_lower) if n == wanted), None)
         if target_idx is None:
-            print(f"  [BLACKLIST] Column '{column_name}' not found - using first column")
+            log.warning("blacklist column '%s' not found - using first column", column_name)
             target_idx = 0
     else:
         candidates = {
@@ -249,7 +254,7 @@ class HTTPClient:
                 import urllib3
                 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             except Exception:
-                pass
+                log.debug("could not disable urllib3 InsecureRequestWarning", exc_info=True)
         self._session = self._make_session()
 
     def _make_session(self) -> requests.Session:
@@ -282,9 +287,10 @@ class HTTPClient:
             if content and len(content.strip()) > 200:
                 return content.strip()
         except ImportError:
-            pass
+            log.debug("trafilatura not installed - using basic HTML strip "
+                      "(pip install trafilatura for better extraction)")
         except Exception:
-            pass
+            log.debug("trafilatura.extract failed - using basic HTML strip", exc_info=True)
         plain = html_to_text_basic(html)
         return plain if (plain and len(plain) > 200) else None
 
@@ -340,13 +346,87 @@ class HTTPClient:
             except Exception as e:
                 last_exc = e
                 if attempt < cfg.max_retries:
+                    log.debug("fetch attempt %d/%d for %s failed: %s",
+                              attempt, cfg.max_retries, url, e)
                     time.sleep(cfg.backoff_base_sec * (2 ** (attempt - 1)))
                 else:
-                    print(f"    [FETCH] {type(e).__name__}: {str(e)[:160]}")
+                    log.warning("fetch failed for %s after %d attempts: %s: %s",
+                                url, cfg.max_retries, type(e).__name__, e)
                     return None, None, None
 
-        print(f"    [FETCH] Failed: {last_exc}")
+        log.warning("fetch failed for %s: %s", url, last_exc)
         return None, None, None
+
+    def get_text(self, url: str) -> Optional[str]:
+        """
+        Fetch a URL and return the raw response text (no extraction), honoring
+        the SSL/verify configuration. Used for robots.txt. None on any failure.
+        """
+        try:
+            resp = self._session.get(
+                url, timeout=(self.cfg.timeout_connect, self.cfg.timeout_read),
+                allow_redirects=True, verify=self._verify,
+            )
+            if resp.status_code >= 400:
+                return None
+            return resp.text or ""
+        except Exception as e:
+            log.debug("get_text failed for %s: %s", url, e)
+            return None
 
     def close(self) -> None:
         self._session.close()
+
+
+# =============================================================================
+# ROBOTS.TXT
+# =============================================================================
+
+class RobotsChecker:
+    """
+    Thread-safe robots.txt gate. Fetches each host's robots.txt once (honoring
+    the SSL config via HTTPClient) and answers can_fetch for the configured
+    User-Agent. A missing/unreachable/unparseable robots.txt means "allow"
+    (standard convention).
+    """
+
+    def __init__(self, http: HTTPClient, user_agent: str):
+        self._http = http
+        self._ua = user_agent or "*"
+        self._cache: Dict[str, Optional[RobotFileParser]] = {}
+        self._lock = threading.Lock()
+
+    def allowed(self, url: str) -> bool:
+        try:
+            p = urlparse(url)
+        except Exception:
+            return True
+        host = (p.netloc or "").lower()
+        if not host:
+            return True
+        rp = self._get(p.scheme or "https", host)
+        if rp is None:
+            return True
+        try:
+            return rp.can_fetch(self._ua, url)
+        except Exception:
+            log.debug("robots can_fetch errored for %s - allowing", url, exc_info=True)
+            return True
+
+    def _get(self, scheme: str, host: str) -> Optional[RobotFileParser]:
+        with self._lock:
+            if host in self._cache:
+                return self._cache[host]
+        robots_url = urljoin(f"{scheme}://{host}", "/robots.txt")
+        rp: Optional[RobotFileParser] = None
+        text = self._http.get_text(robots_url)
+        if text:
+            rp = RobotFileParser()
+            try:
+                rp.parse(text.splitlines())
+            except Exception:
+                log.debug("failed to parse robots.txt at %s - allowing", robots_url, exc_info=True)
+                rp = None
+        with self._lock:
+            self._cache[host] = rp
+        return rp

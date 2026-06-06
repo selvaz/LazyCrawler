@@ -27,6 +27,8 @@ import asyncio
 import concurrent.futures
 from typing import Optional
 
+from ._log import log
+
 _WARNED = False
 
 
@@ -47,8 +49,8 @@ def _render_sync(
         from playwright.sync_api import sync_playwright
     except ImportError:
         if not _WARNED:
-            print("    [BROWSER] Playwright not installed - falling back to requests "
-                  "(pip install playwright && playwright install chromium)")
+            log.warning("Playwright not installed - render_js falls back to requests "
+                        "(pip install playwright && playwright install chromium)")
             _WARNED = True
         return None
     try:
@@ -61,7 +63,8 @@ def _render_sync(
             finally:
                 browser.close()
     except Exception as e:
-        print(f"    [BROWSER] render error: {type(e).__name__}: {str(e)[:140]}")
+        log.warning("browser render failed for %s (%s: %s)",
+                    url, type(e).__name__, e, exc_info=True)
         return None
 
 
