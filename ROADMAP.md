@@ -31,3 +31,15 @@ by impact.
 - [ ] WebSearch `gemini` seed-URL crawling once LazyBridge surfaces grounding
       sources on the `Envelope`.
 - [ ] Migrate into `lazytools.connectors.web` when production-ready.
+
+## Acknowledged trade-offs (from ANALYSIS.md)
+
+- **Content-alias rows**: level-2 dedup stores identical content reached via
+  different URLs once per URL (a `pages` row each, same `content_hash`) to keep
+  per-URL provenance. This trades storage for provenance; a dedup-by-reference
+  option could be added for storage-sensitive deployments.
+- **`same_domain_only`** compares full netloc (incl. port), so
+  `example.com:8080` and `example.com` are treated as different hosts.
+- **No robots.txt** (see item 4): the crawler is intended for authorized
+  crawling only; it sends a browser-like User-Agent and honors only a global
+  `link_delay` (no per-domain rate limiting).

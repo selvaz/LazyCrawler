@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import io
 import re
-from typing import List, Optional, Tuple
+import ssl
+from typing import List, Optional, Tuple, Union
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
@@ -83,14 +84,36 @@ def _normalize_pdf_date(value: str) -> Optional[str]:
 # DOWNLOAD
 # =============================================================================
 
-def fetch_pdf_bytes(url: str, timeout: int = 60, user_agent: str = "Mozilla/5.0") -> bytes:
-    """Download the raw bytes of a PDF (urllib, independent of requests)."""
+def _ssl_context(verify: Union[bool, str]) -> Optional[ssl.SSLContext]:
+    """
+    Build an SSL context honoring the same ``verify`` semantics as requests:
+    False -> no verification; a path -> custom CA bundle; True -> system default.
+    """
+    if verify is False:
+        return ssl._create_unverified_context()
+    if isinstance(verify, str) and verify:
+        return ssl.create_default_context(cafile=verify)
+    return None  # urllib uses its default (system) verification
+
+
+def fetch_pdf_bytes(
+    url: str,
+    timeout: int = 60,
+    user_agent: str = "Mozilla/5.0",
+    verify: Union[bool, str] = True,
+) -> bytes:
+    """
+    Download the raw bytes of a PDF.
+
+    ``verify`` mirrors HTTPConfig (verify_ssl / ca_bundle) so PDF downloads work
+    in SSL-inspection environments (Avast / corporate proxies) just like HTML.
+    """
     req = Request(
         url,
         headers={"User-Agent": user_agent, "Accept": "application/pdf,*/*"},
         method="GET",
     )
-    with urlopen(req, timeout=timeout) as resp:
+    with urlopen(req, timeout=timeout, context=_ssl_context(verify)) as resp:
         return resp.read()
 
 
@@ -201,9 +224,16 @@ def _extract_tables_with_pdfplumber(data: bytes, max_tables: int = 10) -> str:
 # PUBLIC API
 # =============================================================================
 
-def extract_pdf(url: str, timeout: int = 60, user_agent: str = "Mozilla/5.0") -> Tuple[str, str, Optional[str]]:
+def extract_pdf(
+    url: str,
+    timeout: int = 60,
+    user_agent: str = "Mozilla/5.0",
+    verify: Union[bool, str] = True,
+) -> Tuple[str, str, Optional[str]]:
     """
     Download and extract a remote PDF.
+
+    ``verify`` mirrors HTTPConfig (verify_ssl / ca_bundle).
 
     Returns
     -------
@@ -211,7 +241,7 @@ def extract_pdf(url: str, timeout: int = 60, user_agent: str = "Mozilla/5.0") ->
         Empty text if the download fails or no parser is available.
     """
     try:
-        data = fetch_pdf_bytes(url, timeout=timeout, user_agent=user_agent)
+        data = fetch_pdf_bytes(url, timeout=timeout, user_agent=user_agent, verify=verify)
     except Exception:
         return "", "", None
     return extract_pdf_bytes(data)

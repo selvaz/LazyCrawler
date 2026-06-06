@@ -354,7 +354,8 @@ class WebCrawler:
         pdf_title = ""
         if is_pdf:
             pdf_text, pdf_title, pdf_pub = extract_pdf(
-                url, timeout=self.http_cfg.pdf_timeout, user_agent=self.http_cfg.user_agent
+                url, timeout=self.http_cfg.pdf_timeout, user_agent=self.http_cfg.user_agent,
+                verify=(self.http_cfg.ca_bundle or self.http_cfg.verify_ssl),
             )
             if pdf_pub:
                 published_iso = pdf_pub
