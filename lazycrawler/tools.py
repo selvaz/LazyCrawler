@@ -145,7 +145,10 @@ class CrawlerTools:
         Example:
             web_search("solid-state battery breakthroughs", max_results=5)
         """
-        out = self._search.run(query, content=self.content, links=self.links)
+        max_results = min(15, max(1, int(max_results)))
+        out = self._search.run(
+            query, content=self.content, links=self.links, max_results=max_results
+        )
         pages = [_brief(r.model_dump()) for r in out["results"]]
         return _dumps({"query": query, "found": out["pages_found"], "pages": pages})
 

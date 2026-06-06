@@ -22,6 +22,7 @@ gemini
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import List, Optional
 
 from ._log import log
@@ -107,9 +108,12 @@ class WebSearch:
         self.db = db
 
         # The crawler inherits the config, but search_cfg drives depth/domain.
-        base = crawler_cfg or CrawlerConfig()
-        base.max_depth = self.search_cfg.crawl_depth
-        base.same_domain_only = self.search_cfg.same_domain_only
+        # Copy first so WebSearch does not mutate a caller-owned CrawlerConfig.
+        base = replace(
+            crawler_cfg or CrawlerConfig(),
+            max_depth=self.search_cfg.crawl_depth,
+            same_domain_only=self.search_cfg.same_domain_only,
+        )
         self.crawler = WebCrawler(crawler_cfg=base, http_cfg=http_cfg, llm_cfg=llm_cfg, db=db)
 
     # -- public API -----------------------------------------------------------
@@ -122,6 +126,7 @@ class WebSearch:
         content: Optional[str] = None,
         links: Optional[str] = None,
         session_id: Optional[str] = None,
+        max_results: Optional[int] = None,
     ) -> dict:
         """
         Run search + crawl.
@@ -152,7 +157,9 @@ class WebSearch:
         if engine == "gemini":
             results = self._run_gemini(query, topic, content_mode)
         else:
-            results = self._run_duckduckgo(query, topic, content_mode, link_mode, session_id)
+            results = self._run_duckduckgo(
+                query, topic, content_mode, link_mode, session_id, max_results
+            )
 
         pages_found = sum(1 for r in results if r.status == "done")
         log.info("web search done: %d pages extracted (%d entries)", pages_found, len(results))
@@ -163,8 +170,11 @@ class WebSearch:
 
     # -- DuckDuckGo: URLs -> crawl --------------------------------------------
 
-    def _run_duckduckgo(self, query, topic, content_mode, link_mode, session_id) -> List[PageResult]:
-        urls = search_ddg_urls(query, self.search_cfg.n_results, self.crawler.blacklist)
+    def _run_duckduckgo(
+        self, query, topic, content_mode, link_mode, session_id, max_results
+    ) -> List[PageResult]:
+        n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
+        urls = search_ddg_urls(query, n_results, self.crawler.blacklist)
         log.info("%d URLs from DuckDuckGo", len(urls))
         for i, u in enumerate(urls, 1):
             log.debug("  %2d. %s", i, u[:90])

@@ -14,7 +14,15 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lazycrawler import CrawlerDB, CrawlerConfig, CrawlerTools, DBConfig, HTTPConfig
+from lazycrawler import (
+    CrawlerDB,
+    CrawlerConfig,
+    CrawlerTools,
+    DBConfig,
+    HTTPConfig,
+    SearchConfig,
+    WebSearch,
+)
 from lazycrawler import http as http_mod
 from lazycrawler import search as search_mod
 from lazycrawler.http import url_hash
@@ -76,11 +84,18 @@ sc = json.loads(ct.search_cached("subject"))
 check("finds cached page", sc["found"] >= 1 and "/start" in (sc["pages"][0]["url"] or ""))
 
 print("\n=== 4. web_search (stubbed engine) ===")
-ws = json.loads(ct.web_search("anything", max_results=3))
-check("web_search returns pages", ws["found"] >= 1 and len(ws["pages"]) >= 1)
+ws = json.loads(ct.web_search("anything", max_results=2))
+check("web_search honors max_results", ws["found"] == 2 and len(ws["pages"]) == 2)
 ct.close()
 
-print("\n=== 5. sentiment/notes round-trip through the DB ===")
+print("\n=== 5. WebSearch does not mutate caller config ===")
+cfg = CrawlerConfig(max_depth=7, same_domain_only=True)
+search = WebSearch(SearchConfig(crawl_depth=0, same_domain_only=False), crawler_cfg=cfg)
+check("caller max_depth preserved", cfg.max_depth == 7)
+check("caller same_domain_only preserved", cfg.same_domain_only is True)
+search.crawler.close()
+
+print("\n=== 6. sentiment/notes round-trip through the DB ===")
 ct2, db2 = make_tools()
 u = "https://site.example/sent"
 db2.upsert_page({"url": u, "url_hash": url_hash(u), "status": "done", "mode": "smart",
@@ -90,7 +105,7 @@ check("sentiment persisted", got["sentiment"] == "positive")
 check("notes persisted", got["notes"] == "tag:research")
 ct2.close()
 
-print("\n=== 6. as_tools() (requires LazyBridge) ===")
+print("\n=== 7. as_tools() (requires LazyBridge) ===")
 try:
     import lazybridge  # noqa: F401
     ct3, _ = make_tools()
