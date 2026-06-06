@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS pages (
   summary        TEXT,
   entities_json  TEXT,
   topics_json    TEXT,
+  sentiment      TEXT,
+  notes          TEXT,
   published_iso  TEXT,
   content_hash   TEXT,
   extract_json   TEXT,
@@ -121,7 +123,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
 _PAGE_FIELDS = [
     "url", "domain", "is_pdf", "status", "mode", "error", "raw_text",
     "clean_text", "title", "summary", "entities_json", "topics_json",
-    "published_iso", "content_hash", "extract_json", "crawled_at",
+    "sentiment", "notes", "published_iso", "content_hash", "extract_json",
+    "crawled_at",
 ]
 
 
@@ -150,11 +153,12 @@ class CrawlerDB:
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA foreign_keys=ON;")
         self.conn.executescript(_SCHEMA_SQL)
-        # Migration for DBs created before extract_json existed.
-        try:
-            self.conn.execute("ALTER TABLE pages ADD COLUMN extract_json TEXT")
-        except sqlite3.OperationalError:
-            log.debug("pages.extract_json column already present (no migration needed)")
+        # Migrations for DBs created before these columns existed.
+        for _col in ("extract_json", "sentiment", "notes"):
+            try:
+                self.conn.execute(f"ALTER TABLE pages ADD COLUMN {_col} TEXT")
+            except sqlite3.OperationalError:
+                log.debug("pages.%s column already present (no migration needed)", _col)
         if self.cfg.enable_fts:
             try:
                 self.conn.executescript(_FTS_SQL)

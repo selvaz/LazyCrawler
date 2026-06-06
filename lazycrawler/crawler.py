@@ -86,6 +86,8 @@ class PageResult(BaseModel):
     summary: Optional[str] = None       # smart content only
     entities: List[str] = Field(default_factory=list)
     topics: List[str] = Field(default_factory=list)
+    sentiment: Optional[str] = None     # smart: negative|neutral|positive
+    notes: Optional[str] = None         # smart: reserved research tags/notes
     data: Optional[dict] = None         # full structured object (custom schema)
     published_iso: Optional[str] = None
     is_pdf: bool = False
@@ -541,6 +543,8 @@ class WebCrawler:
             summary=getattr(extract, "summary", None) or None,
             entities=list(getattr(extract, "entities", None) or []),
             topics=list(getattr(extract, "topics", None) or []),
+            sentiment=getattr(extract, "sentiment", None) or None,
+            notes=getattr(extract, "notes", None) or None,
             data=data,
             published_iso=published_iso, is_pdf=is_pdf,
             depth=depth, source_url=source_url,
@@ -590,7 +594,8 @@ class WebCrawler:
             "status": result.status, "mode": result.mode, "error": result.error,
             "raw_text": raw_text, "clean_text": result.text, "title": result.title,
             "summary": result.summary, "entities": result.entities,
-            "topics": result.topics, "data": result.data,
+            "topics": result.topics, "sentiment": result.sentiment,
+            "notes": result.notes, "data": result.data,
             "published_iso": result.published_iso, "content_hash": content_hash,
         })
         if st.session_id:
@@ -612,6 +617,7 @@ class WebCrawler:
             title=row.get("title"), text=row.get("clean_text"),
             summary=row.get("summary"),
             entities=row.get("entities") or [], topics=row.get("topics") or [],
+            sentiment=row.get("sentiment"), notes=row.get("notes"),
             data=row.get("data"),
             published_iso=row.get("published_iso"), is_pdf=bool(row.get("is_pdf")),
             depth=depth, source_url=source_url,

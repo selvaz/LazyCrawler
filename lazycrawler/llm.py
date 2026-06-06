@@ -17,7 +17,7 @@ LazyBridge.
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -43,6 +43,10 @@ class PageExtract(BaseModel):
     clean_text: str = Field(default="", description="Cleaned main content")
     entities: List[str] = Field(default_factory=list, description="People, orgs, places, products")
     topics: List[str] = Field(default_factory=list, description="Main topics/themes")
+    sentiment: Literal["negative", "neutral", "positive"] = Field(
+        default="neutral", description="Overall tone of the content")
+    notes: str = Field(
+        default="", description="Reserved for research tags/notes; empty unless requested")
 
 
 class LinkSelection(BaseModel):

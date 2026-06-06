@@ -51,13 +51,15 @@ from .config import (
 from .crawler import PageResult, WebCrawler
 from .db import CrawlerDB
 from .search import WebSearch, search_ddg_urls
+from .tools import CrawlerTools
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "WebCrawler",
     "WebSearch",
     "CrawlerDB",
+    "CrawlerTools",
     "PageResult",
     "CrawlerConfig",
     "HTTPConfig",

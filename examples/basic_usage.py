@@ -138,3 +138,30 @@ print(f"\ncustom schema -> {results[0].data}")
 # )
 # results = crawler.crawl("https://example-spa.com/", mode="pure")
 # crawler.close()
+
+
+# %% 8. AS A LAZYBRIDGE TOOL — LazyCrawler is the tool, you build the agent
+from lazybridge import Agent, LLMEngine
+from lazycrawler import CrawlerTools
+
+db = CrawlerDB(DBConfig(db_path="research.db"))
+crawler_tools = CrawlerTools(
+    db=db,
+    crawler_cfg=CrawlerConfig(max_depth=1, max_pages=8, respect_robots=True),
+    http_cfg=HTTP,
+    llm_cfg=LLMConfig(model="gpt-4o-mini"),
+    content="smart",     # the agent gets summaries + sentiment per page
+    links="pure",
+)
+agent = Agent(engine=LLMEngine("gpt-4o-mini"), tools=crawler_tools.as_tools())
+answer = agent("Find 2-3 recent sources on perovskite solar cells and summarize them.")
+print(answer.text())
+crawler_tools.close()
+
+
+# %% 9. SENTIMENT in smart structured output
+crawler = WebCrawler(CrawlerConfig(max_depth=0, max_pages=1), HTTP,
+                     llm_cfg=LLMConfig(model="gpt-4o-mini"))
+r = crawler.crawl("https://en.wikipedia.org/wiki/Renewable_energy", content="smart")[0]
+crawler.close()
+print(f"sentiment={r.sentiment}  topics={r.topics}  notes={r.notes!r}")

@@ -8,7 +8,7 @@ There are **two independent LLM knobs**, toggled separately:
 
 | Knob | `pure` | `smart` |
 |------|--------|---------|
-| **content** (page text) | trafilatura/regex, raw clean text | LLM structured extraction (title, summary, entities, topics) |
+| **content** (page text) | trafilatura/regex, raw clean text | LLM structured extraction (title, summary, entities, topics, **sentiment**, notes) |
 | **links** (which to follow) | heuristic (first N, filtered) | LLM relevance ranking against the topic |
 
 `mode` is a shortcut that sets both; `content=` / `links=` override either one:
@@ -98,6 +98,42 @@ print(out["pages_found"], "pages")
 for r in out["results"]:
     print(r.title, "—", r.url)
 ```
+
+---
+
+## Use as a LazyBridge tool (LLM-friendly)
+
+LazyCrawler **is the tool** — you build the agent. `CrawlerTools` is a LazyBridge
+`ToolProvider`: drop its `as_tools()` straight into your own agent.
+
+```python
+from lazybridge import Agent, LLMEngine
+from lazycrawler import CrawlerDB, DBConfig, LLMConfig
+from lazycrawler.tools import CrawlerTools
+
+db = CrawlerDB(DBConfig(db_path="research.db"))
+crawler_tools = CrawlerTools(db=db, llm_cfg=LLMConfig(model="claude-haiku-4-5"))
+
+agent = Agent(engine=LLMEngine("claude-haiku-4-5"), tools=crawler_tools.as_tools())
+print(agent("Research solid-state batteries and summarize the 3 best sources.").text())
+```
+
+The four tools the agent gets (rich docstrings = the schema the model reads):
+
+| Tool | What the agent does with it |
+|------|------------------------------|
+| `search_cached(query)` | search already-crawled pages — **free, no network**; try this first |
+| `web_search(query, max_results)` | search the web + crawl results into clean pages |
+| `web_crawl(url, depth)` | crawl a specific URL (and optionally its links) |
+| `get_page(url)` | full stored text of one page (after the snippets above) |
+
+Tools return compact JSON (truncated snippets + a `get_page` hint), so the agent
+pulls full text only when it decides to — keeping token usage low. pure/smart
+modes are fixed at construction, so the LLM never reasons about cost knobs.
+LazyBridge is imported lazily, so pure-mode use never requires it.
+
+> Don't want the `ToolProvider`? Bound methods work directly too:
+> `Agent(tools=[crawler_tools.web_search, crawler_tools.get_page])`.
 
 ---
 

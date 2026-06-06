@@ -16,6 +16,17 @@ by impact.
       HTTP/LLM resources, thread-safe DB (`check_same_thread=False` + lock).
       `max_workers=1` keeps the original sequential DFS.
 
+## Done (v0.4)
+
+- [x] **LazyBridge tool layer** — `lazycrawler.tools.CrawlerTools` (a
+      `ToolProvider`): `as_tools()` returns `web_search` / `web_crawl` /
+      `search_cached` / `get_page` for `Agent(tools=...)`. Rich LLM-facing
+      docstrings, compact JSON returns, cache-first to save tokens. LazyCrawler
+      is the *tool*, not an agent. LazyBridge imported lazily.
+- [x] **sentiment + notes** in the smart structured output (`PageExtract`,
+      `PageResult`, DB): `sentiment` ∈ {negative, neutral, positive}; `notes`
+      reserved for research tags/annotations (empty by default).
+
 ## Done (v0.3)
 
 - [x] **robots.txt** honored by default (`CrawlerConfig.respect_robots`, on by
