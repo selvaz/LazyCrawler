@@ -31,7 +31,7 @@ search = ["ddgs>=2.0"]
 js = ["playwright>=1.40"]
 # Domain blacklist from an Excel file.
 excel = ["openpyxl>=3.1"]
-# Robust date parsing (published_iso extraction).
+# Robust date parsing (published_iso extraction).  
 dates = ["python-dateutil>=2.8"]
 # Markdown output (RAG ingestion).
 markdown = ["markdownify>=0.11"]
