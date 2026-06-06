@@ -11,6 +11,20 @@ duckduckgo (default)
     ddgs returns a list of URLs -> WebCrawler.crawl_many() crawls them.
     No LLM cost for the search step (the LLM is only used in smart mode for
     extraction/selection during the crawl).
+    Requires: pip install ddgs
+
+brave
+    Brave Search REST API: privacy-first, own index (not a Google/Bing wrapper).
+    Free tier: 2 000 queries/month (Data for Search plan).
+    Requires: BRAVE_API_KEY env var or SearchConfig(brave_api_key=...).
+    No additional Python dependency (uses ``requests``, already a core dep).
+
+tavily
+    Tavily Search API, optimised for LLM agents: returns pre-cleaned snippets
+    alongside URLs, well-suited for the smart-content RAG pipeline.
+    Free tier: 1 000 queries/month.
+    Requires: TAVILY_API_KEY env var or SearchConfig(tavily_api_key=...).
+    No additional Python dependency (uses ``requests``).
 
 gemini
     Grounded answer via LazyBridge native Google Search. The grounding source
@@ -22,6 +36,7 @@ gemini
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from typing import List, Optional
 
@@ -96,6 +111,189 @@ def search_ddg_urls(
                     break
     except Exception as e:
         log.warning("DuckDuckGo search failed (%s: %s)", type(e).__name__, e, exc_info=True)
+    return results
+
+
+# =============================================================================
+# BRAVE SEARCH
+# =============================================================================
+
+# Map the shared timelimit codes to Brave's freshness parameter.
+_BRAVE_FRESHNESS: dict = {"d": "pd", "w": "pw", "m": "pm", "y": "py"}
+
+
+def search_brave_urls(
+    query: str,
+    max_results: int,
+    api_key: str = "",
+    blacklist: Optional[List[str]] = None,
+    *,
+    safesearch: str = "moderate",
+    timelimit: Optional[str] = None,
+    region: str = "wt-wt",
+) -> List[str]:
+    """
+    Search Brave and return normalized URLs.
+
+    API reference: https://api.search.brave.com/res/v1/web/search
+    Free tier: 2 000 queries/month (Data for Search plan).
+
+    Parameters
+    ----------
+    api_key : str
+        Brave Search API key. Falls back to the ``BRAVE_API_KEY`` environment
+        variable when empty.
+    safesearch : str
+        "off" | "moderate" | "strict". Brave accepts these directly.
+    timelimit : str | None
+        "d"->past day, "w"->past week, "m"->past month, "y"->past year, None = any.
+    region : str
+        Region code (e.g. "us-en"). The first segment before "-" is used as the
+        ISO-3166-1 alpha-2 country code (e.g. "us-en" -> "US"). "wt-wt" = global.
+    """
+    key = api_key or os.getenv("BRAVE_API_KEY", "")
+    if not key:
+        raise RuntimeError(
+            "Brave Search requires an API key. "
+            "Set SearchConfig(brave_api_key=...) or the BRAVE_API_KEY environment variable. "
+            "Get a free key at https://brave.com/search/api/"
+        )
+
+    import requests as _requests
+
+    params: dict = {
+        "q": query,
+        "count": min(max_results * 2, 20),  # Brave max per request = 20
+        "safesearch": safesearch,
+    }
+    freshness = _BRAVE_FRESHNESS.get(timelimit or "")
+    if freshness:
+        params["freshness"] = freshness
+    # Derive country from region string ("us-en" -> "US", "wt-wt" -> omit)
+    if region and region != "wt-wt":
+        country = region.split("-")[0].upper()
+        if len(country) == 2:
+            params["country"] = country
+
+    headers = {
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+        "X-Subscription-Token": key,
+    }
+
+    results: List[str] = []
+    seen: set = set()
+    try:
+        resp = _requests.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params=params,
+            headers=headers,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        for r in (data.get("web") or {}).get("results") or []:
+            url = (r.get("url") or "").strip()
+            if not url or not url.startswith(("http://", "https://")):
+                continue
+            norm = normalize_url(url)
+            if is_excluded_url(norm) or is_blacklisted_domain(norm, blacklist):
+                continue
+            if norm in seen:
+                continue
+            seen.add(norm)
+            results.append(norm)
+            if len(results) >= max_results:
+                break
+    except Exception as e:
+        log.warning("Brave Search failed (%s: %s)", type(e).__name__, e, exc_info=True)
+    return results
+
+
+# =============================================================================
+# TAVILY SEARCH
+# =============================================================================
+
+# Map shared timelimit codes to Tavily's ``days`` parameter.
+_TAVILY_DAYS: dict = {"d": 1, "w": 7, "m": 30, "y": 365}
+
+
+def search_tavily_urls(
+    query: str,
+    max_results: int,
+    api_key: str = "",
+    blacklist: Optional[List[str]] = None,
+    *,
+    search_depth: str = "basic",
+    timelimit: Optional[str] = None,
+) -> List[str]:
+    """
+    Search Tavily and return normalized URLs.
+
+    API reference: https://docs.tavily.com/documentation/api-reference/endpoint/search
+    Free tier: 1 000 queries/month.
+
+    Parameters
+    ----------
+    api_key : str
+        Tavily API key. Falls back to the ``TAVILY_API_KEY`` environment variable.
+    search_depth : str
+        "basic" (faster, fewer credits) or "advanced" (deeper recall, 2x credits).
+    timelimit : str | None
+        "d"->1 day, "w"->7 days, "m"->30 days, "y"->365 days, None = any.
+    """
+    key = api_key or os.getenv("TAVILY_API_KEY", "")
+    if not key:
+        raise RuntimeError(
+            "Tavily requires an API key. "
+            "Set SearchConfig(tavily_api_key=...) or the TAVILY_API_KEY environment variable. "
+            "Get a free key at https://tavily.com/"
+        )
+
+    import requests as _requests
+
+    payload: dict = {
+        "query": query,
+        "max_results": min(max_results * 2, 20),
+        "search_depth": search_depth,
+        "include_answer": False,
+        "include_raw_content": False,
+    }
+    days = _TAVILY_DAYS.get(timelimit or "")
+    if days:
+        payload["days"] = days
+
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+
+    results: List[str] = []
+    seen: set = set()
+    try:
+        resp = _requests.post(
+            "https://api.tavily.com/search",
+            json=payload,
+            headers=headers,
+            timeout=20,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        for r in data.get("results") or []:
+            url = (r.get("url") or "").strip()
+            if not url or not url.startswith(("http://", "https://")):
+                continue
+            norm = normalize_url(url)
+            if is_excluded_url(norm) or is_blacklisted_domain(norm, blacklist):
+                continue
+            if norm in seen:
+                continue
+            seen.add(norm)
+            results.append(norm)
+            if len(results) >= max_results:
+                break
+    except Exception as e:
+        log.warning("Tavily search failed (%s: %s)", type(e).__name__, e, exc_info=True)
     return results
 
 
@@ -197,6 +395,12 @@ class WebSearch:
 
         if engine == "gemini":
             results = self._run_gemini(query, topic, content_mode)
+        elif engine == "brave":
+            results = self._run_brave(query, topic, content_mode, link_mode, session_id, max_results)
+        elif engine == "tavily":
+            results = self._run_tavily(
+                query, topic, content_mode, link_mode, session_id, max_results
+            )
         else:
             results = self._run_duckduckgo(
                 query, topic, content_mode, link_mode, session_id, max_results
@@ -240,6 +444,65 @@ class WebSearch:
             topic=topic,
             session_id=session_id,
             source="search:duckduckgo",
+        )
+
+    # -- Brave Search: URLs -> crawl ------------------------------------------
+
+    def _run_brave(
+        self, query, topic, content_mode, link_mode, session_id, max_results
+    ) -> List[PageResult]:
+        n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
+        scfg = self.search_cfg
+        urls = search_brave_urls(
+            query,
+            n_results,
+            scfg.brave_api_key,
+            self.crawler.blacklist,
+            safesearch=scfg.safesearch,
+            timelimit=scfg.timelimit,
+            region=scfg.region,
+        )
+        log.info("%d URLs from Brave Search", len(urls))
+        for i, u in enumerate(urls, 1):
+            log.debug("  %2d. %s", i, u[:90])
+        if not urls:
+            return []
+        return self.crawler.crawl_many(
+            urls,
+            content=content_mode,
+            links=link_mode,
+            topic=topic,
+            session_id=session_id,
+            source="search:brave",
+        )
+
+    # -- Tavily Search: URLs -> crawl -----------------------------------------
+
+    def _run_tavily(
+        self, query, topic, content_mode, link_mode, session_id, max_results
+    ) -> List[PageResult]:
+        n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
+        scfg = self.search_cfg
+        urls = search_tavily_urls(
+            query,
+            n_results,
+            scfg.tavily_api_key,
+            self.crawler.blacklist,
+            search_depth=scfg.tavily_search_depth,
+            timelimit=scfg.timelimit,
+        )
+        log.info("%d URLs from Tavily Search", len(urls))
+        for i, u in enumerate(urls, 1):
+            log.debug("  %2d. %s", i, u[:90])
+        if not urls:
+            return []
+        return self.crawler.crawl_many(
+            urls,
+            content=content_mode,
+            links=link_mode,
+            topic=topic,
+            session_id=session_id,
+            source="search:tavily",
         )
 
     # -- Gemini grounded (answer mode) ----------------------------------------
