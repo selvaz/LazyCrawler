@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lazycrawler"
-version = "0.7.0"
+version = "0.8.0"
 description = "Web crawler + search with pure (no-LLM) and smart (LazyBridge LLM) modes, SQLite persistence and 3-level dedup."
 readme = "README.md"
 requires-python = ">=3.10"
