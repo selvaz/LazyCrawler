@@ -272,6 +272,44 @@ CrawlerConfig(extract_artifacts=True, enrich_artifacts=True)  # + vision LLM (sm
 **PDFs**: with the `pdf` extra, tables (pdfplumber) and embedded images (PyMuPDF)
 are also emitted as artifacts.
 
+### Markdown anchors + `render_for_rag()` (multimodal RAG)
+
+By default the Markdown (`emit_markdown`) and the artifacts are two **independent**
+representations — tables/images stay inline in the Markdown *and* are copied into
+the `artifacts` table. The best-practice layout for RAG is instead **inline
+anchors + externalized content**: set `markdown_artifact_anchors=True` and each
+table/image in the Markdown is replaced by a stable placeholder
+`[[artifact:<hash>]]` (no duplication, position + local context preserved), while
+the heavy/structured content lives in `artifacts`.
+
+```python
+crawler = WebCrawler(
+    CrawlerConfig(extract_artifacts=True, emit_markdown=True,
+                  markdown_artifact_anchors=True),
+    db=db,
+)
+r = crawler.crawl("https://example.com/report", mode="pure")[0]
+# r.markdown -> "...intro [[artifact:ab12cd]] outro..."  (table externalized)
+```
+
+`render_for_rag(page, artifacts=None)` recomposes the two into one chunk-ready
+document: the narrative with its inline anchors **plus** a resolvable *Artifacts*
+appendix pairing each anchor with its Markdown table / image reference / vision
+summary.
+
+```python
+from lazycrawler import render_for_rag
+
+doc = render_for_rag(r)                       # from a PageResult
+# or from the DB later:
+row  = db.get_page(url_hash("https://example.com/report"))
+doc  = render_for_rag(row, artifacts=db.get_artifacts(url_hash=row["url_hash"]))
+```
+
+This is the multi-vector pattern: embed the artifact **summary** for retrieval,
+return the **full** table/image to the model — tables kept whole, images carried
+as a reference + text surrogate (caption / vision description).
+
 ## SSRF guard (agent safety)
 
 When the crawler is driven by an LLM agent (`CrawlerTools`), the model can pass

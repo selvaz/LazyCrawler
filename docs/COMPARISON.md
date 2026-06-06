@@ -36,7 +36,7 @@ An honest evaluation of LazyCrawler against the main web-crawling frameworks.
 | Anti-bot / proxy | ❌ | ✅ | ✅ | ~ | ~ |
 | SSRF guard | ✅ (agent path) | ❌ | n/a (hosted) | ❌ | ~ |
 | Provider-agnostic LLM | ✅ LazyBridge | ✅ | ~ | ✅ | — |
-| Maturity / community | v0.7, solo | high | high | medium | very high |
+| Maturity / community | v0.8, solo | high | high | medium | very high |
 
 ## Where LazyCrawler is genuinely strong
 
