@@ -112,6 +112,10 @@ class Artifact(BaseModel):
     blob: Optional[bytes] = Field(default=None, exclude=True, repr=False)
 
     def ensure_content_hash(self) -> "Artifact":
+        # Deterministic per element content (NOT position), so the same artifact
+        # gets the same hash whether reached via extraction or anchoring, and
+        # identical artifacts dedup. This hash is the join key used by the
+        # Markdown anchors ([[artifact:<hash>]]) and render_for_rag().
         if not self.content_hash:
             basis = (
                 self.src_url
@@ -121,8 +125,13 @@ class Artifact(BaseModel):
                 or self.alt
                 or ""
             )
-            self.content_hash = sha256_hex(f"{self.artifact_type}:{self.position}:{basis}")
+            self.content_hash = sha256_hex(f"{self.artifact_type}:{basis}")
         return self
+
+
+def artifact_anchor(content_hash: str) -> str:
+    """The inline Markdown placeholder token for an artifact (join key)."""
+    return f"[[artifact:{content_hash}]]"
 
 
 # =============================================================================
@@ -239,6 +248,133 @@ def _looks_like_chart(src: str, alt: str, caption: str, classes: str) -> bool:
 # =============================================================================
 
 
+def _artifact_for_element(
+    el: Any,
+    base_url: str,
+    *,
+    want: set,
+    min_image_dim: int,
+    context_chars: int,
+    max_svg_chars: int,
+    same_domain_images: bool,
+    page_host: str,
+) -> Optional[Artifact]:
+    """Build an Artifact from a single <table>/<img>/<svg> element, or None to skip."""
+    name = el.name
+    if name == "table":
+        if "table" not in want:
+            return None
+        rows = _parse_table(el)
+        if rows is None:
+            return None
+        caption = _table_caption(el)
+        return Artifact(
+            artifact_type="table",
+            caption=caption or None,
+            content=_rows_to_markdown(rows),
+            content_format="markdown",
+            data=rows,
+            meta={"rows": len(rows), "cols": max(len(r) for r in rows)},
+        )
+    if name == "img":
+        if not (want & {"image", "chart"}):
+            return None
+        raw_src = (el.get("src") or el.get("data-src") or el.get("data-original") or "").strip()
+        if not raw_src or raw_src.startswith("data:"):
+            return None
+        try:
+            src = normalize_url(urljoin(base_url, raw_src))
+        except Exception:
+            return None
+        if not src.startswith(("http://", "https://")):
+            return None
+        alt = _clean(el.get("alt"))
+        w, h = _img_dims(el)
+        if _is_noise_image(src, alt, w, h, min_image_dim):
+            return None
+        if same_domain_images and page_host and get_hostname(src) != page_host:
+            return None
+        caption = _figure_caption(el)
+        classes = " ".join(el.get("class") or [])
+        atype: ArtifactType = "chart" if _looks_like_chart(src, alt, caption, classes) else "image"
+        if atype not in want:
+            return None
+        return Artifact(
+            artifact_type=atype,
+            src_url=src,
+            alt=alt or None,
+            caption=caption or None,
+            context=None if caption else (_surrounding_text(el, context_chars) or None),
+            content_format="url",
+            width=w,
+            height=h,
+        )
+    if name == "svg":
+        if not (want & {"svg", "chart"}):
+            return None
+        caption = _figure_caption(el)
+        classes = " ".join(el.get("class") or [])
+        n_prims = len(el.find_all(["path", "rect", "circle", "line", "polyline"]))
+        is_chart = n_prims >= 5 or _looks_like_chart("", "", caption, classes)
+        atype = "chart" if (is_chart and "chart" in want) else "svg"
+        if atype not in want:
+            return None
+        return Artifact(
+            artifact_type=atype,
+            caption=caption or None,
+            context=None if caption else (_surrounding_text(el, context_chars) or None),
+            content=str(el)[:max_svg_chars],
+            content_format="svg",
+            meta={"primitives": n_prims},
+        )
+    return None
+
+
+def _extract_from_soup(
+    soup: Any,
+    base_url: str,
+    *,
+    want: set,
+    min_image_dim: int,
+    context_chars: int,
+    max_artifacts: int,
+    max_svg_chars: int,
+    same_domain_images: bool,
+    anchor: bool,
+) -> List[Artifact]:
+    """
+    Walk the soup in **document order** over <table>/<img>/<svg>, building
+    Artifacts. When ``anchor`` is True each extracted element is replaced in the
+    soup by an inline ``[[artifact:<hash>]]`` placeholder (mutates the soup).
+    """
+    out: List[Artifact] = []
+    page_host = get_hostname(base_url)
+    for el in soup.find_all(["table", "img", "svg"]):
+        art = _artifact_for_element(
+            el,
+            base_url,
+            want=want,
+            min_image_dim=min_image_dim,
+            context_chars=context_chars,
+            max_svg_chars=max_svg_chars,
+            same_domain_images=same_domain_images,
+            page_host=page_host,
+        )
+        if art is None:
+            continue
+        art.position = len(out)
+        art.ensure_content_hash()
+        out.append(art)
+        if anchor:
+            try:
+                el.replace_with(f"\n\n{artifact_anchor(art.content_hash)}\n\n")
+            except Exception:
+                log.debug("artifact anchor replacement failed", exc_info=True)
+        if len(out) >= max_artifacts:
+            break
+    return out
+
+
 def extract_html_artifacts(
     html: str,
     base_url: str,
@@ -251,7 +387,8 @@ def extract_html_artifacts(
     same_domain_images: bool = False,
 ) -> List[Artifact]:
     """
-    Extract tables / images / figures / charts / SVG from an HTML page.
+    Extract tables / images / figures / charts / SVG from an HTML page, in
+    document order.
 
     Parameters
     ----------
@@ -273,104 +410,57 @@ def extract_html_artifacts(
     except ImportError:
         log.warning("beautifulsoup4 not installed - artifact extraction disabled")
         return []
-
-    want = types or {"table", "image", "figure", "svg", "chart"}
-    soup = BeautifulSoup(html, "html.parser")
-    out: List[Artifact] = []
-    pos = 0
-    page_host = get_hostname(base_url)
-
-    # -- tables ---------------------------------------------------------------
-    if "table" in want:
-        for table in soup.find_all("table"):
-            rows = _parse_table(table)
-            if rows is None:
-                continue
-            caption = _table_caption(table)
-            out.append(
-                Artifact(
-                    artifact_type="table",
-                    position=pos,
-                    caption=caption or None,
-                    content=_rows_to_markdown(rows),
-                    content_format="markdown",
-                    data=rows,
-                    meta={"rows": len(rows), "cols": max(len(r) for r in rows)},
-                ).ensure_content_hash()
-            )
-            pos += 1
-            if len(out) >= max_artifacts:
-                return out
-
-    # -- images / charts ------------------------------------------------------
-    if want & {"image", "chart"}:
-        for img in soup.find_all("img"):
-            raw_src = (
-                img.get("src") or img.get("data-src") or img.get("data-original") or ""
-            ).strip()
-            if not raw_src or raw_src.startswith("data:"):
-                continue
-            try:
-                src = normalize_url(urljoin(base_url, raw_src))
-            except Exception:
-                continue
-            if not src.startswith(("http://", "https://")):
-                continue
-            alt = _clean(img.get("alt"))
-            w, h = _img_dims(img)
-            if _is_noise_image(src, alt, w, h, min_image_dim):
-                continue
-            if same_domain_images and page_host and get_hostname(src) != page_host:
-                continue
-            caption = _figure_caption(img)
-            classes = " ".join(img.get("class") or [])
-            is_chart = _looks_like_chart(src, alt, caption, classes)
-            atype: ArtifactType = "chart" if is_chart else "image"
-            if atype not in want:
-                continue
-            out.append(
-                Artifact(
-                    artifact_type=atype,
-                    position=pos,
-                    src_url=src,
-                    alt=alt or None,
-                    caption=caption or None,
-                    context=None if caption else (_surrounding_text(img, context_chars) or None),
-                    content_format="url",
-                    width=w,
-                    height=h,
-                ).ensure_content_hash()
-            )
-            pos += 1
-            if len(out) >= max_artifacts:
-                return out
-
-    # -- inline SVG (often charts) -------------------------------------------
-    if want & {"svg", "chart"}:
-        for svg in soup.find_all("svg"):
-            markup = str(svg)[:max_svg_chars]
-            classes = " ".join(svg.get("class") or [])
-            caption = _figure_caption(svg)
-            # treat as chart when it has many drawing primitives or a chart hint
-            n_prims = len(svg.find_all(["path", "rect", "circle", "line", "polyline"]))
-            is_chart = n_prims >= 5 or _looks_like_chart("", "", caption, classes)
-            atype = "chart" if (is_chart and "chart" in want) else "svg"
-            if atype not in want:
-                continue
-            out.append(
-                Artifact(
-                    artifact_type=atype,
-                    position=pos,
-                    caption=caption or None,
-                    context=None if caption else (_surrounding_text(svg, context_chars) or None),
-                    content=markup,
-                    content_format="svg",
-                    meta={"primitives": n_prims},
-                ).ensure_content_hash()
-            )
-            pos += 1
-            if len(out) >= max_artifacts:
-                return out
-
+    out = _extract_from_soup(
+        BeautifulSoup(html, "html.parser"),
+        base_url,
+        want=types or {"table", "image", "figure", "svg", "chart"},
+        min_image_dim=min_image_dim,
+        context_chars=context_chars,
+        max_artifacts=max_artifacts,
+        max_svg_chars=max_svg_chars,
+        same_domain_images=same_domain_images,
+        anchor=False,
+    )
     log.debug("artifacts: extracted %d from %s", len(out), base_url[:80])
     return out
+
+
+def extract_html_artifacts_anchored(
+    html: str,
+    base_url: str,
+    *,
+    types: Optional[set] = None,
+    min_image_dim: int = 48,
+    context_chars: int = 200,
+    max_artifacts: int = 100,
+    max_svg_chars: int = 20_000,
+    same_domain_images: bool = False,
+) -> "Tuple[List[Artifact], str]":
+    """
+    Like :func:`extract_html_artifacts`, but also return the HTML with every
+    extracted artifact replaced by an inline ``[[artifact:<hash>]]`` placeholder
+    (document order preserved). Feed that HTML to ``html_to_markdown`` to get a
+    Markdown document where tables/images live as anchors into the artifact store
+    instead of being duplicated inline.
+    """
+    if not html:
+        return [], html
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        log.warning("beautifulsoup4 not installed - artifact extraction disabled")
+        return [], html
+    soup = BeautifulSoup(html, "html.parser")
+    out = _extract_from_soup(
+        soup,
+        base_url,
+        want=types or {"table", "image", "figure", "svg", "chart"},
+        min_image_dim=min_image_dim,
+        context_chars=context_chars,
+        max_artifacts=max_artifacts,
+        max_svg_chars=max_svg_chars,
+        same_domain_images=same_domain_images,
+        anchor=True,
+    )
+    log.debug("artifacts: extracted+anchored %d from %s", len(out), base_url[:80])
+    return out, str(soup)

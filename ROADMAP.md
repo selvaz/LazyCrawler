@@ -68,6 +68,20 @@ by impact.
       logger (`set_log_level`); `CrawlerConfig.strict` for fail-fast.
 - [x] PDF downloads honor `verify_ssl` / `ca_bundle` (was the §4.1 bug).
 
+## Done (v0.8)
+
+- [x] **Markdown artifact anchors** — `CrawlerConfig(markdown_artifact_anchors=True)`
+      replaces each table/image in the rendered Markdown with an inline
+      `[[artifact:<hash>]]` placeholder (no duplication; position + local context
+      preserved), externalizing the content to the `artifacts` table.
+- [x] **`render_for_rag(page, artifacts=None)`** — recomposes the narrative (with
+      inline anchors) + a resolvable *Artifacts* appendix into one chunk-ready
+      document (multi-vector pattern: summary for retrieval, full content to the
+      model). Works from a `PageResult` or DB rows.
+- [x] **Document-order artifact extraction** — single-pass walk so artifact
+      `position` follows reading order; deterministic per-content hashes (the join
+      key shared by anchors and `render_for_rag`).
+
 ## Done (v0.7)
 
 - [x] **Non-textual artifacts** — `CrawlerConfig(extract_artifacts=True)` extracts

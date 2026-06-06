@@ -3,8 +3,16 @@
 
 from __future__ import annotations
 
-from lazycrawler.artifacts import Artifact, bytes_sha256, extract_html_artifacts, sniff_image
+from lazycrawler.artifacts import (
+    Artifact,
+    artifact_anchor,
+    bytes_sha256,
+    extract_html_artifacts,
+    extract_html_artifacts_anchored,
+    sniff_image,
+)
 from lazycrawler.http import url_hash
+from lazycrawler.markdown import html_to_markdown, render_for_rag
 
 TABLE_HTML = (
     "<table><caption>Q1</caption>"
@@ -150,6 +158,65 @@ def test_crawler_reloads_artifacts_from_cache(stub_fetch, tmp_db, make_crawler):
     r2 = c.crawl(url, mode="pure", session_id="warm")[0]
     assert r2.from_cache is True
     assert any(a.artifact_type == "table" for a in r2.artifacts)
+
+
+# -- Markdown anchoring + render_for_rag --------------------------------------
+
+
+def test_anchored_extraction_replaces_with_placeholders():
+    arts, anchored = extract_html_artifacts_anchored(
+        f"<body><p>Intro.</p>{TABLE_HTML}<p>Mid.</p>{CHART_HTML}</body>", "https://e.org/p"
+    )
+    assert len(arts) == 2
+    for a in arts:
+        assert artifact_anchor(a.content_hash) in anchored
+    # original table cells should be gone from the anchored HTML
+    assert "Region" not in anchored and "<table" not in anchored
+
+
+def test_anchored_markdown_has_anchors_not_tables():
+    arts, anchored = extract_html_artifacts_anchored(
+        f"<body>{TABLE_HTML}</body>", "https://e.org/p"
+    )
+    md = html_to_markdown(anchored, "https://e.org/p")
+    assert artifact_anchor(arts[0].content_hash) in md
+    assert "| Region |" not in md  # table not duplicated inline
+
+
+def test_crawler_markdown_anchors(stub_fetch, tmp_db, make_crawler):
+    url = "https://site.example/anchored"
+    stub_fetch(links_map={url: TABLE_HTML + CHART_HTML})
+    c = make_crawler(
+        db=tmp_db, extract_artifacts=True, emit_markdown=True, markdown_artifact_anchors=True
+    )
+    r = c.crawl(url, mode="pure", session_id="anch")[0]
+    assert r.markdown and "[[artifact:" in r.markdown
+    assert "| Region |" not in r.markdown  # externalized, not inline
+    # every artifact's anchor appears in the markdown
+    for a in r.artifacts:
+        assert artifact_anchor(a.content_hash) in r.markdown
+
+
+def test_render_for_rag_pairs_anchors_with_content():
+    page = {"title": "Report", "markdown": "Intro [[artifact:X]] outro.", "clean_text": "Intro"}
+    arts = extract_html_artifacts(f"<body>{TABLE_HTML}</body>", "https://e.org/p")
+    doc = render_for_rag(page, artifacts=arts)
+    assert "# Report" in doc
+    assert "## Artifacts" in doc
+    # the appendix resolves the table anchor to its Markdown content
+    assert artifact_anchor(arts[0].content_hash) in doc
+    assert "| Region | Rev |" in doc
+
+
+def test_render_for_rag_from_pageresult(stub_fetch, make_crawler):
+    url = "https://site.example/rag"
+    stub_fetch(links_map={url: TABLE_HTML})
+    c = make_crawler(extract_artifacts=True, emit_markdown=True, markdown_artifact_anchors=True)
+    r = c.crawl(url, mode="pure")[0]
+    doc = render_for_rag(r)
+    # inline anchor in body + resolvable block in the appendix
+    assert doc.count(artifact_anchor(r.artifacts[0].content_hash)) >= 2
+    assert "## Artifacts" in doc and "| Region | Rev |" in doc
 
 
 def test_crawler_downloads_artifact_bytes(stub_fetch, tmp_db, make_crawler, monkeypatch):

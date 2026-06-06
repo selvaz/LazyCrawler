@@ -47,7 +47,13 @@ from typing import Any, List, Literal, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 
 from ._log import log
-from .artifacts import Artifact, bytes_sha256, extract_html_artifacts, sniff_image
+from .artifacts import (
+    Artifact,
+    bytes_sha256,
+    extract_html_artifacts,
+    extract_html_artifacts_anchored,
+    sniff_image,
+)
 from .config import CrawlerConfig, HTTPConfig, LLMConfig
 from .db import CrawlerDB
 from .http import (
@@ -584,16 +590,20 @@ class WebCrawler:
                 st, url, uh, preclean, title, published_iso, is_pdf, depth, source_url, res
             )
 
+        # optional artifacts (tables / images / charts) — HTML and PDF.
+        # (Run before Markdown so anchoring can replace artifacts with placeholders.)
+        anchored_html: Optional[str] = None
+        if cfg.extract_artifacts:
+            result.artifacts, anchored_html = self._collect_artifacts(
+                st, html, url, pdf_bytes, is_pdf, res
+            )
+
         # optional Markdown render (RAG); HTML-only, skip PDFs
         if cfg.emit_markdown and html and not is_pdf:
             from .markdown import html_to_markdown
 
-            md = html_to_markdown(html, url)
+            md = html_to_markdown(anchored_html or html, url)
             result.markdown = (md[: cfg.max_chars_pure] if md else None) or None
-
-        # optional artifacts (tables / images / charts) — HTML and PDF
-        if cfg.extract_artifacts:
-            result.artifacts = self._collect_artifacts(st, html, url, pdf_bytes, is_pdf, res)
 
         self._emit(
             st,
@@ -806,13 +816,22 @@ class WebCrawler:
 
     # -- artifacts ------------------------------------------------------------
 
-    def _collect_artifacts(self, st, html, url, pdf_bytes, is_pdf, res) -> List[Artifact]:
-        """Extract artifacts (HTML or PDF), then download bytes / enrich as configured."""
+    def _collect_artifacts(
+        self, st, html, url, pdf_bytes, is_pdf, res
+    ) -> "Tuple[List[Artifact], Optional[str]]":
+        """
+        Extract artifacts (HTML or PDF), then download bytes / enrich as configured.
+        Returns ``(artifacts, anchored_html)`` — ``anchored_html`` is the HTML with
+        each artifact replaced by a ``[[artifact:<hash>]]`` placeholder when Markdown
+        anchoring is enabled, else None.
+        """
         cfg = self.cfg
         want = set(cfg.artifact_types or ())
         if not want:
-            return []
+            return [], None
         arts: List[Artifact] = []
+        anchored_html: Optional[str] = None
+        anchor = bool(cfg.emit_markdown and cfg.markdown_artifact_anchors and html and not is_pdf)
         try:
             if is_pdf and pdf_bytes:
                 from .pdf import extract_pdf_artifacts
@@ -825,21 +844,23 @@ class WebCrawler:
                 ):
                     arts.append(Artifact(**d))
             elif html:
-                arts = extract_html_artifacts(
-                    html,
-                    url,
+                opts = dict(
                     types=want,
                     min_image_dim=cfg.min_image_dim,
                     context_chars=cfg.artifact_context_chars,
                     max_artifacts=cfg.max_artifacts_per_page,
                     same_domain_images=cfg.same_domain_images,
                 )
+                if anchor:
+                    arts, anchored_html = extract_html_artifacts_anchored(html, url, **opts)
+                else:
+                    arts = extract_html_artifacts(html, url, **opts)
         except Exception:
             if cfg.strict:
                 raise
             log.exception("artifact extraction failed for %s", url[:80])
-            return []
-        return self._post_process_artifacts(st, arts, res)
+            return [], None
+        return self._post_process_artifacts(st, arts, res), anchored_html
 
     def _post_process_artifacts(self, st, arts: List[Artifact], res) -> List[Artifact]:
         cfg = self.cfg

@@ -211,3 +211,22 @@ for a in r.artifacts[:10]:
 # reachable later from the DB (or the agent get_artifacts(url) tool)
 print("tables in DB:", len(db.get_artifacts(session_id=None, artifact_type="table")))
 db.close()
+
+
+# %% 12. RAG-ready rendering — Markdown anchors + render_for_rag()
+from lazycrawler import render_for_rag
+
+with WebCrawler(
+    CrawlerConfig(
+        max_depth=0,
+        max_pages=1,
+        emit_markdown=True,
+        extract_artifacts=True,
+        markdown_artifact_anchors=True,  # tables/images -> [[artifact:<hash>]] in the markdown
+    ),
+    HTTP,
+) as crawler:
+    r = crawler.crawl("https://en.wikipedia.org/wiki/Photovoltaics", mode="pure")[0]
+print("\nmarkdown has anchors:", "[[artifact:" in (r.markdown or ""))
+doc = render_for_rag(r)  # narrative + inline anchors + resolvable Artifacts appendix
+print(f"RAG document: {len(doc)} chars; artifacts appendix:", "## Artifacts" in doc)

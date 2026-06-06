@@ -108,6 +108,13 @@ class CrawlerConfig:
         caption / chart data / table summary) via LazyBridge. Default False.
     max_artifacts_to_enrich : int
         Per-page cap on LLM-enriched artifacts (cost control).
+    markdown_artifact_anchors : bool
+        If True (with emit_markdown + extract_artifacts), replace each table/image
+        in the rendered Markdown with an inline ``[[artifact:<hash>]]`` placeholder
+        instead of duplicating it. Keeps narrative + position, externalizes the
+        heavy/structured content to the ``artifacts`` table; ``render_for_rag()``
+        recomposes the two for RAG ingestion. Default False (tables/images stay
+        inline). HTML only.
     exclude_patterns : list[str] | None
         Regex fragments used to drop uninteresting links during crawling. None
         uses the built-in default (login/cart/checkout/account, tracking,
@@ -147,6 +154,7 @@ class CrawlerConfig:
     same_domain_images: bool = False
     enrich_artifacts: bool = False
     max_artifacts_to_enrich: int = 8
+    markdown_artifact_anchors: bool = False
 
     max_chars_content: int = 100_000
     max_chars_pure: int = 10_000
@@ -228,7 +236,7 @@ class HTTPConfig:
         redirects internally).
     """
 
-    user_agent: str = "LazyCrawler/0.7 (+https://github.com/selvaz/lazycrawler)"
+    user_agent: str = "LazyCrawler/0.8 (+https://github.com/selvaz/lazycrawler)"
     timeout_connect: int = 5
     timeout_read: int = 25
     max_retries: int = 4
