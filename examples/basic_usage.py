@@ -37,10 +37,9 @@ from lazycrawler import (
 HTTP = HTTPConfig(link_delay=0.5, verify_ssl=False)  # verify_ssl: see README
 
 
-# %% 1. PURE mode — no LLM, no cost
-crawler = WebCrawler(CrawlerConfig(max_depth=0, max_pages=3), HTTP)
-results = crawler.crawl("https://en.wikipedia.org/wiki/Web_crawler", mode="pure")
-crawler.close()
+# %% 1. PURE mode — no LLM, no cost (context-manager form auto-closes resources)
+with WebCrawler(CrawlerConfig(max_depth=0, max_pages=3), HTTP) as crawler:
+    results = crawler.crawl("https://en.wikipedia.org/wiki/Web_crawler", mode="pure")
 for r in results:
     print(f"[{r.status}] {r.title}  ({len(r.text or '')} chars)")
 
@@ -180,3 +179,11 @@ crawler = WebCrawler(
 r = crawler.crawl("https://en.wikipedia.org/wiki/Renewable_energy", content="smart")[0]
 crawler.close()
 print(f"sentiment={r.sentiment}  topics={r.topics}  notes={r.notes!r}")
+
+
+# %% 10. MARKDOWN output — for RAG ingestion (pip install lazycrawler[markdown])
+with WebCrawler(CrawlerConfig(max_depth=0, max_pages=1, emit_markdown=True), HTTP) as crawler:
+    r = crawler.crawl("https://en.wikipedia.org/wiki/Retrieval-augmented_generation", mode="pure")[
+        0
+    ]
+print(f"\nmarkdown ({len(r.markdown or '')} chars):\n{(r.markdown or '')[:300]}")

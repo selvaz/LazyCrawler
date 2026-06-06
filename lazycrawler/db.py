@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS pages (
   topics_json    TEXT,
   sentiment      TEXT,
   notes          TEXT,
+  markdown       TEXT,
   published_iso  TEXT,
   content_hash   TEXT,
   extract_json   TEXT,
@@ -136,6 +137,7 @@ _PAGE_FIELDS = [
     "topics_json",
     "sentiment",
     "notes",
+    "markdown",
     "published_iso",
     "content_hash",
     "extract_json",
@@ -171,7 +173,7 @@ class CrawlerDB:
         self.conn.execute("PRAGMA foreign_keys=ON;")
         self.conn.executescript(_SCHEMA_SQL)
         # Migrations for DBs created before these columns existed.
-        for _col in ("extract_json", "sentiment", "notes", "links_json"):
+        for _col in ("extract_json", "sentiment", "notes", "links_json", "markdown"):
             try:
                 self.conn.execute(f"ALTER TABLE pages ADD COLUMN {_col} TEXT")
             except sqlite3.OperationalError:
@@ -435,3 +437,10 @@ class CrawlerDB:
 
     def close(self) -> None:
         self.conn.close()
+
+    def __enter__(self) -> "CrawlerDB":
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        self.close()
+        return False

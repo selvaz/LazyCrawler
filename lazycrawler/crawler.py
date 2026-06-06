@@ -55,6 +55,7 @@ from .http import (
     compile_exclude,
     get_base_domain,
     is_blacklisted_domain,
+    is_blocked_address,
     load_blacklist_from_excel,
     normalize_url,
 )
@@ -104,6 +105,7 @@ class PageResult(BaseModel):
     source_url: Optional[str] = None
     error: Optional[str] = None
     from_cache: bool = False
+    markdown: Optional[str] = None  # optional HTML->Markdown render (emit_markdown)
 
 
 # =============================================================================
@@ -399,6 +401,22 @@ class WebCrawler:
         url = normalize_url(url)
         if is_blacklisted_domain(url, self.blacklist):
             return []
+        if self.http_cfg.block_private_addresses and is_blocked_address(url):
+            log.info("SSRF guard: blocking private/loopback address %s", url)
+            self._emit(
+                st,
+                PageResult(
+                    url=url,
+                    url_hash=_url_hash(url),
+                    status="fetch_error",
+                    mode=st.content_mode,
+                    depth=depth,
+                    source_url=source_url,
+                    error="Blocked private/loopback address (SSRF guard)",
+                ),
+                count=False,
+            )
+            return []
         if not self._mark_visited(st, url):
             return []
         uh = _url_hash(url)
@@ -563,6 +581,13 @@ class WebCrawler:
             result = self._smart_extract(
                 st, url, uh, preclean, title, published_iso, is_pdf, depth, source_url, res
             )
+
+        # optional Markdown render (RAG); HTML-only, skip PDFs
+        if cfg.emit_markdown and html and not is_pdf:
+            from .markdown import html_to_markdown
+
+            md = html_to_markdown(html, url)
+            result.markdown = (md[: cfg.max_chars_pure] if md else None) or None
 
         self._emit(
             st,
@@ -864,6 +889,7 @@ class WebCrawler:
                 "sentiment": result.sentiment,
                 "notes": result.notes,
                 "data": result.data,
+                "markdown": result.markdown,
                 "published_iso": result.published_iso,
                 "content_hash": content_hash,
                 "links": [[a, u] for (a, u) in (candidate_links or [])] or None,
@@ -917,6 +943,7 @@ class WebCrawler:
             source_url=source_url,
             error=row.get("error"),
             from_cache=from_cache,
+            markdown=row.get("markdown"),
         )
 
     # -- helpers --------------------------------------------------------------
@@ -948,3 +975,10 @@ class WebCrawler:
                 r.http.close()
             except Exception:
                 log.debug("failed closing a worker HTTP client", exc_info=True)
+
+    def __enter__(self) -> "WebCrawler":
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        self.close()
+        return False

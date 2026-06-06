@@ -7,6 +7,11 @@
 > Method: full read of all 14 source modules (~4,400 LOC), the test suite, CI,
 > packaging and docs. Verified locally: `ruff check` clean; `pytest -m "not
 > integration"` → **66 passed, 1 deselected**.
+>
+> **v0.6 update:** findings §4.1 (non-retryable 4xx) and §4.5 (SSRF guard) and the
+> §4.7 doc staleness, plus roadmap #5 (Markdown output), were addressed in v0.6;
+> §4.2 (parallel `max_pages` soft cap) was reviewed and intentionally left as-is
+> (low impact, high regression risk). See `ROADMAP.md`.
 
 ---
 

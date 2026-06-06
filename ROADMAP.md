@@ -68,12 +68,24 @@ by impact.
       logger (`set_log_level`); `CrawlerConfig.strict` for fail-fast.
 - [x] PDF downloads honor `verify_ssl` / `ca_bundle` (was the §4.1 bug).
 
+## Done (v0.6)
+
+- [x] **5. Markdown output** — optional `html_to_markdown` renderer (headings,
+      lists, tables, links-as-citations) via `markdownify`; `CrawlerConfig(
+      emit_markdown=True)` populates `PageResult.markdown` and persists it.
+      Degrades to a basic strip when the extra is absent.
+- [x] **Non-retryable 4xx** — `HTTPClient.fetch` treats permanent 4xx (≠429) as
+      terminal instead of retrying them `max_retries` times.
+- [x] **SSRF guard** — `HTTPConfig(block_private_addresses=True)` blocks
+      loopback/link-local/private/metadata targets; ON by default in `CrawlerTools`
+      (the agent path).
+- [x] **Context managers** — `WebCrawler` / `WebSearch` / `CrawlerDB` /
+      `CrawlerTools` / `HTTPClient` support `with` for guaranteed cleanup.
+
 ## Next
 
 - [ ] **4. Politeness (rest)** — autothrottle and optional proxy rotation.
       (Per-host rate limiting and robots `Crawl-delay` shipped in v0.5.)
-- [ ] **5. Markdown output** — an optional markdown renderer (heading hierarchy,
-      tables, link citations) for RAG ingestion.
 - [ ] **6. Smarter link frontier** — URL scoring / best-first traversal,
       `sitemap.xml` seeding, global priority frontier (ideas from crawl4ai).
 

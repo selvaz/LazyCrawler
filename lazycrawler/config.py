@@ -76,6 +76,12 @@ class CrawlerConfig:
         are followed (recursion continues) instead of stopping. This makes the
         result set independent of whether the DB is warm or cold. Default False
         (a cache hit is terminal — the historical behavior).
+    emit_markdown : bool
+        If True, also render each crawled HTML page to Markdown (headings, lists,
+        tables, links as citations) for RAG ingestion. Populated on
+        ``PageResult.markdown`` and persisted. Requires the ``markdown`` extra
+        (``pip install lazycrawler[markdown]``); degrades to a basic strip if the
+        renderer is unavailable. PDFs are skipped (no HTML). Default False.
     exclude_patterns : list[str] | None
         Regex fragments used to drop uninteresting links during crawling. None
         uses the built-in default (login/cart/checkout/account, tracking,
@@ -101,6 +107,8 @@ class CrawlerConfig:
     respect_robots: bool = True
     strict: bool = False
     recurse_from_cache: bool = False
+
+    emit_markdown: bool = False
 
     max_chars_content: int = 100_000
     max_chars_pure: int = 10_000
@@ -171,9 +179,18 @@ class HTTPConfig:
         Playwright wait condition: "load" | "domcontentloaded" | "networkidle".
     browser_timeout_ms : int
         Per-page navigation timeout for the browser (milliseconds).
+    block_private_addresses : bool
+        SSRF guard. If True, refuse to fetch URLs that resolve to loopback,
+        link-local, private (RFC-1918), reserved, multicast or unspecified
+        addresses, plus ``localhost`` / ``*.local`` / cloud metadata endpoints
+        (e.g. 169.254.169.254). Default False for library use (so localhost
+        crawling and the offline tests keep working); ``CrawlerTools`` turns it
+        ON by default because an agent may pass arbitrary URLs. Note: a public
+        host that redirects to a private one is not caught (requests follows
+        redirects internally).
     """
 
-    user_agent: str = "LazyCrawler/0.5 (+https://github.com/selvaz/lazycrawler)"
+    user_agent: str = "LazyCrawler/0.6 (+https://github.com/selvaz/lazycrawler)"
     timeout_connect: int = 5
     timeout_read: int = 25
     max_retries: int = 4
@@ -188,6 +205,7 @@ class HTTPConfig:
     browser_headless: bool = True
     browser_wait_until: str = "domcontentloaded"
     browser_timeout_ms: int = 30000
+    block_private_addresses: bool = False
 
 
 # =============================================================================

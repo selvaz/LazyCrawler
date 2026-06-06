@@ -150,6 +150,105 @@ def test_fetch_gives_up_after_max_retries(monkeypatch):
     assert fr.html is None and fr.text is None and fr.status is None
 
 
+def test_fetch_permanent_4xx_not_retried(monkeypatch):
+    # A 404 (or any non-429 4xx) is terminal: exactly one attempt, status preserved.
+    client = HTTPClient(HTTPConfig(max_retries=4, backoff_base_sec=0, verify_ssl=False))
+    calls = {"n": 0}
+
+    class _Resp:
+        status_code = 404
+        headers = {"Content-Type": "text/html"}
+        content = b"not found"
+        text = "not found"
+
+        def raise_for_status(self):  # should never be reached for 4xx now
+            raise requests.HTTPError("404")
+
+    def get(url, **kw):
+        calls["n"] += 1
+        return _Resp()
+
+    monkeypatch.setattr(client._session, "get", get)
+    fr = client.fetch("https://e.org/missing")
+    assert calls["n"] == 1  # not retried
+    assert fr.status == 404 and fr.html is None and fr.text is None
+
+
+def test_fetch_429_is_retried(monkeypatch):
+    # 429 stays retryable: it is attempted max_retries times before giving up.
+    client = HTTPClient(HTTPConfig(max_retries=3, backoff_base_sec=0, verify_ssl=False))
+    calls = {"n": 0}
+
+    class _Resp:
+        status_code = 429
+        headers = {"Content-Type": "text/html"}
+        content = b"slow down"
+        text = "slow down"
+
+        def raise_for_status(self):
+            pass
+
+    def get(url, **kw):
+        calls["n"] += 1
+        return _Resp()
+
+    monkeypatch.setattr(client._session, "get", get)
+    fr = client.fetch("https://e.org/x")
+    assert calls["n"] == 3  # retried up to max_retries
+    assert fr.html is None and fr.status is None
+
+
+# -- SSRF guard ---------------------------------------------------------------
+
+
+def _fake_getaddrinfo(ip):
+    def _gai(host, *a, **kw):
+        return [(2, 1, 6, "", (ip, 0))]
+
+    return _gai
+
+
+def test_is_blocked_address_blocks_private(monkeypatch):
+    from lazycrawler import http as http_mod
+    from lazycrawler.http import is_blocked_address
+
+    # loopback / link-local / RFC-1918 by resolved IP
+    monkeypatch.setattr(http_mod.socket, "getaddrinfo", _fake_getaddrinfo("127.0.0.1"))
+    assert is_blocked_address("http://anything.example/x")
+    monkeypatch.setattr(http_mod.socket, "getaddrinfo", _fake_getaddrinfo("169.254.169.254"))
+    assert is_blocked_address("http://metadata.example/latest/")
+    monkeypatch.setattr(http_mod.socket, "getaddrinfo", _fake_getaddrinfo("10.0.0.5"))
+    assert is_blocked_address("http://internal.example/")
+
+
+def test_is_blocked_address_string_hosts():
+    from lazycrawler.http import is_blocked_address
+
+    # these short-circuit before DNS
+    assert is_blocked_address("http://localhost/x")
+    assert is_blocked_address("http://foo.local/x")
+    assert is_blocked_address("http://metadata.google.internal/")
+
+
+def test_is_blocked_address_allows_public(monkeypatch):
+    from lazycrawler import http as http_mod
+    from lazycrawler.http import is_blocked_address
+
+    monkeypatch.setattr(http_mod.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
+    assert not is_blocked_address("https://example.com/")
+
+
+def test_fetch_blocks_private_when_guard_on(monkeypatch):
+    client = HTTPClient(HTTPConfig(block_private_addresses=True, verify_ssl=False))
+
+    def boom(url, **kw):
+        raise AssertionError("network must not be touched when SSRF-blocked")
+
+    monkeypatch.setattr(client._session, "get", boom)
+    fr = client.fetch("http://127.0.0.1/admin")
+    assert fr.html is None and fr.text is None and fr.status is None
+
+
 def test_fetch_returns_pdf_bytes_by_content_type(monkeypatch):
     client = HTTPClient(HTTPConfig(verify_ssl=False))
 

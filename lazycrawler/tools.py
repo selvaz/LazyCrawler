@@ -35,6 +35,7 @@ Design notes:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import uuid
 from typing import Any, Dict, Optional
@@ -111,8 +112,20 @@ class CrawlerTools:
         self.links = links
         self.topic = topic
         self.verbose = verbose
+        # The agent can pass arbitrary URLs, so turn the SSRF guard ON by default
+        # for the tool path (callers wanting internal hosts can pass an explicit
+        # HTTPConfig(block_private_addresses=False)).
+        http_cfg = self._with_ssrf_guard(http_cfg)
         self._crawler = WebCrawler(crawler_cfg, http_cfg, llm_cfg, db)
         self._search = WebSearch(crawler_cfg=crawler_cfg, http_cfg=http_cfg, llm_cfg=llm_cfg, db=db)
+
+    @staticmethod
+    def _with_ssrf_guard(http_cfg: Optional[HTTPConfig]) -> HTTPConfig:
+        if http_cfg is None:
+            return HTTPConfig(block_private_addresses=True)
+        if not http_cfg.block_private_addresses:
+            return dataclasses.replace(http_cfg, block_private_addresses=True)
+        return http_cfg
 
     def _say(self, message: str) -> None:
         if self.verbose:
@@ -313,4 +326,11 @@ class CrawlerTools:
 
     def close(self) -> None:
         self._crawler.close()
-        self._search.crawler.close()
+        self._search.close()
+
+    def __enter__(self) -> "CrawlerTools":
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        self.close()
+        return False

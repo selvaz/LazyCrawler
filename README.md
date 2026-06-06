@@ -38,9 +38,13 @@ pip install -e .
 pip install -e ".[all]"
 
 # Or selectively:
-pip install -e ".[smart]"   # LazyBridge (LLM)
-pip install -e ".[pdf]"     # pymupdf, pypdf, pdfplumber
-pip install -e ".[search]"  # ddgs (DuckDuckGo)
+pip install -e ".[smart]"     # LazyBridge (LLM)
+pip install -e ".[pdf]"       # pymupdf, pypdf, pdfplumber
+pip install -e ".[search]"    # ddgs (DuckDuckGo)
+pip install -e ".[js]"        # playwright (JS rendering)
+pip install -e ".[markdown]"  # markdownify (Markdown output)
+pip install -e ".[excel]"     # openpyxl (blacklist from .xlsx)
+pip install -e ".[dates]"     # python-dateutil (published_iso)
 ```
 
 **Smart mode** requires LazyBridge on the path and an API key for the chosen
@@ -200,6 +204,49 @@ Falls back to plain requests if Playwright is unavailable. The browser context i
 owned by the HTTP client and reused across pages; in parallel mode each worker
 keeps its own renderer.
 
+## Markdown output (for RAG)
+
+Set `emit_markdown=True` to also render each crawled HTML page to Markdown (heading
+hierarchy, lists, tables, links resolved to absolute URLs) — handy for RAG ingestion.
+It lands on `PageResult.markdown` and is persisted alongside the page.
+
+```python
+crawler = WebCrawler(CrawlerConfig(max_depth=0, emit_markdown=True))
+r = crawler.crawl("https://example.com/article", mode="pure")[0]
+print(r.markdown)   # "# Title\n\n- bullet\n\n| col | ... |"
+```
+
+Needs the `markdown` extra (`pip install lazycrawler[markdown]`); without it the
+field degrades to a basic text strip instead of failing. PDFs are skipped (no HTML).
+The render is independent of pure/smart — it works in both.
+
+## SSRF guard (agent safety)
+
+When the crawler is driven by an LLM agent (`CrawlerTools`), the model can pass
+arbitrary URLs. `HTTPConfig(block_private_addresses=True)` refuses fetches that
+resolve to loopback / link-local / private (RFC-1918) / reserved addresses, plus
+`localhost`, `*.local`, and cloud metadata endpoints (e.g. `169.254.169.254`).
+
+```python
+HTTPConfig(block_private_addresses=True)   # default OFF for the library
+```
+
+It is **on by default in `CrawlerTools`** (the agent path); pass an explicit
+`HTTPConfig(block_private_addresses=False)` to crawl internal hosts. Note: a public
+host that *redirects* to a private one is not caught (requests follows redirects
+internally).
+
+## Resource cleanup (context managers)
+
+`WebCrawler`, `WebSearch`, `CrawlerDB`, `CrawlerTools` and `HTTPClient` are context
+managers — prefer `with` so HTTP sessions / Playwright browsers are always released:
+
+```python
+with WebCrawler(CrawlerConfig(max_depth=1)) as crawler:
+    results = crawler.crawl("https://example.com/", mode="pure")
+# resources closed automatically on exit
+```
+
 ## robots.txt & politeness
 
 `robots.txt` is honored **by default**. URLs disallowed for the configured
@@ -255,6 +302,7 @@ lazycrawler/
 ├── pdf.py       remote PDF extraction (PyMuPDF → pypdf → pdfplumber)
 ├── prompts.py   LLM prompts (smart mode only, domain-agnostic)
 ├── llm.py       LazyBridge wrapper (structured output via output=PydanticModel)
+├── markdown.py  optional HTML->Markdown renderer (RAG ingestion)
 ├── db.py        SQLite: sessions + pages + crawl_edges, dedup, TTL, FTS5
 ├── crawler.py   WebCrawler (pure + smart)
 └── search.py    WebSearch (a derivation of the crawler)

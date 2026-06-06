@@ -27,14 +27,15 @@ An honest evaluation of LazyCrawler against the main web-crawling frameworks.
 | LLM content extraction | ✅ | ✅ | ✅ | ✅ | ❌ |
 | LLM *only* for link selection | ✅ separate knob | ~ (scorer) | ❌ | ❌ | ❌ |
 | Pluggable output schema | ✅ | ✅ | ✅ | ✅ | n/a |
-| Output | Pydantic / text | rich markdown | rich markdown | free schema | raw HTML |
+| Output | Pydantic / text / **markdown** | rich markdown | rich markdown | free schema | raw HTML |
 | Content dedup + TTL cache | ✅ 3-level | ~ per-URL | ~ | ❌ | ~ URL+HTTP |
 | Persistence + provenance | ✅ relational DB | ❌ | ❌ (API) | ❌ | ~ feed export |
 | Native PDF | ✅ | ~ | ~ | ❌ | ❌ |
 | robots.txt | ✅ default-on | ~ | ✅ | ~ | ✅ |
 | Anti-bot / proxy | ❌ | ✅ | ✅ | ~ | ~ |
+| SSRF guard | ✅ (agent path) | ❌ | n/a (hosted) | ❌ | ~ |
 | Provider-agnostic LLM | ✅ LazyBridge | ✅ | ~ | ✅ | — |
-| Maturity / community | v0.1, solo | high | high | medium | very high |
+| Maturity / community | v0.6, solo | high | high | medium | very high |
 
 ## Where LazyCrawler is genuinely strong
 
@@ -61,7 +62,8 @@ An honest evaluation of LazyCrawler against the main web-crawling frameworks.
    Pydantic model).
 4. **robots.txt** — now honored by default (`respect_robots`). Anti-bot, proxy
    rotation, and per-domain rate limiting are still missing.
-5. **No markdown output** — plain text / JSON only.
+5. **Markdown output** — *now addressed* via optional `emit_markdown`
+   (`html_to_markdown`, markdownify-backed); plain text / Pydantic still available.
 6. **Weak link frontier** — pure mode is "first N"; no URL scoring / best-first /
    sitemap seeding.
 7. **No interactive actions** (click/scroll/form); immature (v0.1).
@@ -75,4 +77,5 @@ research + portfolio monitoring), its design choices are well aligned: token
 economy, provenance DB, PDF, provider-agnostic LLM, granular LLM knobs are exactly
 what those tools do *not* emphasize.
 
-See [ROADMAP.md](../ROADMAP.md) for what is implemented and what remains.
+See [ROADMAP.md](../ROADMAP.md) for what is implemented and what remains, and
+[DEEP_ASSESSMENT.md](DEEP_ASSESSMENT.md) for a full code/architecture review.

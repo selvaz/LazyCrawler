@@ -53,7 +53,7 @@ from .db import CrawlerDB
 from .search import WebSearch, search_ddg_urls
 from .tools import CrawlerTools
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "WebCrawler",

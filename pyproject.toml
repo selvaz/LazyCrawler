@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lazycrawler"
-version = "0.5.0"
+version = "0.6.0"
 description = "Web crawler + search with pure (no-LLM) and smart (LazyBridge LLM) modes, SQLite persistence and 3-level dedup."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,11 +33,14 @@ js = ["playwright>=1.40"]
 excel = ["openpyxl>=3.1"]
 # Robust date parsing (published_iso extraction).
 dates = ["python-dateutil>=2.8"]
+# Markdown output (RAG ingestion).
+markdown = ["markdownify>=0.11"]
 # Everything.
 all = [
     "lazybridge>=0.9",
     "pymupdf>=1.23", "pypdf>=4.0", "pdfplumber>=0.10",
     "ddgs>=2.0", "playwright>=1.40", "openpyxl>=3.1", "python-dateutil>=2.8",
+    "markdownify>=0.11",
 ]
 # Development: tests, lint/format, build & publish tooling.
 dev = [

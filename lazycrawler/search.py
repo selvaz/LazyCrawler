@@ -141,6 +141,17 @@ class WebSearch:
         )
         self.crawler = WebCrawler(crawler_cfg=base, http_cfg=http_cfg, llm_cfg=llm_cfg, db=db)
 
+    def close(self) -> None:
+        """Release the underlying crawler's HTTP/browser resources."""
+        self.crawler.close()
+
+    def __enter__(self) -> "WebSearch":
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        self.close()
+        return False
+
     # -- public API -----------------------------------------------------------
 
     def run(
