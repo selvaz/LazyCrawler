@@ -59,7 +59,7 @@ class CrawlerConfig:
     strict : bool
         If True, per-page/worker exceptions propagate (fail-fast) instead of
         being logged-and-skipped. Default False (resilient: log and continue).
-        Either way exceptions are never silently swallowed — they are logged.
+        Either way exceptions are never silently swallowed -- they are logged.
     max_chars_content : int
         Max characters of text sent to the LLM (smart mode).
     max_chars_pure : int
@@ -75,7 +75,7 @@ class CrawlerConfig:
         If True, when a page is served from the cache its stored candidate links
         are followed (recursion continues) instead of stopping. This makes the
         result set independent of whether the DB is warm or cold. Default False
-        (a cache hit is terminal — the historical behavior).
+        (a cache hit is terminal -- the historical behavior).
     emit_markdown : bool
         If True, also render each crawled HTML page to Markdown (headings, lists,
         tables, links as citations) for RAG ingestion. Populated on
@@ -83,8 +83,8 @@ class CrawlerConfig:
         (``pip install lazycrawler[markdown]``); degrades to a basic strip if the
         renderer is unavailable. PDFs are skipped (no HTML). Default False.
     extract_artifacts : bool
-        If True, extract non-textual content — tables, images, figures, charts,
-        inline SVG — as structured ``Artifact`` records (``PageResult.artifacts``,
+        If True, extract non-textual content -- tables, images, figures, charts,
+        inline SVG -- as structured ``Artifact`` records (``PageResult.artifacts``,
         persisted to the ``artifacts`` table). Works on HTML and, with the pdf
         extra, on PDFs (tables via pdfplumber, images via PyMuPDF). Default False.
     artifact_types : tuple[str, ...]
@@ -119,7 +119,7 @@ class CrawlerConfig:
         Regex fragments used to drop uninteresting links during crawling. None
         uses the built-in default (login/cart/checkout/account, tracking,
         social, mailto/tel). Unlike older versions this default no longer drops
-        /about, /contact, /tag/, /category/ or /author/ — for a generic crawler
+        /about, /contact, /tag/, /category/ or /author/ -- for a generic crawler
         those are often real content. Pass a custom list to fully override.
     blacklist : list[str]
         Domains to always skip (e.g. ["facebook.com", "x.com"]).
@@ -194,7 +194,7 @@ class HTTPConfig:
         Base backoff; actual wait = backoff_base_sec * 2^(attempt-1).
     link_delay : float
         Pause (seconds) between consecutive fetches in *sequential* mode. Not
-        applied in parallel mode — use ``per_host_delay`` for politeness there.
+        applied in parallel mode -- use ``per_host_delay`` for politeness there.
     per_host_delay : float
         Minimum seconds between two fetches to the *same host*. Applied in BOTH
         sequential and parallel mode (a per-host rate limiter). 0 disables it.
@@ -314,8 +314,11 @@ class SearchConfig:
     Attributes
     ----------
     engine : str
-        Search engine: "duckduckgo" (default, no LLM cost for the search step)
-        or "gemini" (grounded answer via LazyBridge native search).
+        Search engine: "duckduckgo" (default, no LLM cost for the search step),
+        "gemini" (grounded answer via LazyBridge native search),
+        "brave" (Brave Search API, free tier 2 000 req/month, requires API key),
+        or "tavily" (Tavily Search API, optimised for LLM agents, free tier
+        1 000 req/month, requires API key).
     n_results : int
         Number of URLs to obtain from the search engine.
     crawl_depth : int
@@ -329,18 +332,30 @@ class SearchConfig:
     gemini_model : str
         LazyBridge model for grounded search (engine="gemini").
     region : str
-        DuckDuckGo region code (e.g. "us-en", "wt-wt" for no region). Default
-        "wt-wt".
+        DuckDuckGo / Brave region code (e.g. "us-en", "wt-wt" for no region).
+        For Brave the first two chars are used as the ISO-3166-1 alpha-2 country
+        code (e.g. "us-en" -> "US"). Default "wt-wt".
     timelimit : str | None
-        DuckDuckGo time filter: "d" (day), "w" (week), "m" (month), "y" (year),
-        or None for no limit.
+        Time filter: "d" (day), "w" (week), "m" (month), "y" (year),
+        or None for no limit. Supported by DuckDuckGo, Brave and Tavily.
     safesearch : str
-        DuckDuckGo safe-search level: "on", "moderate", or "off".
+        Safe-search level: "off", "moderate", or "strict".
+        Supported by DuckDuckGo ("on"/"moderate"/"off") and Brave.
     backend : str
         DuckDuckGo backend selection passed through to ddgs (e.g. "auto").
+        Ignored by other engines.
+    brave_api_key : str
+        Brave Search API key. Falls back to the ``BRAVE_API_KEY`` environment
+        variable when empty. Required for engine="brave".
+    tavily_api_key : str
+        Tavily Search API key. Falls back to the ``TAVILY_API_KEY`` environment
+        variable when empty. Required for engine="tavily".
+    tavily_search_depth : str
+        Tavily search depth: "basic" (faster, cheaper) or "advanced" (deeper,
+        better recall). Default "basic".
     """
 
-    engine: Literal["duckduckgo", "gemini"] = "duckduckgo"
+    engine: Literal["duckduckgo", "gemini", "brave", "tavily"] = "duckduckgo"
     n_results: int = 10
     crawl_depth: int = 0
     same_domain_only: bool = False
@@ -350,6 +365,9 @@ class SearchConfig:
     timelimit: Optional[str] = None
     safesearch: str = "moderate"
     backend: str = "auto"
+    brave_api_key: str = ""
+    tavily_api_key: str = ""
+    tavily_search_depth: Literal["basic", "advanced"] = "basic"
 
 
 # =============================================================================
