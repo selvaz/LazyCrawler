@@ -44,6 +44,9 @@ Controls traversal depth, page limits, domain filtering, and blacklists.
 | `large_doc_threshold` | `int` | `20_000` | Chars above which smart mode uses map-reduce |
 | `large_doc_chunk_chars` | `int` | `12_000` | Chunk size for map-reduce summarization |
 | `large_doc_max_chunks` | `int` | `12` | Max chunks processed in map-reduce |
+| `emit_markdown` | `bool` | `False` | Render each crawled HTML page to Markdown (`PageResult.markdown`). Requires `pip install lazycrawler[markdown]` |
+| `extract_artifacts` | `bool` | `False` | Extract tables, images, charts, SVG as structured `Artifact` records |
+| `markdown_artifact_anchors` | `bool` | `False` | With `emit_markdown + extract_artifacts`: replace each table/image in Markdown with `[[artifact:<hash>]]` anchors instead of duplicating inline content. Use `render_for_rag()` to recompose |
 | `blacklist` | `list[str]` | `[]` | URL prefixes or domain names to skip |
 | `blacklist_excel` | `str` | `""` | Path to Excel file with blacklisted URLs |
 | `blacklist_excel_sheet` | `str \| None` | `None` | Sheet name (first sheet if None) |
@@ -57,7 +60,7 @@ Controls HTTP client behaviour, timeouts, SSL, polite delays, and JavaScript ren
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `user_agent` | `str` | `"LazyCrawler/0.5 (+...)"` | HTTP User-Agent header (dedicated, not a spoofed browser) |
+| `user_agent` | `str` | `"LazyCrawler/0.8 (+...)"` | HTTP User-Agent header (dedicated, not a spoofed browser) |
 | `timeout_connect` | `int` | `5` | TCP connection timeout (seconds) |
 | `timeout_read` | `int` | `25` | Read timeout (seconds) |
 | `max_retries` | `int` | `4` | Max retry attempts on transient failures |
@@ -119,20 +122,32 @@ LLMConfig(
 
 ## SearchConfig
 
-Controls web search behaviour.
+Controls web search behaviour for `WebSearch`.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `engine` | `str` | `"duckduckgo"` | Search engine: `"duckduckgo"` or `"gemini"` |
+| `engine` | `str` | `"duckduckgo"` | Search engine: `"duckduckgo"`, `"brave"`, `"tavily"`, or `"gemini"` |
 | `n_results` | `int` | `10` | Number of search results to fetch |
 | `crawl_depth` | `int` | `0` | Depth to crawl each result page (0 = just the page itself) |
 | `same_domain_only` | `bool` | `False` | Stay on the result domain when `crawl_depth > 0` |
 | `expand_topic` | `bool` | `True` | Use LLM to expand the query into a rich topic description |
 | `gemini_model` | `str` | `"gemini-3-flash-preview"` | Model for Gemini grounded search |
-| `region` | `str` | `"wt-wt"` | DuckDuckGo region code (e.g. `"us-en"`) |
-| `timelimit` | `str \| None` | `None` | DuckDuckGo time filter: `"d"`/`"w"`/`"m"`/`"y"` or `None` |
-| `safesearch` | `str` | `"moderate"` | DuckDuckGo safe-search: `"on"`/`"moderate"`/`"off"` |
-| `backend` | `str` | `"auto"` | DuckDuckGo backend passed through to ddgs |
+| `region` | `str` | `"wt-wt"` | Region code (e.g. `"us-en"`, `"gb-en"`). Used by DuckDuckGo and Brave (`"wt-wt"` = global) |
+| `timelimit` | `str \| None` | `None` | Time filter: `"d"` (day), `"w"` (week), `"m"` (month), `"y"` (year). Supported by DuckDuckGo, Brave and Tavily |
+| `safesearch` | `str` | `"moderate"` | Safe-search: `"off"`, `"moderate"`, `"strict"`. Supported by DuckDuckGo and Brave |
+| `backend` | `str` | `"auto"` | DuckDuckGo backend passed through to ddgs. Ignored by other engines |
+| `brave_api_key` | `str` | `""` | Brave Search API key. Falls back to `BRAVE_API_KEY` env var. Required for `engine="brave"` |
+| `tavily_api_key` | `str` | `""` | Tavily API key. Falls back to `TAVILY_API_KEY` env var. Required for `engine="tavily"` |
+| `tavily_search_depth` | `str` | `"basic"` | Tavily depth: `"basic"` (1 credit/req) or `"advanced"` (2 credits/req, deeper recall) |
+
+### Engine quick reference
+
+| Engine | API key | Free tier | Extra deps |
+|--------|---------|-----------|------------|
+| `"duckduckgo"` | No | Unlimited (unofficial) | `pip install ddgs` |
+| `"brave"` | `BRAVE_API_KEY` | 2 000 req/month | None |
+| `"tavily"` | `TAVILY_API_KEY` | 1 000 req/month | None |
+| `"gemini"` | `GOOGLE_API_KEY` | Per Google quota | LazyBridge |
 
 ---
 

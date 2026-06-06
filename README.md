@@ -7,7 +7,7 @@ Works on any kind of web content — not tied to any domain.
 There are **two independent LLM knobs**, toggled separately:
 
 | Knob | `pure` | `smart` |
-|------|--------|---------|
+|------|--------|----------|
 | **content** (page text) | trafilatura/regex, raw clean text | LLM structured extraction (title, summary, entities, topics, **sentiment**, notes) |
 | **links** (which to follow) | heuristic (first N, filtered) | LLM relevance ranking against the topic |
 
@@ -21,7 +21,7 @@ crawl(url, content="pure",  links="smart")    # no summary, LLM picks the links
 ```
 
 **WebSearch is a derivation of WebCrawler**: it seeds itself from a search
-engine's results (DuckDuckGo or Gemini grounded) and then crawls.
+engine's results (DuckDuckGo, Brave, Tavily, or Gemini grounded) and then crawls.
 
 > **Status**: standalone development. When production-ready it will migrate into
 > `lazytools.connectors.web` (client + tools pattern, like gmail/telegram).
@@ -97,11 +97,20 @@ db.close()
 ```python
 from lazycrawler import WebSearch, SearchConfig
 
+# DuckDuckGo — no API key required
 search = WebSearch(SearchConfig(engine="duckduckgo", n_results=8, crawl_depth=0))
 out = search.run("james webb telescope discoveries", mode="pure")
 print(out["pages_found"], "pages")
 for r in out["results"]:
     print(r.title, "—", r.url)
+
+# Brave Search — free tier: 2 000 req/month (set BRAVE_API_KEY env var)
+search = WebSearch(SearchConfig(engine="brave", n_results=5, brave_api_key="YOUR_KEY"))
+out = search.run("python async web crawlers", mode="pure")
+
+# Tavily — free tier: 1 000 req/month (set TAVILY_API_KEY env var)
+search = WebSearch(SearchConfig(engine="tavily", n_results=5, tavily_api_key="YOUR_KEY"))
+out = search.run("LLM agent frameworks 2025", mode="pure")
 ```
 
 ---
@@ -396,7 +405,7 @@ lazycrawler/
 ├── artifacts.py tables/images/figures/charts/svg extraction (Artifact model)
 ├── db.py        SQLite: sessions + pages + crawl_edges + artifacts, dedup, TTL, FTS5
 ├── crawler.py   WebCrawler (pure + smart)
-└── search.py    WebSearch (a derivation of the crawler)
+└── search.py    WebSearch (DDG / Brave / Tavily / Gemini)
 ```
 
 ### DB schema
@@ -471,8 +480,7 @@ HTTPConfig(verify_ssl=False)
   blocked URLs are reported as `status="robots_blocked"`.
 - **Exceptions are never swallowed** — they go through the `lazycrawler` logger;
   use `strict=True` to fail fast instead of logging-and-continuing.
-- **WebSearch engine="gemini"**: runs in *answer mode* (the grounded answer as a
-  single result). Grounding source URLs do not surface through LazyBridge's Agent
-  layer; crawling Gemini seed URLs awaits a grounding passthrough in LazyBridge.
-  To crawl search results, use `engine="duckduckgo"`.
-```
+- **WebSearch engines**: `"duckduckgo"` (no key, unofficial API), `"brave"` (free
+  2 000 req/month, own index), `"tavily"` (free 1 000 req/month, LLM-optimised),
+  `"gemini"` (grounded AI answer mode). Brave and Tavily require no extra Python
+  dependencies beyond `requests`.
