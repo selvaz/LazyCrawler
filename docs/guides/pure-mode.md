@@ -136,7 +136,7 @@ for r in done:
 
 Pure mode tries text extraction in this order:
 
-1. **trafilatura** — best quality, removes navigation/ads/boilerplate. Returns text only if > 200 chars.
+1. **trafilatura** — best quality, removes navigation/ads/boilerplate. Returns text only if it is at least `HTTPConfig.min_text_chars` (default 50).
 2. **Basic HTML strip** — strips all HTML tags, collapses whitespace. Fallback if trafilatura fails or returns too little.
 
 The verbose log line tells you which was used:
@@ -146,7 +146,7 @@ DEBUG   text: trafilatura -> 3421 chars
 # or:
 DEBUG   text: basic HTML strip (fallback) -> 987 chars
 # or:
-DEBUG   text: no extractable content (<200 chars from both)
+DEBUG   text: no extractable content (<min_text_chars from both)
 ```
 
 ---

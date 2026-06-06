@@ -38,6 +38,7 @@ import json
 import re
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -51,14 +52,20 @@ from .db import CrawlerDB
 from .http import (
     HTTPClient,
     RobotsChecker,
+    compile_exclude,
     get_base_domain,
     is_blacklisted_domain,
     load_blacklist_from_excel,
     normalize_url,
+)
+from .http import (
     content_hash as _content_hash,
+)
+from .http import (
     url_hash as _url_hash,
 )
-from .pdf import extract_pdf, looks_like_pdf, title_from_pdf_text, title_from_url
+from .pdf import extract_pdf, extract_pdf_bytes, looks_like_pdf, title_from_pdf_text, title_from_url
+from .ratelimit import HostRateLimiter
 from .text import (
     extract_candidate_links,
     extract_canonical_url,
@@ -75,20 +82,22 @@ Status = Literal["done", "fetch_error", "no_text", "llm_error", "blacklisted", "
 # OUTPUT MODEL
 # =============================================================================
 
+
 class PageResult(BaseModel):
     """Result of crawling a single page."""
+
     url: str
     url_hash: str = ""
     status: Status = "done"
-    mode: Mode = "pure"                  # content mode that produced this result
+    mode: Mode = "pure"  # content mode that produced this result
     title: Optional[str] = None
-    text: Optional[str] = None          # clean text (pure: cleaned; smart: LLM clean_text)
-    summary: Optional[str] = None       # smart content only
+    text: Optional[str] = None  # clean text (pure: cleaned; smart: LLM clean_text)
+    summary: Optional[str] = None  # smart content only
     entities: List[str] = Field(default_factory=list)
     topics: List[str] = Field(default_factory=list)
-    sentiment: Optional[str] = None     # smart: negative|neutral|positive
-    notes: Optional[str] = None         # smart: reserved research tags/notes
-    data: Optional[dict] = None         # full structured object (custom schema)
+    sentiment: Optional[str] = None  # smart: negative|neutral|positive
+    notes: Optional[str] = None  # smart: reserved research tags/notes
+    data: Optional[dict] = None  # full structured object (custom schema)
     published_iso: Optional[str] = None
     is_pdf: bool = False
     depth: int = 0
@@ -101,6 +110,7 @@ class PageResult(BaseModel):
 # PER-RUN STATE  +  PER-WORKER RESOURCES
 # =============================================================================
 
+
 @dataclass
 class _State:
     content_mode: Mode
@@ -108,7 +118,8 @@ class _State:
     topic: str
     session_id: Optional[str]
     schema: Optional[type] = None
-    link_selector: Any = None           # sequential link-selection agent
+    max_depth: int = 0  # effective depth for this run (cfg or override)
+    link_selector: Any = None  # sequential link-selection agent
     visited: Set[str] = field(default_factory=set)
     results: List[PageResult] = field(default_factory=list)
     pages_done: int = 0
@@ -118,6 +129,7 @@ class _State:
 @dataclass
 class _Res:
     """Resources used to process a page (shared in sequential, per-thread in parallel)."""
+
     http: HTTPClient
     llm: Any = None
     link_selector: Any = None
@@ -126,6 +138,7 @@ class _Res:
 # =============================================================================
 # WEB CRAWLER
 # =============================================================================
+
 
 class WebCrawler:
     """
@@ -153,15 +166,19 @@ class WebCrawler:
                 self.cfg.blacklist_excel_column,
             )
 
-        self._http = HTTPClient(self.http_cfg)   # shared client for sequential mode
-        self._llm = None                          # lazy CrawlerLLM for sequential mode
-        self._tls = threading.local()             # per-thread resources (parallel)
-        self._created_res: List[_Res] = []        # thread-local resources to close
+        self._http = HTTPClient(self.http_cfg)  # shared client for sequential mode
+        self._llm = None  # lazy CrawlerLLM for sequential mode
+        self._tls = threading.local()  # per-thread resources (parallel)
+        self._created_res: List[_Res] = []  # thread-local resources to close
         # robots.txt gate (shared, thread-safe, own HTTP client honoring verify)
         self._robots = (
             RobotsChecker(HTTPClient(self.http_cfg), self.http_cfg.user_agent)
-            if self.cfg.respect_robots else None
+            if self.cfg.respect_robots
+            else None
         )
+        # compiled link-exclusion regex (configurable) and per-host rate limiter
+        self._exclude_re = compile_exclude(self.cfg.exclude_patterns)
+        self._rate = HostRateLimiter(self.http_cfg.per_host_delay, self._robots)
 
     # -- public API -----------------------------------------------------------
 
@@ -175,10 +192,23 @@ class WebCrawler:
         topic: str = "",
         schema: Optional[type] = None,
         session_id: Optional[str] = None,
+        max_depth: Optional[int] = None,
     ) -> List[PageResult]:
-        """Crawl a single URL (and its links up to max_depth)."""
-        return self.crawl_many([url], mode=mode, content=content, links=links,
-                               topic=topic, schema=schema, session_id=session_id)
+        """Crawl a single URL (and its links up to max_depth).
+
+        ``max_depth`` overrides ``CrawlerConfig.max_depth`` for this call only,
+        without mutating shared config (safe for concurrent calls).
+        """
+        return self.crawl_many(
+            [url],
+            mode=mode,
+            content=content,
+            links=links,
+            topic=topic,
+            schema=schema,
+            session_id=session_id,
+            max_depth=max_depth,
+        )
 
     def crawl_many(
         self,
@@ -191,30 +221,50 @@ class WebCrawler:
         schema: Optional[type] = None,
         session_id: Optional[str] = None,
         source: str = "crawl",
+        max_depth: Optional[int] = None,
     ) -> List[PageResult]:
-        """Crawl a list of URLs sharing state (visited set, page counter)."""
+        """Crawl a list of URLs sharing state (visited set, page counter).
+
+        ``max_depth`` overrides ``CrawlerConfig.max_depth`` for this call only.
+        """
         content_mode: Mode = content or mode
         link_mode: Mode = links or mode
-        st = _State(content_mode=content_mode, link_mode=link_mode,
-                    topic=topic, session_id=session_id, schema=schema)
+        eff_depth = self.cfg.max_depth if max_depth is None else max(0, int(max_depth))
+        st = _State(
+            content_mode=content_mode,
+            link_mode=link_mode,
+            topic=topic,
+            session_id=session_id,
+            schema=schema,
+            max_depth=eff_depth,
+        )
 
         if self.db is not None:
             st.session_id = session_id or self._default_session_id(topic, content_mode)
             self.db.create_session(
-                st.session_id, topic=topic, seed=urls[0] if urls else "",
-                mode=content_mode, source=source,
+                st.session_id,
+                topic=topic,
+                seed=urls[0] if urls else "",
+                mode=content_mode,
+                source=source,
             )
 
-        seeds = [(u, get_base_domain(u)) for u in urls
-                 if not is_blacklisted_domain(u, self.blacklist)]
+        seeds = [
+            (u, get_base_domain(u)) for u in urls if not is_blacklisted_domain(u, self.blacklist)
+        ]
 
-        log.info("crawl: content=%s links=%s workers=%d depth=%d max_pages=%d "
-                 "robots=%s strict=%s", content_mode, link_mode, self.cfg.max_workers,
-                 self.cfg.max_depth, self.cfg.max_pages, self.cfg.respect_robots,
-                 self.cfg.strict)
+        log.info(
+            "crawl: content=%s links=%s workers=%d depth=%d max_pages=%d robots=%s strict=%s",
+            content_mode,
+            link_mode,
+            self.cfg.max_workers,
+            eff_depth,
+            self.cfg.max_pages,
+            self.cfg.respect_robots,
+            self.cfg.strict,
+        )
 
-        log.debug("seeds: %d URL(s), start_domain(s): %s",
-                  len(seeds), [d for _, d in seeds])
+        log.debug("seeds: %d URL(s), start_domain(s): %s", len(seeds), [d for _, d in seeds])
 
         if self.cfg.max_workers > 1:
             self._crawl_parallel(st, seeds)
@@ -256,6 +306,7 @@ class WebCrawler:
         selector = None
         if st.content_mode == "smart" or st.link_mode == "smart":
             from .llm import CrawlerLLM
+
             llm = CrawlerLLM(self.llm_cfg or LLMConfig())
             if st.link_mode == "smart":
                 selector = llm.build_link_selector(
@@ -277,7 +328,7 @@ class WebCrawler:
     def _crawl_seq(self, st, url, depth, source_url, start_domain, res) -> None:
         """Sequential depth-first driver."""
         links = self._process_one(st, url, depth, source_url, start_domain, res)
-        if depth >= self.cfg.max_depth:
+        if depth >= st.max_depth:
             return
         for _, link_url in links:
             if self._reached_cap(st):
@@ -295,7 +346,7 @@ class WebCrawler:
         """Native parallel driver: level-by-level BFS over a bounded thread pool."""
         self._tls = threading.local()
         self._created_res = []
-        frontier = [(url, dom, None) for (url, dom) in seeds]   # (url, start_domain, source_url)
+        frontier = [(url, dom, None) for (url, dom) in seeds]  # (url, start_domain, source_url)
         depth = 0
         try:
             with ThreadPoolExecutor(max_workers=self.cfg.max_workers) as pool:
@@ -322,7 +373,7 @@ class WebCrawler:
                             seen_next.add(nu)
                             next_frontier.append((link_url, parent_dom, parent_url))
                     depth += 1
-                    if depth > self.cfg.max_depth:
+                    if depth > st.max_depth:
                         break
                     frontier = next_frontier
         finally:
@@ -358,10 +409,19 @@ class WebCrawler:
         # robots.txt gate (enabled by default; CrawlerConfig.respect_robots=False to disable)
         if self._robots is not None and not self._robots.allowed(url):
             log.info("robots.txt disallows %s - skipping", url)
-            self._emit(st, PageResult(
-                url=url, url_hash=uh, status="robots_blocked", mode=st.content_mode,
-                depth=depth, source_url=source_url, error="Disallowed by robots.txt",
-            ), count=False)
+            self._emit(
+                st,
+                PageResult(
+                    url=url,
+                    url_hash=uh,
+                    status="robots_blocked",
+                    mode=st.content_mode,
+                    depth=depth,
+                    source_url=source_url,
+                    error="Disallowed by robots.txt",
+                ),
+                count=False,
+            )
             return []
 
         # DEDUP level 1: fresh URL cache (content-mode-aware)
@@ -369,30 +429,52 @@ class WebCrawler:
         if cached is not None:
             return cached
 
-        # FETCH
-        html, raw_text, status_code = res.http.fetch(url)
-        log.debug("  fetch: HTTP %s | html=%d chars | text=%d chars",
-                  status_code or "ERR", len(html or ""), len(raw_text or "") if raw_text else 0)
-        if not html and not (raw_text or "").strip():
-            log.debug("  -> fetch_error: no HTML/text returned")
-            self._emit(st, PageResult(
-                url=url, url_hash=uh, status="fetch_error", mode=st.content_mode,
-                depth=depth, source_url=source_url,
-                error=f"Fetch failed (status={status_code})",
-            ), count=False)
+        # FETCH (rate-limited per host; robots Crawl-delay honored on top)
+        self._rate.wait(url)
+        fr = res.http.fetch(url)
+        html, raw_text, status_code, pdf_bytes = fr.html, fr.text, fr.status, fr.content
+        log.debug(
+            "  fetch: HTTP %s | html=%d chars | text=%d chars | pdf_bytes=%d",
+            status_code or "ERR",
+            len(html or ""),
+            len(raw_text or "") if raw_text else 0,
+            len(pdf_bytes or b""),
+        )
+        if not html and not (raw_text or "").strip() and not pdf_bytes:
+            log.debug("  -> fetch_error: no HTML/text/bytes returned")
+            self._emit(
+                st,
+                PageResult(
+                    url=url,
+                    url_hash=uh,
+                    status="fetch_error",
+                    mode=st.content_mode,
+                    depth=depth,
+                    source_url=source_url,
+                    error=f"Fetch failed (status={status_code})",
+                ),
+                count=False,
+            )
             return []
 
         # PDF vs HTML
-        is_pdf = looks_like_pdf(url, html or "", raw_text or "")
+        is_pdf = bool(pdf_bytes) or looks_like_pdf(url, html or "", raw_text or "")
         if is_pdf:
             log.debug("  detected as PDF")
         published_iso: Optional[str] = None
         pdf_title = ""
         if is_pdf:
-            pdf_text, pdf_title, pdf_pub = extract_pdf(
-                url, timeout=self.http_cfg.pdf_timeout, user_agent=self.http_cfg.user_agent,
-                verify=(self.http_cfg.ca_bundle or self.http_cfg.verify_ssl),
-            )
+            if pdf_bytes:
+                # bytes already downloaded by HTTPClient -> no second download
+                pdf_text, pdf_title, pdf_pub = extract_pdf_bytes(pdf_bytes)
+            else:
+                # rare: detected via magic bytes in text (e.g. JS-render path)
+                pdf_text, pdf_title, pdf_pub = extract_pdf(
+                    url,
+                    timeout=self.http_cfg.pdf_timeout,
+                    user_agent=self.http_cfg.user_agent,
+                    verify=(self.http_cfg.ca_bundle or self.http_cfg.verify_ssl),
+                )
             if pdf_pub:
                 published_iso = pdf_pub
             if pdf_text.strip():
@@ -410,41 +492,35 @@ class WebCrawler:
             published_iso = extract_published_datetime(html, url)
 
         # candidate links
-        candidates: List[Tuple[str, str]] = []
-        if depth < cfg.max_depth and not is_pdf and html:
-            candidates = extract_candidate_links(
-                html, url, start_domain,
-                same_domain_only=cfg.same_domain_only,
-                max_links=cfg.max_candidate_links,
-            )
-            _before_visited = len(candidates)
-            with st.lock:
-                visited_snapshot = set(st.visited)
-            candidates = [
-                (t, u) for (t, u) in candidates
-                if normalize_url(u) not in visited_snapshot
-                and not is_blacklisted_domain(u, self.blacklist)
-            ]
-            log.debug("  candidates: %d -> -%d visited/blacklisted -> %d to explore",
-                      _before_visited, _before_visited - len(candidates), len(candidates))
-        elif depth >= cfg.max_depth:
-            log.debug("  links: skipped (at max_depth=%d)", cfg.max_depth)
-        elif is_pdf:
-            log.debug("  links: skipped (PDF)")
+        candidates = self._extract_candidates(st, html, url, start_domain, depth, is_pdf)
 
         # no text
         if not (raw_text or "").strip():
             log.debug("  -> no_text: trafilatura/fallback returned nothing")
-            self._emit(st, PageResult(
-                url=url, url_hash=uh, status="no_text", mode=st.content_mode,
-                depth=depth, source_url=source_url, published_iso=published_iso,
-                is_pdf=is_pdf, error="No extractable text",
-            ), count=False)
+            self._emit(
+                st,
+                PageResult(
+                    url=url,
+                    url_hash=uh,
+                    status="no_text",
+                    mode=st.content_mode,
+                    depth=depth,
+                    source_url=source_url,
+                    published_iso=published_iso,
+                    is_pdf=is_pdf,
+                    error="No extractable text",
+                ),
+                count=False,
+                candidate_links=candidates,
+            )
             return self._select_next(st, candidates, "", res)
 
         preclean = preprocess_text(raw_text)
-        title = (pdf_title or title_from_pdf_text(preclean) or title_from_url(url)) if is_pdf \
+        title = (
+            (pdf_title or title_from_pdf_text(preclean) or title_from_url(url))
+            if is_pdf
             else extract_page_title(html)
+        )
         log.debug("  title: %r", (title or "")[:80])
 
         # DEDUP level 2/3: content_hash
@@ -454,7 +530,7 @@ class WebCrawler:
             if existing and self._can_reuse(existing, st.content_mode):
                 # create the page row BEFORE the edge (crawl_edges has an FK on pages)
                 if existing.get("url_hash") != uh:
-                    self._copy_content(existing, url, uh)
+                    self._copy_content(existing, url, uh, candidates)
                 self.db.add_edge(st.session_id, uh, source_url=source_url, depth=depth)
                 reused = self.db.get_page(uh) or existing
                 result = self._result_from_row(reused, depth, source_url, from_cache=True)
@@ -464,22 +540,81 @@ class WebCrawler:
 
         # content extraction
         if st.content_mode == "pure":
-            log.debug("  content [pure]: %d chars (preclean=%d, limit=%d)",
-                      min(len(preclean), cfg.max_chars_pure), len(preclean), cfg.max_chars_pure)
+            log.debug(
+                "  content [pure]: %d chars (preclean=%d, limit=%d)",
+                min(len(preclean), cfg.max_chars_pure),
+                len(preclean),
+                cfg.max_chars_pure,
+            )
             result = PageResult(
-                url=url, url_hash=uh, status="done", mode="pure",
-                title=title, text=preclean[: cfg.max_chars_pure],
-                published_iso=published_iso, is_pdf=is_pdf,
-                depth=depth, source_url=source_url,
+                url=url,
+                url_hash=uh,
+                status="done",
+                mode="pure",
+                title=title,
+                text=preclean[: cfg.max_chars_pure],
+                published_iso=published_iso,
+                is_pdf=is_pdf,
+                depth=depth,
+                source_url=source_url,
             )
         else:
             log.debug("  content [smart]: LLM extraction (preclean=%d chars)...", len(preclean))
-            result = self._smart_extract(st, url, uh, preclean, title,
-                                         published_iso, is_pdf, depth, source_url, res)
+            result = self._smart_extract(
+                st, url, uh, preclean, title, published_iso, is_pdf, depth, source_url, res
+            )
 
-        self._emit(st, result, count=(result.status == "done"),
-                   raw_text=raw_text, content_hash=chash)
+        self._emit(
+            st,
+            result,
+            count=(result.status == "done"),
+            raw_text=raw_text,
+            content_hash=chash,
+            candidate_links=candidates,
+        )
         return self._select_next(st, candidates, preclean, res)
+
+    def _extract_candidates(
+        self, st, html, url, start_domain, depth, is_pdf
+    ) -> List[Tuple[str, str]]:
+        """Extract page links and filter out visited/blacklisted ones."""
+        cfg = self.cfg
+        if depth >= st.max_depth:
+            log.debug("  links: skipped (at max_depth=%d)", st.max_depth)
+            return []
+        if is_pdf or not html:
+            if is_pdf:
+                log.debug("  links: skipped (PDF)")
+            return []
+        candidates = extract_candidate_links(
+            html,
+            url,
+            start_domain,
+            same_domain_only=cfg.same_domain_only,
+            max_links=cfg.max_candidate_links,
+            exclude_pattern=self._exclude_re,
+        )
+        return self._filter_candidates(st, candidates)
+
+    def _filter_candidates(self, st, candidates) -> List[Tuple[str, str]]:
+        """Drop already-visited and blacklisted links."""
+        before = len(candidates)
+        with st.lock:
+            visited_snapshot = set(st.visited)
+        filtered = [
+            (t, u)
+            for (t, u) in candidates
+            if normalize_url(u) not in visited_snapshot
+            and not is_blacklisted_domain(u, self.blacklist)
+        ]
+        if before:
+            log.debug(
+                "  candidates: %d -> -%d visited/blacklisted -> %d to explore",
+                before,
+                before - len(filtered),
+                len(filtered),
+            )
+        return filtered
 
     # -- cache ----------------------------------------------------------------
 
@@ -501,20 +636,44 @@ class WebCrawler:
             self._add_counted(st, result)
             if self.db:
                 self.db.add_edge(st.session_id, uh, source_url=source_url, depth=depth)
+            # Optionally keep recursing from the links stored at crawl time, so a
+            # warm cache yields the same frontier as a cold one (no re-fetch).
+            if self.cfg.recurse_from_cache and depth < st.max_depth:
+                stored = [(a, u) for a, u in (row.get("links") or []) if u]
+                if stored:
+                    cands = self._filter_candidates(st, stored)
+                    log.debug(
+                        "  cache recurse: %d stored link(s) -> %d to follow",
+                        len(stored),
+                        len(cands),
+                    )
+                    return self._select_next(st, cands, row.get("clean_text") or "", res)
             return []
 
         if st.content_mode == "smart":
-            base = (row.get("raw_text") or row.get("clean_text") or "")
+            base = row.get("raw_text") or row.get("clean_text") or ""
             if base.strip():
                 log.debug("  cache enrich (pure->smart) - no fetch, LLM only")
                 preclean = preprocess_text(base)
                 result = self._smart_extract(
-                    st, url, uh, preclean, row.get("title") or "",
-                    row.get("published_iso"), bool(row.get("is_pdf")), depth, source_url, res,
+                    st,
+                    url,
+                    uh,
+                    preclean,
+                    row.get("title") or "",
+                    row.get("published_iso"),
+                    bool(row.get("is_pdf")),
+                    depth,
+                    source_url,
+                    res,
                 )
-                self._emit(st, result, count=(result.status == "done"),
-                           raw_text=row.get("raw_text") or base,
-                           content_hash=row.get("content_hash") or _content_hash(base))
+                self._emit(
+                    st,
+                    result,
+                    count=(result.status == "done"),
+                    raw_text=row.get("raw_text") or base,
+                    content_hash=row.get("content_hash") or _content_hash(base),
+                )
                 return []
         return None
 
@@ -534,18 +693,25 @@ class WebCrawler:
 
     # -- smart content extraction ---------------------------------------------
 
-    def _smart_extract(self, st, url, uh, preclean, title, published_iso,
-                       is_pdf, depth, source_url, res) -> PageResult:
+    def _smart_extract(
+        self, st, url, uh, preclean, title, published_iso, is_pdf, depth, source_url, res
+    ) -> PageResult:
         cfg = self.cfg
         content_text = preclean[: cfg.max_chars_content]
         if len(preclean) > cfg.large_doc_threshold:
             _n_chunks = min(
                 len(preclean) // cfg.large_doc_chunk_chars + 1, cfg.large_doc_max_chunks
             )
-            log.debug("  large-doc: %d chars > threshold=%d -> LLM map-reduce (%d chunks ~%d chars ea)",
-                      len(preclean), cfg.large_doc_threshold, _n_chunks, cfg.large_doc_chunk_chars)
+            log.debug(
+                "  large-doc: %d chars > threshold=%d -> LLM map-reduce (%d chunks ~%d chars ea)",
+                len(preclean),
+                cfg.large_doc_threshold,
+                _n_chunks,
+                cfg.large_doc_chunk_chars,
+            )
             content_text = res.llm.summarize_large(
-                url, preclean,
+                url,
+                preclean,
                 max_chars_out=cfg.max_chars_content,
                 threshold=cfg.large_doc_threshold,
                 chunk_chars=cfg.large_doc_chunk_chars,
@@ -557,15 +723,22 @@ class WebCrawler:
         if extract is None:
             log.debug("  content [smart]: LLM returned None (llm_error)")
             return PageResult(
-                url=url, url_hash=uh, status="llm_error", mode="smart",
-                title=title, published_iso=published_iso, is_pdf=is_pdf,
-                depth=depth, source_url=source_url, error="LLM extraction failed",
+                url=url,
+                url_hash=uh,
+                status="llm_error",
+                mode="smart",
+                title=title,
+                published_iso=published_iso,
+                is_pdf=is_pdf,
+                depth=depth,
+                source_url=source_url,
+                error="LLM extraction failed",
             )
 
         data = extract.model_dump()
         text = getattr(extract, "clean_text", None) or None
         if st.schema is not None and not text:
-            text = json.dumps(data, ensure_ascii=False)   # keep custom data searchable
+            text = json.dumps(data, ensure_ascii=False)  # keep custom data searchable
         _title_out = getattr(extract, "title", None) or title
         _summary_out = getattr(extract, "summary", None) or ""
         _entities_out = list(getattr(extract, "entities", None) or [])
@@ -573,11 +746,17 @@ class WebCrawler:
         _sentiment_out = getattr(extract, "sentiment", None)
         log.debug(
             "  content [smart]: title=%r | summary=%d chars | %d entities | %d topics | sentiment=%s",
-            (_title_out or "")[:60], len(_summary_out),
-            len(_entities_out), len(_topics_out), _sentiment_out or "?",
+            (_title_out or "")[:60],
+            len(_summary_out),
+            len(_entities_out),
+            len(_topics_out),
+            _sentiment_out or "?",
         )
         return PageResult(
-            url=url, url_hash=uh, status="done", mode="smart",
+            url=url,
+            url_hash=uh,
+            status="done",
+            mode="smart",
             title=_title_out,
             text=text,
             summary=_summary_out or None,
@@ -586,8 +765,10 @@ class WebCrawler:
             sentiment=_sentiment_out,
             notes=getattr(extract, "notes", None) or None,
             data=data,
-            published_iso=published_iso, is_pdf=is_pdf,
-            depth=depth, source_url=source_url,
+            published_iso=published_iso,
+            is_pdf=is_pdf,
+            depth=depth,
+            source_url=source_url,
         )
 
     # -- link selection -------------------------------------------------------
@@ -598,9 +779,14 @@ class WebCrawler:
             log.debug("  next: no candidates -> nothing queued")
             return []
         if st.link_mode == "smart" and res.link_selector is not None:
-            log.debug("  next: LLM link selection from %d candidates (topic=%r)...",
-                      len(candidates), (st.topic or "")[:50])
-            selected = res.llm.select_links(res.link_selector, excerpt, candidates, cfg.max_links_per_level)
+            log.debug(
+                "  next: LLM link selection from %d candidates (topic=%r)...",
+                len(candidates),
+                (st.topic or "")[:50],
+            )
+            selected = res.llm.select_links(
+                res.link_selector, excerpt, candidates, cfg.max_links_per_level
+            )
             log.debug("  next: LLM selected %d link(s):", len(selected))
             for i, (anchor, link_url) in enumerate(selected[:5]):
                 log.debug("    [%d] %s -> %s", i + 1, (anchor or "")[:50], link_url[:80])
@@ -608,8 +794,12 @@ class WebCrawler:
                 log.debug("    ... and %d more", len(selected) - 5)
         else:
             selected = candidates[: cfg.max_links_per_level]
-            log.debug("  next: heuristic (first %d of %d candidates) -> %d queued",
-                      cfg.max_links_per_level, len(candidates), len(selected))
+            log.debug(
+                "  next: heuristic (first %d of %d candidates) -> %d queued",
+                cfg.max_links_per_level,
+                len(candidates),
+                len(selected),
+            )
             if log.isEnabledFor(10):  # DEBUG = 10
                 for i, (anchor, link_url) in enumerate(selected[:5]):
                     log.debug("    [%d] %s -> %s", i + 1, (anchor or "")[:50], link_url[:80])
@@ -617,7 +807,9 @@ class WebCrawler:
                     log.debug("    ... and %d more", len(selected) - 5)
         after_bl = [(a, u) for (a, u) in selected if not is_blacklisted_domain(u, self.blacklist)]
         if len(after_bl) < len(selected):
-            log.debug("  next: -%d blacklisted -> %d final", len(selected) - len(after_bl), len(after_bl))
+            log.debug(
+                "  next: -%d blacklisted -> %d final", len(selected) - len(after_bl), len(after_bl)
+            )
         return after_bl
 
     # -- thread-safe state + persistence --------------------------------------
@@ -638,48 +830,93 @@ class WebCrawler:
             st.results.append(result)
             st.pages_done += 1
 
-    def _emit(self, st, result: PageResult, *, count: bool,
-              raw_text: Optional[str] = None, content_hash: Optional[str] = None) -> None:
+    def _emit(
+        self,
+        st,
+        result: PageResult,
+        *,
+        count: bool,
+        raw_text: Optional[str] = None,
+        content_hash: Optional[str] = None,
+        candidate_links: Optional[List[Tuple[str, str]]] = None,
+    ) -> None:
         with st.lock:
             st.results.append(result)
             if count:
                 st.pages_done += 1
         if self.db is None:
             return
-        self.db.upsert_page({
-            "url": result.url, "url_hash": result.url_hash,
-            "domain": get_base_domain(result.url), "is_pdf": result.is_pdf,
-            "status": result.status, "mode": result.mode, "error": result.error,
-            "raw_text": raw_text, "clean_text": result.text, "title": result.title,
-            "summary": result.summary, "entities": result.entities,
-            "topics": result.topics, "sentiment": result.sentiment,
-            "notes": result.notes, "data": result.data,
-            "published_iso": result.published_iso, "content_hash": content_hash,
-        })
+        self.db.upsert_page(
+            {
+                "url": result.url,
+                "url_hash": result.url_hash,
+                "domain": get_base_domain(result.url),
+                "is_pdf": result.is_pdf,
+                "status": result.status,
+                "mode": result.mode,
+                "error": result.error,
+                "raw_text": raw_text,
+                "clean_text": result.text,
+                "title": result.title,
+                "summary": result.summary,
+                "entities": result.entities,
+                "topics": result.topics,
+                "sentiment": result.sentiment,
+                "notes": result.notes,
+                "data": result.data,
+                "published_iso": result.published_iso,
+                "content_hash": content_hash,
+                "links": [[a, u] for (a, u) in (candidate_links or [])] or None,
+            }
+        )
         if st.session_id:
-            self.db.add_edge(st.session_id, result.url_hash,
-                             source_url=result.source_url, depth=result.depth)
+            self.db.add_edge(
+                st.session_id, result.url_hash, source_url=result.source_url, depth=result.depth
+            )
 
-    def _copy_content(self, existing: dict, url: str, uh: str) -> None:
+    def _copy_content(
+        self,
+        existing: dict,
+        url: str,
+        uh: str,
+        candidate_links: Optional[List[Tuple[str, str]]] = None,
+    ) -> None:
         page = dict(existing)
         page.update({"url": url, "url_hash": uh})
         page.pop("entities", None)
         page.pop("topics", None)
         page.pop("data", None)
+        # store this URL's own candidate links (not the source row's)
+        page.pop("links", None)
+        page["links_json"] = (
+            json.dumps([[a, u] for (a, u) in candidate_links], ensure_ascii=False)
+            if candidate_links
+            else None
+        )
         self.db.upsert_page(page)
 
-    def _result_from_row(self, row: dict, depth: int, source_url: Optional[str], from_cache: bool) -> PageResult:
+    def _result_from_row(
+        self, row: dict, depth: int, source_url: Optional[str], from_cache: bool
+    ) -> PageResult:
         return PageResult(
-            url=row.get("url", ""), url_hash=row.get("url_hash", ""),
-            status=row.get("status", "done"), mode=row.get("mode", "pure"),
-            title=row.get("title"), text=row.get("clean_text"),
+            url=row.get("url", ""),
+            url_hash=row.get("url_hash", ""),
+            status=row.get("status", "done"),
+            mode=row.get("mode", "pure"),
+            title=row.get("title"),
+            text=row.get("clean_text"),
             summary=row.get("summary"),
-            entities=row.get("entities") or [], topics=row.get("topics") or [],
-            sentiment=row.get("sentiment"), notes=row.get("notes"),
+            entities=row.get("entities") or [],
+            topics=row.get("topics") or [],
+            sentiment=row.get("sentiment"),
+            notes=row.get("notes"),
             data=row.get("data"),
-            published_iso=row.get("published_iso"), is_pdf=bool(row.get("is_pdf")),
-            depth=depth, source_url=source_url,
-            error=row.get("error"), from_cache=from_cache,
+            published_iso=row.get("published_iso"),
+            is_pdf=bool(row.get("is_pdf")),
+            depth=depth,
+            source_url=source_url,
+            error=row.get("error"),
+            from_cache=from_cache,
         )
 
     # -- helpers --------------------------------------------------------------
@@ -687,13 +924,17 @@ class WebCrawler:
     def _ensure_llm(self) -> None:
         if self._llm is None:
             from .llm import CrawlerLLM
+
             self._llm = CrawlerLLM(self.llm_cfg or LLMConfig())
 
     @staticmethod
     def _default_session_id(topic: str, content_mode: str) -> str:
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        # microseconds + a short random suffix so two runs in the same second
+        # (e.g. rapid tool calls) never collide.
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        rand = uuid.uuid4().hex[:6]
         slug = re.sub(r"[^a-z0-9]+", "-", (topic or "crawl").lower()).strip("-")[:32] or "crawl"
-        return f"{slug}_{content_mode}_{ts}"
+        return f"{slug}_{content_mode}_{ts}_{rand}"
 
     def close(self) -> None:
         self._http.close()

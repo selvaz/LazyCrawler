@@ -166,8 +166,9 @@ results = crawler.crawl("https://example.com/", mode="pure")
 ```
 
 In a deterministic test (1 seed + 12 leaves, simulated latency) parallel is ~3×
-faster than sequential. Note: `link_delay` is not applied in parallel mode — pick
-a polite `max_workers` for shared/target sites.
+faster than sequential. Note: `link_delay` is not applied in parallel mode, but
+the per-host rate limiter (`HTTPConfig.per_host_delay`) and robots `Crawl-delay`
+**are** — they keep both sequential and parallel crawls polite per host.
 
 ## Custom output schema (smart content)
 
@@ -212,9 +213,12 @@ CrawlerConfig(respect_robots=True)    # default
 CrawlerConfig(respect_robots=False)   # ignore robots.txt (your own/authorized sites)
 ```
 
-Politeness is otherwise a global `HTTPConfig.link_delay` (not applied in parallel
-mode — pick a polite `max_workers`). Per-domain rate limiting / crawl-delay is on
-the roadmap.
+Politeness has three layers: a global `HTTPConfig.link_delay` between sequential
+fetches, a **per-host rate limiter** (`HTTPConfig.per_host_delay`, applied in
+both sequential and parallel mode), and robots.txt **`Crawl-delay`**, which is
+honored on top of `per_host_delay` (the effective gap per host is the larger of
+the two) whenever `respect_robots` is on. The crawler also sends a dedicated
+`LazyCrawler/<version>` User-Agent instead of masquerading as a browser.
 
 ## Logging & error handling
 
@@ -290,8 +294,12 @@ re-fetch), and what you get depends on the requested mode:
 
 `DBConfig.ttl_hours` controls cache freshness; `force_refresh=True` bypasses it.
 
-> Cached hits are terminal (no link recursion: HTML is not stored). To follow
-> links freshly, use `force_refresh` or a shorter TTL.
+> By default a cached hit is **terminal** (no link recursion). The candidate
+> links found at crawl time are now stored on the page, so you can set
+> `CrawlerConfig(recurse_from_cache=True)` to keep following them from a warm
+> cache — the frontier is then the same whether the DB is cold or warm, with no
+> re-fetch. Otherwise, use `force_refresh` or a shorter TTL to follow links
+> freshly.
 
 ---
 

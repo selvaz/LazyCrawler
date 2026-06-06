@@ -26,10 +26,10 @@ from urllib.request import Request, urlopen
 
 from ._log import log
 
-
 # =============================================================================
 # PDF DETECTION
 # =============================================================================
+
 
 def looks_like_pdf(url: str, html: str = "", raw_text: str = "") -> bool:
     """
@@ -48,6 +48,7 @@ def looks_like_pdf(url: str, html: str = "", raw_text: str = "") -> bool:
 # =============================================================================
 # TITLE / DATE HELPERS
 # =============================================================================
+
 
 def title_from_pdf_text(text: str) -> str:
     """First non-trivial line of the PDF text, used as a fallback title."""
@@ -86,6 +87,7 @@ def _normalize_pdf_date(value: str) -> Optional[str]:
 # DOWNLOAD
 # =============================================================================
 
+
 def _ssl_context(verify: Union[bool, str]) -> Optional[ssl.SSLContext]:
     """
     Build an SSL context honoring the same ``verify`` semantics as requests:
@@ -123,6 +125,7 @@ def fetch_pdf_bytes(
 # PARSERS (each degrades to "" if the library is missing)
 # =============================================================================
 
+
 def _extract_with_pymupdf(data: bytes) -> Tuple[str, str, Optional[str]]:
     """Return (text, title, published_iso) via PyMuPDF. ("", "", None) if absent."""
     try:
@@ -143,10 +146,9 @@ def _extract_with_pymupdf(data: bytes) -> Tuple[str, str, Optional[str]]:
                 texts.append(page_text)
         meta = doc.metadata or {}
         title = (meta.get("title") or "").strip()
-        published_iso = (
-            _normalize_pdf_date(str(meta.get("creationDate") or ""))
-            or _normalize_pdf_date(str(meta.get("modDate") or ""))
-        )
+        published_iso = _normalize_pdf_date(
+            str(meta.get("creationDate") or "")
+        ) or _normalize_pdf_date(str(meta.get("modDate") or ""))
         return "\n\n".join(texts).strip(), title, published_iso
     except Exception:
         log.warning("PyMuPDF failed to parse PDF", exc_info=True)
@@ -198,6 +200,15 @@ def _extract_tables_with_pdfplumber(data: bytes, max_tables: int = 10) -> str:
     except Exception:
         log.debug("pdfplumber not available - skipping PDF tables")
         return ""
+    except BaseException:
+        # A broken optional native dependency (e.g. a cryptography build with a
+        # missing _cffi_backend) can raise a low-level panic rather than
+        # ImportError. Never let an optional table extractor crash the whole
+        # PDF pipeline — degrade to text-only.
+        log.warning(
+            "pdfplumber import raised a non-standard error - skipping PDF tables", exc_info=True
+        )
+        return ""
     try:
         chunks: List[str] = []
         table_count = 0
@@ -220,7 +231,9 @@ def _extract_tables_with_pdfplumber(data: bytes, max_tables: int = 10) -> str:
                         if any(cells):
                             rows.append("\t".join(cells))
                     if rows:
-                        chunks.append(f"[TABLE page={page_idx} index={tbl_idx}]\n" + "\n".join(rows))
+                        chunks.append(
+                            f"[TABLE page={page_idx} index={tbl_idx}]\n" + "\n".join(rows)
+                        )
                         table_count += 1
                         if table_count >= max_tables:
                             break
@@ -233,6 +246,7 @@ def _extract_tables_with_pdfplumber(data: bytes, max_tables: int = 10) -> str:
 # =============================================================================
 # PUBLIC API
 # =============================================================================
+
 
 def extract_pdf(
     url: str,

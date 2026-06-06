@@ -14,8 +14,8 @@ crawler = WebCrawler()
 results = crawler.crawl("https://react-spa.example.com", mode="pure")
 
 # Verbose output:
-# DEBUG   text: trafilatura returned 0 chars (<200) -> trying basic strip
-# DEBUG   text: no extractable content (<200 chars from both)
+# DEBUG   text: trafilatura returned 0 chars (<min_text_chars) -> trying basic strip
+# DEBUG   text: no extractable content (<min_text_chars chars from both)
 # DEBUG   links: 0 <a> tags | -0 off-domain | -0 excluded | -0 dup -> 0 candidates
 ```
 

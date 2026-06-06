@@ -35,8 +35,10 @@ Controls traversal depth, page limits, domain filtering, and blacklists.
 | `max_candidate_links` | `int` | `300` | Max raw link candidates extracted before selection |
 | `same_domain_only` | `bool` | `True` | Restrict crawl to the same domain as the seed |
 | `max_workers` | `int` | `1` | Thread pool size. `1` = sequential DFS, `N>1` = parallel BFS |
-| `respect_robots` | `bool` | `True` | Honour `robots.txt` |
+| `respect_robots` | `bool` | `True` | Honour `robots.txt` (including `Crawl-delay`) |
 | `strict` | `bool` | `False` | Raise exceptions on errors instead of recording them |
+| `recurse_from_cache` | `bool` | `False` | Follow a cached page's stored links instead of stopping (same frontier cold vs warm, no re-fetch) |
+| `exclude_patterns` | `list[str] \| None` | `None` | Regex fragments for link exclusion. `None` = built-in default (no longer drops `/about`, `/contact`, `/tag/`, `/category/`, `/author/`) |
 | `max_chars_content` | `int` | `100_000` | Hard limit on HTML size processed per page |
 | `max_chars_pure` | `int` | `10_000` | Char limit for pure-mode text output |
 | `large_doc_threshold` | `int` | `20_000` | Chars above which smart mode uses map-reduce |
@@ -55,12 +57,14 @@ Controls HTTP client behaviour, timeouts, SSL, polite delays, and JavaScript ren
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `user_agent` | `str` | Mozilla/5.0 ... | HTTP User-Agent header |
+| `user_agent` | `str` | `"LazyCrawler/0.5 (+...)"` | HTTP User-Agent header (dedicated, not a spoofed browser) |
 | `timeout_connect` | `int` | `5` | TCP connection timeout (seconds) |
 | `timeout_read` | `int` | `25` | Read timeout (seconds) |
 | `max_retries` | `int` | `4` | Max retry attempts on transient failures |
 | `backoff_base_sec` | `float` | `1.0` | Exponential backoff base (seconds) |
-| `link_delay` | `float` | `1.0` | Seconds to wait between page fetches (politeness) |
+| `link_delay` | `float` | `1.0` | Seconds between fetches in **sequential** mode (politeness) |
+| `per_host_delay` | `float` | `0.0` | Min seconds between fetches to the **same host**, in both sequential and parallel mode. robots `Crawl-delay` is honored on top (effective = larger of the two). `0` disables |
+| `min_text_chars` | `int` | `50` | Minimum extracted-text length to accept (shorter pages no longer become `no_text`; was a hardcoded 200) |
 | `pdf_timeout` | `int` | `60` | Timeout for PDF downloads (seconds) |
 | `verify_ssl` | `bool` | `True` | Verify SSL certificates. Set `False` for Avast/Zscaler MITM |
 | `ca_bundle` | `str` | `""` | Path to custom CA certificate bundle (PEM) |
@@ -125,6 +129,10 @@ Controls web search behaviour.
 | `same_domain_only` | `bool` | `False` | Stay on the result domain when `crawl_depth > 0` |
 | `expand_topic` | `bool` | `True` | Use LLM to expand the query into a rich topic description |
 | `gemini_model` | `str` | `"gemini-3-flash-preview"` | Model for Gemini grounded search |
+| `region` | `str` | `"wt-wt"` | DuckDuckGo region code (e.g. `"us-en"`) |
+| `timelimit` | `str \| None` | `None` | DuckDuckGo time filter: `"d"`/`"w"`/`"m"`/`"y"` or `None` |
+| `safesearch` | `str` | `"moderate"` | DuckDuckGo safe-search: `"on"`/`"moderate"`/`"off"` |
+| `backend` | `str` | `"auto"` | DuckDuckGo backend passed through to ddgs |
 
 ---
 

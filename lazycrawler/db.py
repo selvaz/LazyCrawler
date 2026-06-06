@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS pages (
   published_iso  TEXT,
   content_hash   TEXT,
   extract_json   TEXT,
+  links_json     TEXT,
   crawled_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pages_domain        ON pages(domain);
@@ -121,9 +122,24 @@ CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
 
 # "Page" fields managed by upsert.
 _PAGE_FIELDS = [
-    "url", "domain", "is_pdf", "status", "mode", "error", "raw_text",
-    "clean_text", "title", "summary", "entities_json", "topics_json",
-    "sentiment", "notes", "published_iso", "content_hash", "extract_json",
+    "url",
+    "domain",
+    "is_pdf",
+    "status",
+    "mode",
+    "error",
+    "raw_text",
+    "clean_text",
+    "title",
+    "summary",
+    "entities_json",
+    "topics_json",
+    "sentiment",
+    "notes",
+    "published_iso",
+    "content_hash",
+    "extract_json",
+    "links_json",
     "crawled_at",
 ]
 
@@ -131,6 +147,7 @@ _PAGE_FIELDS = [
 # =============================================================================
 # DB MANAGER
 # =============================================================================
+
 
 class CrawlerDB:
     """
@@ -154,7 +171,7 @@ class CrawlerDB:
         self.conn.execute("PRAGMA foreign_keys=ON;")
         self.conn.executescript(_SCHEMA_SQL)
         # Migrations for DBs created before these columns existed.
-        for _col in ("extract_json", "sentiment", "notes"):
+        for _col in ("extract_json", "sentiment", "notes", "links_json"):
             try:
                 self.conn.execute(f"ALTER TABLE pages ADD COLUMN {_col} TEXT")
             except sqlite3.OperationalError:
@@ -164,8 +181,9 @@ class CrawlerDB:
                 self.conn.executescript(_FTS_SQL)
             except sqlite3.OperationalError:
                 # FTS5 not available in this SQLite build - degrade to LIKE search.
-                log.warning("FTS5 unavailable in this SQLite build - "
-                            "search_text() falls back to LIKE")
+                log.warning(
+                    "FTS5 unavailable in this SQLite build - search_text() falls back to LIKE"
+                )
                 self.cfg.enable_fts = False
         self.conn.commit()
 
@@ -261,6 +279,9 @@ class CrawlerDB:
         if "data" in data and "extract_json" not in data:
             d = data.get("data")
             data["extract_json"] = json.dumps(d, ensure_ascii=False) if d else None
+        if "links" in data and "links_json" not in data:
+            lk = data.get("links")
+            data["links_json"] = json.dumps(lk, ensure_ascii=False) if lk else None
 
         cols = ["url_hash"] + _PAGE_FIELDS
         values = [uh] + [data.get(f) for f in _PAGE_FIELDS]
@@ -334,7 +355,8 @@ class CrawlerDB:
             params.append(status)
         sql += " ORDER BY p.crawled_at DESC"
         if limit:
-            sql += f" LIMIT {int(limit)}"
+            sql += " LIMIT ?"
+            params.append(int(limit))
         with self._lock:
             rows = self.conn.execute(sql, params).fetchall()
         return [self._row_to_page(dict(r)) for r in rows]
@@ -366,9 +388,11 @@ class CrawlerDB:
 
     def stats(self) -> Dict[str, int]:
         """Quick counts: sessions, total/done pages, edges."""
+
         def _count(sql: str) -> int:
             with self._lock:
                 return int(self.conn.execute(sql).fetchone()[0])
+
         return {
             "sessions": _count("SELECT COUNT(*) FROM sessions"),
             "pages": _count("SELECT COUNT(*) FROM pages"),
@@ -398,6 +422,15 @@ class CrawlerDB:
                 row["data"] = None
         else:
             row["data"] = None
+        lj = row.get("links_json")
+        if lj:
+            try:
+                row["links"] = json.loads(lj)
+            except Exception:
+                log.debug("could not deserialize links_json for a page row")
+                row["links"] = []
+        else:
+            row["links"] = []
         return row
 
     def close(self) -> None:

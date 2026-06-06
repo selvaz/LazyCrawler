@@ -36,6 +36,7 @@ _WARNED = False
 def playwright_available() -> bool:
     try:
         import playwright  # noqa: F401
+
         return True
     except Exception:
         return False
@@ -90,8 +91,10 @@ class BrowserRenderer:
             from playwright.sync_api import sync_playwright
         except ImportError:
             if not _WARNED:
-                log.warning("Playwright not installed - render_js falls back to requests "
-                            "(pip install playwright && playwright install chromium)")
+                log.warning(
+                    "Playwright not installed - render_js falls back to requests "
+                    "(pip install playwright && playwright install chromium)"
+                )
                 _WARNED = True
             return False
         try:
@@ -116,8 +119,9 @@ class BrowserRenderer:
                 page.goto(url, wait_until=self.wait_until, timeout=self.timeout_ms)
                 return page.content()
             except Exception as e:
-                log.warning("browser render failed for %s (%s: %s)",
-                            url, type(e).__name__, e, exc_info=True)
+                log.warning(
+                    "browser render failed for %s (%s: %s)", url, type(e).__name__, e, exc_info=True
+                )
                 # A crashed browser/context should not poison future renders.
                 self._close_sync()
                 return None
@@ -170,8 +174,10 @@ def _render_sync(
         from playwright.sync_api import sync_playwright
     except ImportError:
         if not _WARNED:
-            log.warning("Playwright not installed - render_js falls back to requests "
-                        "(pip install playwright && playwright install chromium)")
+            log.warning(
+                "Playwright not installed - render_js falls back to requests "
+                "(pip install playwright && playwright install chromium)"
+            )
             _WARNED = True
         return None
     try:
@@ -184,8 +190,9 @@ def _render_sync(
             finally:
                 browser.close()
     except Exception as e:
-        log.warning("browser render failed for %s (%s: %s)",
-                    url, type(e).__name__, e, exc_info=True)
+        log.warning(
+            "browser render failed for %s (%s: %s)", url, type(e).__name__, e, exc_info=True
+        )
         return None
 
 
@@ -207,6 +214,7 @@ def render(
         wait_until=wait_until,
         timeout_ms=timeout_ms,
     )
+
     def work():
         return renderer.render(url)
 

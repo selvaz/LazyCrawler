@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-setup_paths.py — make LazyCrawler usable in Spyder (and standalone scripts).
+examples/spyder_setup.py — optional convenience for Spyder / interactive use.
 
-The package is not pip-installed, so before importing it you must put it (and
-LazyBridge, for smart mode / tools) on sys.path and load the API keys.
+PREFER ``pip install -e .`` (or ``pip install -e ".[all]"``). Once installed,
+``from lazycrawler import WebCrawler`` just works and you do NOT need this file.
+It is kept only for the Spyder workflow where the repo is not pip-installed:
+it puts LazyCrawler (and LazyBridge, for smart mode) on sys.path and loads a
+local ``.env``. The hardcoded ``D:\\...`` fallbacks are Windows-specific and are
+intentionally isolated here, out of the importable package and the test suite.
 
 USE IN SPYDER — run this file once at the start of a session, or set it as the
 console startup file (Preferences > IPython console > Startup > Run a file):
 
-    runfile(r"D:\\LazyCrawler\\setup_paths.py")
-
-or from any script / test:
-
-    import setup_paths            # noqa: F401  (side effects: paths + .env)
+    runfile(r"D:\\LazyCrawler\\examples\\spyder_setup.py")
 
 After it runs:  from lazycrawler import WebCrawler, CrawlerTools   # just works
 """
@@ -23,9 +23,9 @@ import os
 import sys
 from pathlib import Path
 
-# ── 1. LazyCrawler repo root = the folder containing this file ────────────────
+# ── 1. LazyCrawler repo root = the parent of this examples/ folder ────────────
 try:
-    LAZYCRAWLER_ROOT = Path(__file__).resolve().parent
+    LAZYCRAWLER_ROOT = Path(__file__).resolve().parent.parent
 except NameError:  # pasted into a console where __file__ is undefined
     LAZYCRAWLER_ROOT = Path(r"D:\LazyCrawler")
 
@@ -62,16 +62,22 @@ for _env in [_ECOSYSTEM_ROOT / ".env", LAZYCRAWLER_ROOT / ".env"]:
 def status() -> None:
     """Print what's importable and which API keys are set."""
     import importlib.util
+
     lc = importlib.util.find_spec("lazycrawler") is not None
     lb = importlib.util.find_spec("lazybridge") is not None
     print(f"[setup_paths] lazycrawler importable : {lc}  ({LAZYCRAWLER_ROOT})")
     print(f"[setup_paths] lazybridge  importable : {lb}")
-    keys = [k for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
-                         "DEEPSEEK_API_KEY") if os.environ.get(k)]
+    keys = [
+        k
+        for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY")
+        if os.environ.get(k)
+    ]
     print(f"[setup_paths] API keys set           : {', '.join(keys) or 'NONE'}")
     if not lb:
-        print("[setup_paths] NOTE: LazyBridge not found - smart mode / tools.as_tools() "
-              "will be unavailable. Set LAZYBRIDGE_PATH or edit the candidates above.")
+        print(
+            "[setup_paths] NOTE: LazyBridge not found - smart mode / tools.as_tools() "
+            "will be unavailable. Set LAZYBRIDGE_PATH or edit the candidates above."
+        )
 
 
 status()

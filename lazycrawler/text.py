@@ -19,10 +19,10 @@ from urllib.parse import urljoin
 from ._log import log
 from .http import get_base_domain, is_excluded_url, normalize_url
 
-
 # =============================================================================
 # WHITESPACE
 # =============================================================================
+
 
 def normalize_whitespace(s: str) -> str:
     """Normalize spaces, tabs and repeated newlines."""
@@ -89,15 +89,20 @@ def preprocess_text(raw: str) -> str:
 # LINK EXTRACTION
 # =============================================================================
 
+
 def extract_candidate_links(
     html: str,
     base_url: str,
     start_domain: str = "",
     same_domain_only: bool = True,
     max_links: int = 300,
+    exclude_pattern: "Optional[Any]" = None,
 ) -> List[Tuple[str, str]]:
     """
     Extract candidate links from an HTML page.
+
+    ``exclude_pattern`` is an optional compiled regex (see http.compile_exclude)
+    used to drop uninteresting links; None uses the built-in default.
 
     Returns
     -------
@@ -107,8 +112,9 @@ def extract_candidate_links(
     try:
         from bs4 import BeautifulSoup
     except ImportError:
-        log.warning("beautifulsoup4 not installed - no link extraction "
-                    "(pip install beautifulsoup4)")
+        log.warning(
+            "beautifulsoup4 not installed - no link extraction (pip install beautifulsoup4)"
+        )
         return []
 
     soup = BeautifulSoup(html, "html.parser")
@@ -142,7 +148,7 @@ def extract_candidate_links(
             ):
                 n_offdom += 1
                 continue
-        if is_excluded_url(href, text):
+        if is_excluded_url(href, text, exclude_pattern):
             n_excluded += 1
             continue
         norm = normalize_url(href)
@@ -156,7 +162,11 @@ def extract_candidate_links(
 
     log.debug(
         "  links: %d <a> tags | -%d off-domain | -%d excluded | -%d dup -> %d candidates",
-        n_raw, n_offdom, n_excluded, n_dup, len(result),
+        n_raw,
+        n_offdom,
+        n_excluded,
+        n_dup,
+        len(result),
     )
     return result
 
@@ -165,10 +175,12 @@ def extract_candidate_links(
 # CANONICAL URL
 # =============================================================================
 
+
 def extract_canonical_url(html: str, base_url: str) -> Optional[str]:
     """Canonical URL from <link rel="canonical" href="...">, or None."""
     try:
         from bs4 import BeautifulSoup
+
         soup = BeautifulSoup(html, "html.parser")
         link = soup.find("link", rel=lambda v: v and "canonical" in str(v).lower())
         if link and link.get("href"):
@@ -182,6 +194,7 @@ def extract_canonical_url(html: str, base_url: str) -> Optional[str]:
 # =============================================================================
 # HTML TITLE
 # =============================================================================
+
 
 def extract_page_title(html: str) -> str:
     """Title from <title> (or <h1> fallback)."""
@@ -198,6 +211,7 @@ def extract_page_title(html: str) -> str:
 # PUBLISH DATE
 # =============================================================================
 
+
 def _parse_datetime_any(value: str) -> Optional[datetime]:
     """Best-effort parse of a datetime string -> UTC-aware datetime."""
     if not value or not isinstance(value, str):
@@ -207,6 +221,7 @@ def _parse_datetime_any(value: str) -> Optional[datetime]:
         return None
     try:
         from dateutil import parser as dtparser  # type: ignore
+
         dt = dtparser.parse(v)
     except Exception:
         try:
@@ -244,12 +259,22 @@ def extract_published_datetime(html: str, base_url: str = "") -> Optional[str]:
     candidates: List[str] = []
 
     meta_props = [
-        ("property", "article:published_time"), ("property", "og:published_time"),
-        ("name", "pubdate"), ("name", "publishdate"), ("name", "publish_date"),
-        ("name", "publication_date"), ("name", "date"), ("name", "DC.date.issued"),
-        ("name", "DC.Date"), ("name", "dcterms.created"), ("name", "dcterms.issued"),
-        ("name", "parsely-pub-date"), ("name", "sailthru.date"),
-        ("itemprop", "datePublished"), ("itemprop", "dateCreated"), ("itemprop", "dateModified"),
+        ("property", "article:published_time"),
+        ("property", "og:published_time"),
+        ("name", "pubdate"),
+        ("name", "publishdate"),
+        ("name", "publish_date"),
+        ("name", "publication_date"),
+        ("name", "date"),
+        ("name", "DC.date.issued"),
+        ("name", "DC.Date"),
+        ("name", "dcterms.created"),
+        ("name", "dcterms.issued"),
+        ("name", "parsely-pub-date"),
+        ("name", "sailthru.date"),
+        ("itemprop", "datePublished"),
+        ("itemprop", "dateCreated"),
+        ("itemprop", "dateModified"),
     ]
     for attr, key in meta_props:
         tag = soup.find("meta", attrs={attr: key})

@@ -31,32 +31,37 @@ from .prompts import (
     build_link_selection_system,
 )
 
-
 # =============================================================================
 # STRUCTURED OUTPUT MODELS
 # =============================================================================
 
+
 class PageExtract(BaseModel):
     """Main content extracted from a page (smart mode)."""
+
     title: str = Field(default="", description="Page or article title")
     summary: str = Field(default="", description="Concise summary, 1-3 sentences")
     clean_text: str = Field(default="", description="Cleaned main content")
     entities: List[str] = Field(default_factory=list, description="People, orgs, places, products")
     topics: List[str] = Field(default_factory=list, description="Main topics/themes")
     sentiment: Literal["negative", "neutral", "positive"] = Field(
-        default="neutral", description="Overall tone of the content")
+        default="neutral", description="Overall tone of the content"
+    )
     notes: str = Field(
-        default="", description="Reserved for research tags/notes; empty unless requested")
+        default="", description="Reserved for research tags/notes; empty unless requested"
+    )
 
 
 class LinkSelection(BaseModel):
     """1-based indices of the relevant links selected by the LLM."""
+
     indices: List[int] = Field(default_factory=list)
 
 
 # =============================================================================
 # CRAWLER LLM (LazyBridge wrapper)
 # =============================================================================
+
 
 class CrawlerLLM:
     """
@@ -88,7 +93,7 @@ class CrawlerLLM:
         self._clean = None
         self._topic = None
         self._summary = None
-        self._schema_agents: dict = {}   # custom output schema -> agent
+        self._schema_agents: dict = {}  # custom output schema -> agent
 
     # -- agent construction (lazy) --------------------------------------------
 
@@ -154,13 +159,17 @@ class CrawlerLLM:
         try:
             env = agent(f"SOURCE URL: {url}\n\n{text}")
         except Exception as e:
-            log.error("LLM extract_content failed for %s: %s: %s",
-                      url, type(e).__name__, e, exc_info=True)
+            log.error(
+                "LLM extract_content failed for %s: %s: %s", url, type(e).__name__, e, exc_info=True
+            )
             return None
         if env.ok and isinstance(env.payload, out_type):
             return env.payload
-        log.warning("LLM extract_content unexpected output for %s (%s)", url,
-                    "error: " + env.error.message if env.error else "no payload")
+        log.warning(
+            "LLM extract_content unexpected output for %s (%s)",
+            url,
+            "error: " + env.error.message if env.error else "no payload",
+        )
         return None
 
     def expand_topic(self, query: str) -> str:
@@ -170,8 +179,12 @@ class CrawlerLLM:
             t = (env.text() or "").strip() if env.ok else ""
             return t if len(t) > 5 else query
         except Exception as e:
-            log.warning("LLM expand_topic failed (%s: %s) - using raw query",
-                        type(e).__name__, e, exc_info=True)
+            log.warning(
+                "LLM expand_topic failed (%s: %s) - using raw query",
+                type(e).__name__,
+                e,
+                exc_info=True,
+            )
             return query
 
     def select_links(
@@ -212,12 +225,21 @@ class CrawlerLLM:
             for idx in idxs:
                 if isinstance(idx, int) and 1 <= idx <= len(subset):
                     out.append(subset[idx - 1])
-            log.debug("  LLM selector: %d candidates -> indices %s -> %d valid",
-                      len(subset), (idxs[:10] if idxs else []), len(out))
+            log.debug(
+                "  LLM selector: %d candidates -> indices %s -> %d valid",
+                len(subset),
+                (idxs[:10] if idxs else []),
+                len(out),
+            )
             return out[:max_links]
         except Exception as e:
-            log.warning("LLM select_links failed (%s: %s) - falling back to first %d candidates",
-                        type(e).__name__, e, max_links, exc_info=True)
+            log.warning(
+                "LLM select_links failed (%s: %s) - falling back to first %d candidates",
+                type(e).__name__,
+                e,
+                max_links,
+                exc_info=True,
+            )
             return subset[:max_links]
 
     def summarize_large(
@@ -236,30 +258,44 @@ class CrawlerLLM:
         if len(text) <= threshold:
             return text[:max_chars_out]
 
-        log.info("large document (%d chars) - map-reduce summarization (%d chunks ~%d chars ea)",
-                 len(text), min(len(text) // chunk_chars + 1, max_chunks), chunk_chars)
+        log.info(
+            "large document (%d chars) - map-reduce summarization (%d chunks ~%d chars ea)",
+            len(text),
+            min(len(text) // chunk_chars + 1, max_chunks),
+            chunk_chars,
+        )
         agent = self._summary_agent()
-        chunks = [text[i:i + chunk_chars] for i in range(0, len(text), chunk_chars)][:max_chunks]
+        chunks = [text[i : i + chunk_chars] for i in range(0, len(text), chunk_chars)][:max_chunks]
 
         partials: List[str] = []
         for i, chunk in enumerate(chunks, 1):
-            log.debug("  large-doc: summarizing chunk %d/%d (%d chars)...", i, len(chunks), len(chunk))
+            log.debug(
+                "  large-doc: summarizing chunk %d/%d (%d chars)...", i, len(chunks), len(chunk)
+            )
             try:
                 env = agent(f"URL: {url}\nChunk {i}/{len(chunks)}\n\n{chunk}")
                 partial = (env.text() or "").strip() if env.ok else chunk[:1500]
                 log.debug("  large-doc: chunk %d -> %d chars output", i, len(partial))
                 partials.append(partial)
             except Exception as e:
-                log.warning("large-doc chunk %d failed (%s: %s) - keeping raw chunk prefix",
-                            i, type(e).__name__, e, exc_info=True)
+                log.warning(
+                    "large-doc chunk %d failed (%s: %s) - keeping raw chunk prefix",
+                    i,
+                    type(e).__name__,
+                    e,
+                    exc_info=True,
+                )
                 partials.append(chunk[:1500])
 
         merged = "\n\n".join(p for p in partials if p.strip())
         if not merged.strip():
             log.debug("  large-doc: all partials empty -> returning raw text prefix")
             return text[:max_chars_out]
-        log.debug("  large-doc: merging %d partials (%d chars) -> final synthesis...",
-                  len(partials), len(merged))
+        log.debug(
+            "  large-doc: merging %d partials (%d chars) -> final synthesis...",
+            len(partials),
+            len(merged),
+        )
         try:
             env = agent(
                 f"URL: {url}\nMerge and compress the partial summaries into a "
@@ -271,6 +307,10 @@ class CrawlerLLM:
                 log.debug("  large-doc: final synthesis -> %d chars", len(final))
                 return final[:max_chars_out]
         except Exception as e:
-            log.warning("large-doc final synthesis failed (%s: %s) - returning merged partials",
-                        type(e).__name__, e, exc_info=True)
+            log.warning(
+                "large-doc final synthesis failed (%s: %s) - returning merged partials",
+                type(e).__name__,
+                e,
+                exc_info=True,
+            )
         return merged[:max_chars_out]
