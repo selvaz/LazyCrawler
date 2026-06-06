@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lazycrawler"
-version = "0.4.0"
+version = "0.5.0"
 description = "Web crawler + search with pure (no-LLM) and smart (LazyBridge LLM) modes, SQLite persistence and 3-level dedup."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 authors = [{ name = "selvaz" }]
 keywords = ["web-crawler", "web-search", "llm", "lazybridge", "trafilatura"]
 
@@ -39,9 +39,41 @@ all = [
     "pymupdf>=1.23", "pypdf>=4.0", "pdfplumber>=0.10",
     "ddgs>=2.0", "playwright>=1.40", "openpyxl>=3.1", "python-dateutil>=2.8",
 ]
+# Development: tests, lint/format, build & publish tooling.
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+    "build>=1.0",
+    "twine>=5.0",
+]
 
 [project.urls]
 Repository = "https://github.com/selvaz/lazycrawler"
 
 [tool.setuptools]
 packages = ["lazycrawler"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not integration'"
+markers = [
+    "integration: tests that require network access, an API key, or LazyBridge",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# pycodestyle errors (E), pyflakes (F), import sorting (I), bugbear (B).
+# pyupgrade (UP) is intentionally omitted: the codebase targets 3.10 and keeps
+# explicit typing (Optional/List) plus utf-8 headers as a deliberate style.
+select = ["E", "F", "I", "B"]
+ignore = [
+    "E501",  # line length handled by the formatter, not enforced strictly
+    "B008",  # function calls in argument defaults (dataclasses/config patterns)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# example scripts deliberately interleave imports with prose/sys.path setup
+"examples/*" = ["E402"]
