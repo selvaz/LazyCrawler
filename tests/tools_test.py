@@ -11,6 +11,8 @@ import json
 import os
 import sys
 import tempfile
+from contextlib import redirect_stdout
+from io import StringIO
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -41,7 +43,12 @@ def fake_fetch(self, url, extra_headers=None):
     return f"<html><head><title>Page {url[-5:]}</title></head><body><p>{BODY}</p></body></html>", BODY, 200
 
 http_mod.HTTPClient.fetch = fake_fetch
-search_mod.search_ddg_urls = lambda q, n, bl=None: [f"https://site.example/r{i}" for i in range(min(n, 3))]
+SEEN_SEARCH_LIMITS = []
+def fake_search_ddg_urls(q, n, bl=None):
+    SEEN_SEARCH_LIMITS.append(n)
+    return [f"https://site.example/r{i}" for i in range(min(n, 3))]
+
+search_mod.search_ddg_urls = fake_search_ddg_urls
 
 
 print("\n=== 0. PageExtract has sentiment + notes ===")
@@ -86,7 +93,20 @@ check("finds cached page", sc["found"] >= 1 and "/start" in (sc["pages"][0]["url
 print("\n=== 4. web_search (stubbed engine) ===")
 ws = json.loads(ct.web_search("anything", max_results=2))
 check("web_search honors max_results", ws["found"] == 2 and len(ws["pages"]) == 2)
+ct.web_search("default")
+check("web_search default max_results is 15", SEEN_SEARCH_LIMITS[-1] == 15)
+ct.web_search("override", max_results=100)
+check("web_search max_results override is not capped", SEEN_SEARCH_LIMITS[-1] == 100)
 ct.close()
+
+print("\n=== 4b. verbose mode ===")
+ct_verbose, _ = make_tools()
+ct_verbose.verbose = True
+buf = StringIO()
+with redirect_stdout(buf):
+    ct_verbose.web_search("verbose", max_results=1)
+check("verbose mode prints progress", "[LazyCrawler] search query=" in buf.getvalue())
+ct_verbose.close()
 
 print("\n=== 5. WebSearch does not mutate caller config ===")
 cfg = CrawlerConfig(max_depth=7, same_domain_only=True)

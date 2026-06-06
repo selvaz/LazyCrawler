@@ -1,0 +1,78 @@
+site_name: LazyCrawler
+site_description: Recursive web crawler with pure and LLM-powered smart modes
+site_url: https://selvaz.github.io/lazycrawler/
+repo_url: https://github.com/selvaz/lazycrawler
+repo_name: selvaz/lazycrawler
+copyright: Copyright &copy; 2024 selvaz — MIT License
+
+theme:
+  name: material
+  logo: assets/spider.svg
+  favicon: assets/spider.svg
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Concepts: concepts.md
+  - Reference:
+      - WebCrawler: reference/webcrawler.md
+      - WebSearch: reference/websearch.md
+      - CrawlerDB: reference/database.md
+      - CrawlerTools: reference/tools.md
+      - Config Reference: reference/config.md
+      - PageResult: reference/pageresult.md
+  - Guides:
+      - Pure Mode: guides/pure-mode.md
+      - Smart Mode: guides/smart-mode.md
+      - Database & Caching: guides/database.md
+      - Parallel Crawling: guides/parallel.md
+      - JavaScript Rendering: guides/js-rendering.md
+      - PDF Extraction: guides/pdf.md
+      - Custom Schema: guides/custom-schema.md
+      - Agent Integration: guides/agent-tools.md

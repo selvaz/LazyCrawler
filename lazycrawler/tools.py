@@ -87,6 +87,8 @@ class CrawlerTools:
         How links are chosen during multi-page crawls (default "pure").
     topic : str
         Optional topic hint used for smart link selection.
+    verbose : bool
+        If True, print concise progress messages for interactive use.
     """
 
     def __init__(
@@ -98,14 +100,20 @@ class CrawlerTools:
         content: str = "smart",
         links: str = "pure",
         topic: str = "",
+        verbose: bool = False,
     ):
         self.db = db
         self.content = content
         self.links = links
         self.topic = topic
+        self.verbose = verbose
         self._crawler = WebCrawler(crawler_cfg, http_cfg, llm_cfg, db)
         self._search = WebSearch(crawler_cfg=crawler_cfg, http_cfg=http_cfg,
                                  llm_cfg=llm_cfg, db=db)
+
+    def _say(self, message: str) -> None:
+        if self.verbose:
+            print(f"[LazyCrawler] {message}", flush=True)
 
     # -- ToolProvider ---------------------------------------------------------
 
@@ -126,7 +134,7 @@ class CrawlerTools:
 
     # -- tools (LLM-facing; docstrings are the schema the model sees) ---------
 
-    def web_search(self, query: str, max_results: int = 6) -> str:
+    def web_search(self, query: str, max_results: int = 15) -> str:
         """Search the web for a query and return clean, summarized results.
 
         Use this to find current information on a topic when you don't already
@@ -136,7 +144,7 @@ class CrawlerTools:
 
         Args:
             query: What to search for, e.g. "EU AI Act enforcement 2026".
-            max_results: How many result pages to fetch (1-15, default 6).
+            max_results: How many result pages to fetch (default 15).
 
         Returns:
             A JSON string: {"query", "found", "pages": [{url, title, snippet,
@@ -145,11 +153,16 @@ class CrawlerTools:
         Example:
             web_search("solid-state battery breakthroughs", max_results=5)
         """
-        max_results = min(15, max(1, int(max_results)))
+        max_results = max(1, int(max_results))
+        self._say(
+            f"search query={query!r} max_results={max_results} "
+            f"content={self.content} links={self.links}"
+        )
         out = self._search.run(
             query, content=self.content, links=self.links, max_results=max_results
         )
         pages = [_brief(r.model_dump()) for r in out["results"]]
+        self._say(f"search done: extracted={out['pages_found']} entries={len(pages)}")
         return _dumps({"query": query, "found": out["pages_found"], "pages": pages})
 
     def web_crawl(self, url: str, depth: int = 1) -> str:
@@ -174,6 +187,10 @@ class CrawlerTools:
         cfg = self._crawler.cfg
         prev = cfg.max_depth
         cfg.max_depth = max(0, int(depth))
+        self._say(
+            f"crawl url={url!r} depth={cfg.max_depth} "
+            f"content={self.content} links={self.links}"
+        )
         try:
             results = self._crawler.crawl(url, content=self.content, links=self.links,
                                           topic=self.topic)
@@ -181,6 +198,7 @@ class CrawlerTools:
             cfg.max_depth = prev
         pages = [_brief(r.model_dump()) for r in results]
         found = sum(1 for r in results if r.status == "done")
+        self._say(f"crawl done: extracted={found} entries={len(pages)}")
         return _dumps({"url": url, "found": found, "pages": pages})
 
     def search_cached(self, query: str, limit: int = 10) -> str:
@@ -204,7 +222,9 @@ class CrawlerTools:
         """
         if self.db is None:
             return _dumps({"error": "no database configured; use web_search instead"})
+        self._say(f"cache search query={query!r} limit={limit}")
         rows = self.db.search_text(query, limit=limit)
+        self._say(f"cache search done: found={len(rows)}")
         return _dumps({"query": query, "found": len(rows),
                        "pages": [_brief(r) for r in rows]})
 
@@ -228,10 +248,13 @@ class CrawlerTools:
         """
         if self.db is None:
             return _dumps({"error": "no database configured; cannot retrieve cached pages"})
+        self._say(f"cache get_page url={url!r}")
         row = self.db.get_page(url_hash(url))
         if not row:
+            self._say("cache get_page miss")
             return _dumps({"error": f"page not in cache: {url}",
                            "hint": "call web_crawl(url) or web_search(...) first"})
+        self._say("cache get_page hit")
         return _dumps({
             "url": row.get("url"), "title": row.get("title"),
             "text": row.get("clean_text"), "summary": row.get("summary"),
