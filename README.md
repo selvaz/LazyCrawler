@@ -38,9 +38,14 @@ pip install -e .
 pip install -e ".[all]"
 
 # Or selectively:
-pip install -e ".[smart]"   # LazyBridge (LLM)
-pip install -e ".[pdf]"     # pymupdf, pypdf, pdfplumber
-pip install -e ".[search]"  # ddgs (DuckDuckGo)
+pip install -e ".[smart]"     # LazyBridge (LLM)
+pip install -e ".[pdf]"       # pymupdf, pypdf, pdfplumber
+pip install -e ".[search]"    # ddgs (DuckDuckGo)
+pip install -e ".[js]"        # playwright (JS rendering)
+pip install -e ".[markdown]"  # markdownify (Markdown output)
+pip install -e ".[image]"     # pillow (artifact image dimensions)
+pip install -e ".[excel]"     # openpyxl (blacklist from .xlsx)
+pip install -e ".[dates]"     # python-dateutil (published_iso)
 ```
 
 **Smart mode** requires LazyBridge on the path and an API key for the chosen
@@ -200,6 +205,100 @@ Falls back to plain requests if Playwright is unavailable. The browser context i
 owned by the HTTP client and reused across pages; in parallel mode each worker
 keeps its own renderer.
 
+## Markdown output (for RAG)
+
+Set `emit_markdown=True` to also render each crawled HTML page to Markdown (heading
+hierarchy, lists, tables, links resolved to absolute URLs) — handy for RAG ingestion.
+It lands on `PageResult.markdown` and is persisted alongside the page.
+
+```python
+crawler = WebCrawler(CrawlerConfig(max_depth=0, emit_markdown=True))
+r = crawler.crawl("https://example.com/article", mode="pure")[0]
+print(r.markdown)   # "# Title\n\n- bullet\n\n| col | ... |"
+```
+
+Needs the `markdown` extra (`pip install lazycrawler[markdown]`); without it the
+field degrades to a basic text strip instead of failing. PDFs are skipped (no HTML).
+The render is independent of pure/smart — it works in both.
+
+## Artifacts (tables, images, charts)
+
+Beyond clean text, the crawler can extract a page's **non-textual content** as
+structured `Artifact` records — tables, images, figures, charts and inline SVG —
+each kept whole with its caption / surrounding context and provenance.
+
+```python
+crawler = WebCrawler(CrawlerConfig(max_depth=0, extract_artifacts=True), db=db)
+r = crawler.crawl("https://example.com/report", mode="pure")[0]
+for a in r.artifacts:
+    print(a.artifact_type, "—", a.caption or a.alt or a.src_url)
+    if a.artifact_type == "table":
+        print(a.content)   # Markdown table; a.data = structured rows
+```
+
+What you get per type (best-practice driven):
+
+| Type | Extraction |
+|------|------------|
+| **table** | Markdown (`content`) **+** structured rows (`data`), header↔value preserved |
+| **image** | absolute `src_url` + `alt` + caption (`<figcaption>`) + ±N chars of context |
+| **chart** | images/SVG that look like charts (alt/class/markup heuristics) |
+| **figure / svg** | `<figure>` blocks and inline SVG markup (chart candidates) |
+
+Tiny/spacer/logo/tracking images are filtered out (`min_image_dim`,
+`same_domain_images`). Artifacts are persisted in a dedicated **`artifacts`**
+table (FK to the page, deduped per `content_hash`) and reachable via
+`db.get_artifacts(url_hash=...)` / `db.get_artifacts(session_id=...)` or the
+agent tool `get_artifacts(url)`.
+
+```python
+CrawlerConfig(extract_artifacts=True)                    # reference-only (cheap)
+CrawlerConfig(extract_artifacts=True,
+              download_artifact_bytes=True)              # also fetch image bytes
+                                                         #   -> sha256 + blob in DB
+CrawlerConfig(extract_artifacts=True, enrich_artifacts=True)  # + vision LLM (smart)
+```
+
+**Optional layers** (off by default — pure mode pays nothing):
+- `download_artifact_bytes=True` downloads images through the crawler's HTTP
+  client (honors SSL + the SSRF guard), stores a `sha256` hash + the bytes
+  (capped by `max_artifact_bytes`). Needs `pip install lazycrawler[image]` for
+  dimensions/format sniffing (Pillow).
+- `enrich_artifacts=True` with `content="smart"` runs a **vision LLM** (via
+  LazyBridge) to caption images, read chart trends/data points, and summarize
+  tables — capped by `max_artifacts_to_enrich`. Set `LLMConfig(vision_model=...)`
+  to use a dedicated vision model.
+
+**PDFs**: with the `pdf` extra, tables (pdfplumber) and embedded images (PyMuPDF)
+are also emitted as artifacts.
+
+## SSRF guard (agent safety)
+
+When the crawler is driven by an LLM agent (`CrawlerTools`), the model can pass
+arbitrary URLs. `HTTPConfig(block_private_addresses=True)` refuses fetches that
+resolve to loopback / link-local / private (RFC-1918) / reserved addresses, plus
+`localhost`, `*.local`, and cloud metadata endpoints (e.g. `169.254.169.254`).
+
+```python
+HTTPConfig(block_private_addresses=True)   # default OFF for the library
+```
+
+It is **on by default in `CrawlerTools`** (the agent path); pass an explicit
+`HTTPConfig(block_private_addresses=False)` to crawl internal hosts. Note: a public
+host that *redirects* to a private one is not caught (requests follows redirects
+internally).
+
+## Resource cleanup (context managers)
+
+`WebCrawler`, `WebSearch`, `CrawlerDB`, `CrawlerTools` and `HTTPClient` are context
+managers — prefer `with` so HTTP sessions / Playwright browsers are always released:
+
+```python
+with WebCrawler(CrawlerConfig(max_depth=1)) as crawler:
+    results = crawler.crawl("https://example.com/", mode="pure")
+# resources closed automatically on exit
+```
+
 ## robots.txt & politeness
 
 `robots.txt` is honored **by default**. URLs disallowed for the configured
@@ -255,7 +354,9 @@ lazycrawler/
 ├── pdf.py       remote PDF extraction (PyMuPDF → pypdf → pdfplumber)
 ├── prompts.py   LLM prompts (smart mode only, domain-agnostic)
 ├── llm.py       LazyBridge wrapper (structured output via output=PydanticModel)
-├── db.py        SQLite: sessions + pages + crawl_edges, dedup, TTL, FTS5
+├── markdown.py  optional HTML->Markdown renderer (RAG ingestion)
+├── artifacts.py tables/images/figures/charts/svg extraction (Artifact model)
+├── db.py        SQLite: sessions + pages + crawl_edges + artifacts, dedup, TTL, FTS5
 ├── crawler.py   WebCrawler (pure + smart)
 └── search.py    WebSearch (a derivation of the crawler)
 ```
@@ -267,6 +368,7 @@ lazycrawler/
 | `sessions` | one row per run (topic, seed, mode, source) |
 | `pages` | global content cache, keyed by `url_hash` (cross-session) |
 | `crawl_edges` | which session reached which page, from where, at what depth |
+| `artifacts` | non-textual content per page (tables/images/charts), FK to `pages` |
 
 Pages are **no longer** tied to a single session: the content is a shared cache,
 and `crawl_edges` record provenance. The same URL crawled in different runs lives

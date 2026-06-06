@@ -76,6 +76,57 @@ def test_pure_result_shape(stub_fetch, make_crawler):
     assert r.entities == [] and r.topics == []
 
 
+# -- markdown output (emit_markdown) -----------------------------------------
+
+
+def test_markdown_off_by_default(stub_fetch, make_crawler):
+    stub_fetch()
+    r = make_crawler().crawl(U, mode="pure")[0]
+    assert r.markdown is None
+
+
+def test_markdown_emitted_when_enabled(stub_fetch, make_crawler):
+    # markdownify may be absent -> html_to_markdown degrades to a basic strip,
+    # which still yields the body text, so this holds either way.
+    state = stub_fetch(content_map={U: "Renewable energy adoption accelerated in 2026."})
+    r = make_crawler(emit_markdown=True).crawl(U, mode="pure")[0]
+    assert r.markdown and "Renewable energy adoption" in r.markdown
+    assert state["n"] == 1
+
+
+def test_markdown_persisted_and_restored_from_cache(stub_fetch, tmp_db, make_crawler):
+    stub_fetch(content_map={U: "Solid-state batteries reached pilot production."})
+    c = make_crawler(db=tmp_db, emit_markdown=True)
+    c.crawl(U, mode="pure", session_id="m1")
+    row = tmp_db.get_page(url_hash(U))
+    assert row.get("markdown") and "Solid-state batteries" in row["markdown"]
+    # cache hit repopulates PageResult.markdown from the stored row
+    r2 = c.crawl(U, mode="pure", session_id="m1")[0]
+    assert r2.from_cache is True and r2.markdown and "Solid-state batteries" in r2.markdown
+
+
+# -- context-manager cleanup -------------------------------------------------
+
+
+def test_webcrawler_context_manager_closes(stub_fetch, monkeypatch):
+    import lazycrawler.http as http_mod
+
+    closed = {"n": 0}
+    orig = http_mod.HTTPClient.close
+
+    def counting_close(self):
+        closed["n"] += 1
+        return orig(self)
+
+    monkeypatch.setattr(http_mod.HTTPClient, "close", counting_close)
+    stub_fetch()
+    with WebCrawler(
+        CrawlerConfig(max_depth=0, respect_robots=False), HTTPConfig(verify_ssl=False)
+    ) as c:
+        c.crawl(U, mode="pure")
+    assert closed["n"] >= 1  # __exit__ -> close() ran
+
+
 # -- max_depth runtime override (no shared-config mutation) ------------------
 
 

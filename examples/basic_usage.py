@@ -37,10 +37,9 @@ from lazycrawler import (
 HTTP = HTTPConfig(link_delay=0.5, verify_ssl=False)  # verify_ssl: see README
 
 
-# %% 1. PURE mode — no LLM, no cost
-crawler = WebCrawler(CrawlerConfig(max_depth=0, max_pages=3), HTTP)
-results = crawler.crawl("https://en.wikipedia.org/wiki/Web_crawler", mode="pure")
-crawler.close()
+# %% 1. PURE mode — no LLM, no cost (context-manager form auto-closes resources)
+with WebCrawler(CrawlerConfig(max_depth=0, max_pages=3), HTTP) as crawler:
+    results = crawler.crawl("https://en.wikipedia.org/wiki/Web_crawler", mode="pure")
 for r in results:
     print(f"[{r.status}] {r.title}  ({len(r.text or '')} chars)")
 
@@ -180,3 +179,35 @@ crawler = WebCrawler(
 r = crawler.crawl("https://en.wikipedia.org/wiki/Renewable_energy", content="smart")[0]
 crawler.close()
 print(f"sentiment={r.sentiment}  topics={r.topics}  notes={r.notes!r}")
+
+
+# %% 10. MARKDOWN output — for RAG ingestion (pip install lazycrawler[markdown])
+with WebCrawler(CrawlerConfig(max_depth=0, max_pages=1, emit_markdown=True), HTTP) as crawler:
+    r = crawler.crawl("https://en.wikipedia.org/wiki/Retrieval-augmented_generation", mode="pure")[
+        0
+    ]
+print(f"\nmarkdown ({len(r.markdown or '')} chars):\n{(r.markdown or '')[:300]}")
+
+
+# %% 11. ARTIFACTS — tables, images, charts as structured records
+db = CrawlerDB(DBConfig(db_path="artifacts_demo.db"))
+with WebCrawler(
+    CrawlerConfig(
+        max_depth=0,
+        max_pages=1,
+        extract_artifacts=True,
+        download_artifact_bytes=True,  # also fetch image bytes (pip install lazycrawler[image])
+    ),
+    HTTP,
+    db=db,
+) as crawler:
+    r = crawler.crawl("https://en.wikipedia.org/wiki/Solar_power", mode="pure")[0]
+print(f"\n{len(r.artifacts)} artifacts:")
+for a in r.artifacts[:10]:
+    label = a.caption or a.alt or a.src_url or a.content_format
+    print(f"  [{a.artifact_type}] {str(label)[:70]}")
+    if a.artifact_type == "table" and a.content:
+        print("   " + a.content.splitlines()[0][:80])
+# reachable later from the DB (or the agent get_artifacts(url) tool)
+print("tables in DB:", len(db.get_artifacts(session_id=None, artifact_type="table")))
+db.close()

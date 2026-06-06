@@ -24,6 +24,8 @@ from pydantic import BaseModel, Field
 from ._log import log
 from .config import LLMConfig
 from .prompts import (
+    ARTIFACT_TABLE_SYSTEM,
+    ARTIFACT_VISION_SYSTEM,
     CONTENT_EXTRACTION_SYSTEM,
     CUSTOM_EXTRACTION_SYSTEM,
     LARGE_DOC_SUMMARY_SYSTEM,
@@ -56,6 +58,16 @@ class LinkSelection(BaseModel):
     """1-based indices of the relevant links selected by the LLM."""
 
     indices: List[int] = Field(default_factory=list)
+
+
+class ArtifactVision(BaseModel):
+    """Vision-LLM enrichment of an image/chart artifact."""
+
+    summary: str = Field(default="", description="1-3 sentence description of the image")
+    is_chart: bool = Field(default=False, description="True only if it is a data chart/graph")
+    data_points: List[dict] = Field(
+        default_factory=list, description="chart series as label/value pairs (empty for non-charts)"
+    )
 
 
 # =============================================================================
@@ -93,6 +105,8 @@ class CrawlerLLM:
         self._clean = None
         self._topic = None
         self._summary = None
+        self._vision = None
+        self._table = None
         self._schema_agents: dict = {}  # custom output schema -> agent
 
     # -- agent construction (lazy) --------------------------------------------
@@ -134,6 +148,47 @@ class CrawlerLLM:
             model = self.cfg.large_doc_model or self.cfg.model
             self._summary = self._Agent(engine=self._engine(model, LARGE_DOC_SUMMARY_SYSTEM))
         return self._summary
+
+    def _vision_agent(self):
+        if self._vision is None:
+            model = self.cfg.vision_model or self.cfg.model
+            self._vision = self._Agent(
+                engine=self._engine(model, ARTIFACT_VISION_SYSTEM), output=ArtifactVision
+            )
+        return self._vision
+
+    def _table_agent(self):
+        if self._table is None:
+            self._table = self._Agent(engine=self._engine(self.cfg.model, ARTIFACT_TABLE_SYSTEM))
+        return self._table
+
+    def enrich_artifact(self, artifact) -> None:
+        """
+        Enrich one artifact in place: vision caption + chart data for image/chart,
+        a short summary for tables. Best-effort — failures are logged, not raised.
+        """
+        t = artifact.artifact_type
+        try:
+            if t == "table" and artifact.content:
+                env = self._table_agent()(f"TABLE:\n{artifact.content[:6000]}")
+                if env.ok:
+                    artifact.summary = (env.text() or "").strip() or artifact.summary
+            elif t in ("image", "chart"):
+                img = artifact.blob or artifact.src_url
+                if not img:
+                    return
+                env = self._vision_agent()("Analyze this image.", images=[img])
+                if env.ok and isinstance(env.payload, ArtifactVision):
+                    p = env.payload
+                    artifact.summary = (p.summary or "").strip() or artifact.summary
+                    if p.data_points:
+                        artifact.data = p.data_points
+                    if p.is_chart and artifact.artifact_type == "image":
+                        artifact.artifact_type = "chart"
+        except Exception as e:
+            log.warning(
+                "enrich_artifact failed for %s (%s: %s)", t, type(e).__name__, e, exc_info=True
+            )
 
     def build_link_selector(self, topic: str, max_links: int):
         """

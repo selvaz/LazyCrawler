@@ -13,7 +13,9 @@ Hash functions used by the 3-level dedup (see db.py):
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
+import socket
 import threading
 import time
 from dataclasses import dataclass
@@ -115,6 +117,56 @@ def get_hostname(url: str) -> str:
         return (urlparse(url).hostname or "").lower()
     except Exception:
         return ""
+
+
+_METADATA_HOSTS = {"metadata.google.internal", "metadata"}
+
+
+def is_blocked_address(url: str) -> bool:
+    """
+    SSRF guard: True if ``url`` targets a non-public address.
+
+    Blocks loopback / link-local / private (RFC-1918) / reserved / multicast /
+    unspecified IPs, ``localhost`` / ``*.local`` hosts, and known cloud metadata
+    endpoints (e.g. 169.254.169.254 via link-local). The host is resolved with
+    ``socket.getaddrinfo`` and every returned address is checked; a resolution
+    failure or unparseable host is treated as blocked (fail-closed).
+
+    Intended for the agent/tool path where an LLM may pass arbitrary URLs. Off by
+    default for the library (``HTTPConfig.block_private_addresses``).
+    """
+    host = get_hostname(url)
+    if not host:
+        return True
+    if host == "localhost" or host in _METADATA_HOSTS or host.endswith(".local"):
+        return True
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        # DNS failure / invalid host -> fail closed.
+        log.debug("is_blocked_address: could not resolve %s - blocking", host, exc_info=True)
+        return True
+    for info in infos:
+        sockaddr = info[4]
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return True
+        # Unwrap IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) before classifying.
+        mapped = getattr(ip, "ipv4_mapped", None)
+        if mapped is not None:
+            ip = mapped
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return True
+    return False
 
 
 def strip_tracking_params(url: str) -> str:
@@ -430,6 +482,11 @@ class HTTPClient:
         """
         cfg = self.cfg
 
+        # SSRF guard (opt-in): refuse fetches to private/loopback/metadata targets.
+        if cfg.block_private_addresses and is_blocked_address(url):
+            log.warning("SSRF guard: refusing to fetch private/loopback address %s", url)
+            return FetchResult()
+
         # JavaScript rendering path (opt-in).
         if cfg.render_js:
             html = self._browser_renderer().render(url)
@@ -449,8 +506,11 @@ class HTTPClient:
                 )
                 status = resp.status_code
                 if status in (429, 500, 502, 503, 504):
-                    raise requests.HTTPError(f"HTTP {status}")
-                resp.raise_for_status()
+                    raise requests.HTTPError(f"HTTP {status}")  # retryable
+                if 400 <= status < 600:
+                    # Permanent error (e.g. 404/403/401/410): terminal, do not retry.
+                    log.info("fetch: non-retryable HTTP %s for %s - giving up", status, url)
+                    return FetchResult(status=status)
 
                 ctype = (resp.headers.get("Content-Type") or "").lower()
                 body = resp.content or b""
@@ -485,6 +545,31 @@ class HTTPClient:
 
         return FetchResult()
 
+    def fetch_bytes(self, url: str) -> "tuple[Optional[bytes], str, Optional[int]]":
+        """
+        Raw GET for a binary asset (e.g. an image). Honors the SSRF guard and the
+        SSL/verify configuration. Returns ``(bytes, content_type, status)``;
+        ``bytes`` is None on block/failure or a >=400 response.
+        """
+        cfg = self.cfg
+        if cfg.block_private_addresses and is_blocked_address(url):
+            log.info("SSRF guard: refusing to fetch asset %s", url)
+            return None, "", None
+        try:
+            resp = self._session.get(
+                url,
+                timeout=(cfg.timeout_connect, cfg.timeout_read),
+                allow_redirects=True,
+                verify=self._verify,
+            )
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            if resp.status_code >= 400:
+                return None, ctype, resp.status_code
+            return (resp.content or b""), ctype, resp.status_code
+        except Exception as e:
+            log.debug("fetch_bytes failed for %s: %s", url, e)
+            return None, "", None
+
     def get_text(self, url: str) -> Optional[str]:
         """
         Fetch a URL and return the raw response text (no extraction), honoring
@@ -512,6 +597,13 @@ class HTTPClient:
                 log.debug("failed closing browser renderer", exc_info=True)
             self._browser = None
         self._session.close()
+
+    def __enter__(self) -> "HTTPClient":
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        self.close()
+        return False
 
     def _browser_renderer(self):
         if self._browser is None:
