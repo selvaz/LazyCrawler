@@ -52,8 +52,8 @@ refetching.
 - Pure mode does not require LazyBridge.
 - Robots.txt is honored by default and skipped URLs are emitted with
   `status="robots_blocked"`.
-- Parallel mode uses a bounded worker pool with thread-local HTTP/LLM resources
-  and serialized DB access.
+- Parallel mode uses a bounded worker pool with thread-local HTTP/LLM/browser
+  resources and serialized DB access.
 - The LazyBridge tool layer exposes the expected four tools:
   `web_search`, `web_crawl`, `get_page`, and `search_cached`.
 
@@ -77,13 +77,20 @@ rather than the shared `HTTPClient`. This is workable, but it means PDFs do not
 share the same `requests.Session`, retry/backoff behavior, or proxy/session
 configuration as HTML fetches.
 
-### 5.4 Politeness beyond robots.txt
+### 5.4 Browser reuse
+
+Fixed in this pass: `HTTPClient` now owns a reusable `BrowserRenderer` when
+`HTTPConfig(render_js=True)`. Sequential crawls reuse one Playwright
+browser/context, while parallel crawls reuse one renderer per worker-owned
+HTTP client.
+
+### 5.5 Politeness beyond robots.txt
 
 The remaining production concern is crawl politeness: there is a global
 `link_delay`, but no per-host concurrency, crawl-delay parsing, autothrottle, or
 proxy rotation yet. This is already tracked in `ROADMAP.md`.
 
-### 5.5 Storage trade-off
+### 5.6 Storage trade-off
 
 Content-hash dedup stores alias rows per URL to preserve provenance. This is a
 reasonable default, but a dedup-by-reference option may be useful for

@@ -195,8 +195,9 @@ For SPAs / client-rendered pages, route fetches through a headless browser:
 HTTPConfig(render_js=True)   # requires: pip install playwright && playwright install chromium
 ```
 
-Falls back to plain requests if Playwright is unavailable. (v1 launches a browser
-per page; persistent-browser reuse is a future optimization.)
+Falls back to plain requests if Playwright is unavailable. The browser context is
+owned by the HTTP client and reused across pages; in parallel mode each worker
+keeps its own renderer.
 
 ## robots.txt & politeness
 

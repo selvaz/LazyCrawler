@@ -6,8 +6,9 @@ by impact.
 ## Done (v0.2)
 
 - [x] **1. JavaScript rendering** — optional Playwright fetch backend
-      (`HTTPConfig(render_js=True)`). Thread-local browser in parallel mode.
-      Graceful fallback to `requests` if Playwright is absent.
+      (`HTTPConfig(render_js=True)`). Browser/context reuse per HTTP client;
+      thread-local renderer ownership in parallel mode. Graceful fallback to
+      `requests` if Playwright is absent.
 - [x] **2. Pluggable output schema** — pass any Pydantic model as
       `crawl(..., schema=MyModel)` (smart content). Falls back to the built-in
       `PageExtract`. The full structured object is available on `PageResult.data`.

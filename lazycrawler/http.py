@@ -256,6 +256,7 @@ class HTTPClient:
             except Exception:
                 log.debug("could not disable urllib3 InsecureRequestWarning", exc_info=True)
         self._session = self._make_session()
+        self._browser = None
 
     def _make_session(self) -> requests.Session:
         s = requests.Session()
@@ -313,14 +314,7 @@ class HTTPClient:
 
         # JavaScript rendering path (opt-in).
         if cfg.render_js:
-            from .browser import render
-            html = render(
-                url,
-                user_agent=cfg.user_agent,
-                headless=cfg.browser_headless,
-                wait_until=cfg.browser_wait_until,
-                timeout_ms=cfg.browser_timeout_ms,
-            )
+            html = self._browser_renderer().render(url)
             if html:
                 return html, self._extract_text(html), 200
             # browser unavailable/failed -> fall through to requests
@@ -375,7 +369,25 @@ class HTTPClient:
             return None
 
     def close(self) -> None:
+        if self._browser is not None:
+            try:
+                self._browser.close()
+            except Exception:
+                log.debug("failed closing browser renderer", exc_info=True)
+            self._browser = None
         self._session.close()
+
+    def _browser_renderer(self):
+        if self._browser is None:
+            from .browser import BrowserRenderer
+            cfg = self.cfg
+            self._browser = BrowserRenderer(
+                user_agent=cfg.user_agent,
+                headless=cfg.browser_headless,
+                wait_until=cfg.browser_wait_until,
+                timeout_ms=cfg.browser_timeout_ms,
+            )
+        return self._browser
 
 
 # =============================================================================
