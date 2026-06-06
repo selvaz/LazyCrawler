@@ -118,6 +118,52 @@ LLMConfig(model="claude-sonnet-4-6", large_doc_model="claude-haiku-4-5")
 
 ---
 
+## Native parallel mode
+
+Set `max_workers > 1` for a bounded thread pool that crawls level-by-level (BFS).
+Shared state is thread-safe; each worker gets its own HTTP/LLM resources; the DB
+is thread-safe. `max_workers=1` keeps the original sequential DFS.
+
+```python
+crawler = WebCrawler(CrawlerConfig(max_depth=2, max_pages=50, max_workers=8))
+results = crawler.crawl("https://example.com/", mode="pure")
+```
+
+In a deterministic test (1 seed + 12 leaves, simulated latency) parallel is ~3×
+faster than sequential. Note: `link_delay` is not applied in parallel mode — pick
+a polite `max_workers` for shared/target sites.
+
+## Custom output schema (smart content)
+
+Pass any Pydantic model; the LLM fills it (LazyBridge structured output). The full
+object lands on `PageResult.data` (and is persisted to `pages.extract_json`); known
+fields (`title`/`summary`/`clean_text`/`entities`/`topics`) are mapped when present.
+
+```python
+from pydantic import BaseModel, Field
+
+class Article(BaseModel):
+    headline: str = Field(default="", description="the main headline")
+    author: str = Field(default="", description="author if present")
+    key_points: list[str] = Field(default_factory=list, description="3-5 takeaways")
+
+results = crawler.crawl("https://example.com/post", content="smart", schema=Article)
+print(results[0].data)   # {'headline': ..., 'author': ..., 'key_points': [...]}
+```
+
+## JavaScript rendering (optional)
+
+For SPAs / client-rendered pages, route fetches through a headless browser:
+
+```python
+HTTPConfig(render_js=True)   # requires: pip install playwright && playwright install chromium
+```
+
+Falls back to plain requests if Playwright is unavailable. (v1 launches a browser
+per page; persistent-browser reuse is a future optimization.)
+
+---
+
 ## Architecture
 
 ```

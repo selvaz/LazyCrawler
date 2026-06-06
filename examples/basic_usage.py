@@ -103,3 +103,38 @@ results = crawler.crawl("https://en.wikipedia.org/wiki/Photosynthesis",
                         content="smart", links="pure")
 crawler.close()
 print(f"content=smart/links=pure -> summary: {(results[0].summary or '')[:100]}")
+
+
+# %% 5. NATIVE PARALLEL MODE — bounded thread pool
+crawler = WebCrawler(
+    CrawlerConfig(max_depth=1, max_pages=30, max_workers=8),  # 8 concurrent workers
+    HTTP,
+)
+results = crawler.crawl("https://en.wikipedia.org/wiki/Climate_change", mode="pure")
+crawler.close()
+print(f"\nparallel -> {sum(r.status == 'done' for r in results)} pages")
+
+
+# %% 6. CUSTOM OUTPUT SCHEMA — extract arbitrary fields
+from pydantic import BaseModel, Field
+
+class Article(BaseModel):
+    headline: str = Field(default="", description="the main headline")
+    author: str = Field(default="", description="author if present")
+    key_points: list[str] = Field(default_factory=list, description="3-5 takeaways")
+
+crawler = WebCrawler(CrawlerConfig(max_depth=0, max_pages=1), HTTP,
+                     llm_cfg=LLMConfig(model="gpt-4o-mini"))
+results = crawler.crawl("https://en.wikipedia.org/wiki/CRISPR",
+                        content="smart", schema=Article)
+crawler.close()
+print(f"\ncustom schema -> {results[0].data}")
+
+
+# %% 7. JAVASCRIPT RENDERING — for SPAs (requires playwright)
+# crawler = WebCrawler(
+#     CrawlerConfig(max_depth=0, max_pages=1),
+#     HTTPConfig(render_js=True, verify_ssl=False),
+# )
+# results = crawler.crawl("https://example-spa.com/", mode="pure")
+# crawler.close()

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS pages (
   topics_json    TEXT,
   published_iso  TEXT,
   content_hash   TEXT,
+  extract_json   TEXT,
   crawled_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pages_domain        ON pages(domain);
@@ -117,7 +119,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
 _PAGE_FIELDS = [
     "url", "domain", "is_pdf", "status", "mode", "error", "raw_text",
     "clean_text", "title", "summary", "entities_json", "topics_json",
-    "published_iso", "content_hash", "crawled_at",
+    "published_iso", "content_hash", "extract_json", "crawled_at",
 ]
 
 
@@ -137,11 +139,20 @@ class CrawlerDB:
 
     def __init__(self, cfg: Optional[DBConfig] = None):
         self.cfg = cfg or DBConfig()
-        self.conn = sqlite3.connect(self.cfg.db_path)
+        # check_same_thread=False + a reentrant lock: the connection is shared
+        # across worker threads in parallel mode; every access is serialized by
+        # ``self._lock`` (the DB is never the bottleneck — fetch/LLM are).
+        self.conn = sqlite3.connect(self.cfg.db_path, check_same_thread=False)
+        self._lock = threading.RLock()
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA foreign_keys=ON;")
         self.conn.executescript(_SCHEMA_SQL)
+        # Migration for DBs created before extract_json existed.
+        try:
+            self.conn.execute("ALTER TABLE pages ADD COLUMN extract_json TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
         if self.cfg.enable_fts:
             try:
                 self.conn.executescript(_FTS_SQL)
@@ -162,12 +173,13 @@ class CrawlerDB:
         source: str = "crawl",
     ) -> str:
         """Create (or ignore if existing) a session and return its id."""
-        self.conn.execute(
-            "INSERT OR IGNORE INTO sessions (session_id, created_at, topic, seed, mode, source) "
-            "VALUES (?,?,?,?,?,?)",
-            (session_id, utc_now_iso(), topic, seed, mode, source),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO sessions (session_id, created_at, topic, seed, mode, source) "
+                "VALUES (?,?,?,?,?,?)",
+                (session_id, utc_now_iso(), topic, seed, mode, source),
+            )
+            self.conn.commit()
         return session_id
 
     # -- Dedup level 1: URL + TTL --------------------------------------------
@@ -200,20 +212,22 @@ class CrawlerDB:
         """A 'done' page with the same content_hash (to skip the LLM)."""
         if not content_hash:
             return None
-        cur = self.conn.execute(
-            "SELECT * FROM pages WHERE content_hash=? AND status='done' LIMIT 1",
-            (content_hash,),
-        )
-        row = cur.fetchone()
-        return dict(row) if row else None
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT * FROM pages WHERE content_hash=? AND status='done' LIMIT 1",
+                (content_hash,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
 
     # -- Pages ----------------------------------------------------------------
 
     def get_page(self, uh: str) -> Optional[Dict[str, Any]]:
-        """Page row for url_hash, as a dict, or None."""
-        cur = self.conn.execute("SELECT * FROM pages WHERE url_hash=?", (uh,))
-        row = cur.fetchone()
-        return dict(row) if row else None
+        """Page row for url_hash (with entities/topics/data deserialized), or None."""
+        with self._lock:
+            cur = self.conn.execute("SELECT * FROM pages WHERE url_hash=?", (uh,))
+            row = cur.fetchone()
+        return self._row_to_page(dict(row)) if row else None
 
     def upsert_page(self, page: Dict[str, Any]) -> str:
         """
@@ -236,20 +250,24 @@ class CrawlerDB:
             data["entities_json"] = json.dumps(data.get("entities") or [], ensure_ascii=False)
         if "topics" in data and "topics_json" not in data:
             data["topics_json"] = json.dumps(data.get("topics") or [], ensure_ascii=False)
+        if "data" in data and "extract_json" not in data:
+            d = data.get("data")
+            data["extract_json"] = json.dumps(d, ensure_ascii=False) if d else None
 
         cols = ["url_hash"] + _PAGE_FIELDS
         values = [uh] + [data.get(f) for f in _PAGE_FIELDS]
         placeholders = ",".join("?" for _ in cols)
         updates = ",".join(f"{c}=excluded.{c}" for c in _PAGE_FIELDS)
 
-        self.conn.execute(
-            f"INSERT INTO pages ({','.join(cols)}) VALUES ({placeholders}) "
-            f"ON CONFLICT(url_hash) DO UPDATE SET {updates}",
-            values,
-        )
-        if self.cfg.enable_fts:
-            self._index_fts(uh, data.get("title") or "", data.get("clean_text") or "")
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                f"INSERT INTO pages ({','.join(cols)}) VALUES ({placeholders}) "
+                f"ON CONFLICT(url_hash) DO UPDATE SET {updates}",
+                values,
+            )
+            if self.cfg.enable_fts:
+                self._index_fts(uh, data.get("title") or "", data.get("clean_text") or "")
+            self.conn.commit()
         return uh
 
     def _index_fts(self, uh: str, title: str, clean_text: str) -> None:
@@ -274,12 +292,13 @@ class CrawlerDB:
         depth: int = 0,
     ) -> None:
         """Record that a session reached a page (idempotent)."""
-        self.conn.execute(
-            "INSERT OR IGNORE INTO crawl_edges (session_id, url_hash, source_url, depth, added_at) "
-            "VALUES (?,?,?,?,?)",
-            (session_id, uh, source_url, depth, utc_now_iso()),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO crawl_edges (session_id, url_hash, source_url, depth, added_at) "
+                "VALUES (?,?,?,?,?)",
+                (session_id, uh, source_url, depth, utc_now_iso()),
+            )
+            self.conn.commit()
 
     # -- Queries --------------------------------------------------------------
 
@@ -308,7 +327,9 @@ class CrawlerDB:
         sql += " ORDER BY p.crawled_at DESC"
         if limit:
             sql += f" LIMIT {int(limit)}"
-        return [self._row_to_page(dict(r)) for r in self.conn.execute(sql, params).fetchall()]
+        with self._lock:
+            rows = self.conn.execute(sql, params).fetchall()
+        return [self._row_to_page(dict(r)) for r in rows]
 
     def search_text(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
         """
@@ -317,26 +338,29 @@ class CrawlerDB:
         """
         if self.cfg.enable_fts:
             try:
-                cur = self.conn.execute(
-                    "SELECT p.* FROM pages_fts f JOIN pages p ON p.url_hash = f.url_hash "
-                    "WHERE pages_fts MATCH ? ORDER BY rank LIMIT ?",
-                    (query, limit),
-                )
-                return [self._row_to_page(dict(r)) for r in cur.fetchall()]
+                with self._lock:
+                    rows = self.conn.execute(
+                        "SELECT p.* FROM pages_fts f JOIN pages p ON p.url_hash = f.url_hash "
+                        "WHERE pages_fts MATCH ? ORDER BY rank LIMIT ?",
+                        (query, limit),
+                    ).fetchall()
+                return [self._row_to_page(dict(r)) for r in rows]
             except sqlite3.OperationalError:
                 pass
         like = f"%{query}%"
-        cur = self.conn.execute(
-            "SELECT * FROM pages WHERE status='done' AND "
-            "(title LIKE ? OR clean_text LIKE ?) ORDER BY crawled_at DESC LIMIT ?",
-            (like, like, limit),
-        )
-        return [self._row_to_page(dict(r)) for r in cur.fetchall()]
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM pages WHERE status='done' AND "
+                "(title LIKE ? OR clean_text LIKE ?) ORDER BY crawled_at DESC LIMIT ?",
+                (like, like, limit),
+            ).fetchall()
+        return [self._row_to_page(dict(r)) for r in rows]
 
     def stats(self) -> Dict[str, int]:
         """Quick counts: sessions, total/done pages, edges."""
         def _count(sql: str) -> int:
-            return int(self.conn.execute(sql).fetchone()[0])
+            with self._lock:
+                return int(self.conn.execute(sql).fetchone()[0])
         return {
             "sessions": _count("SELECT COUNT(*) FROM sessions"),
             "pages": _count("SELECT COUNT(*) FROM pages"),
@@ -356,6 +380,14 @@ class CrawlerDB:
                     row[dst] = []
             else:
                 row[dst] = []
+        ej = row.get("extract_json")
+        if ej:
+            try:
+                row["data"] = json.loads(ej)
+            except Exception:
+                row["data"] = None
+        else:
+            row["data"] = None
         return row
 
     def close(self) -> None:

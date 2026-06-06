@@ -55,7 +55,7 @@ class FakeLLM:
         self.calls["select_links"] += 1
         return candidates[:max_links]
 
-    def extract_content(self, url, text):
+    def extract_content(self, url, text, schema=None):
         self.calls["extract_content"] += 1
         return PageExtract(title="X", summary="a summary", clean_text=text[:200],
                            entities=["E"], topics=["T"])

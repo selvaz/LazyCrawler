@@ -51,7 +51,7 @@ from .crawler import PageResult, WebCrawler
 from .db import CrawlerDB
 from .search import WebSearch, search_ddg_urls
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "WebCrawler",

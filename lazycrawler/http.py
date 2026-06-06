@@ -267,6 +267,27 @@ class HTTPClient:
     def session(self) -> requests.Session:
         return self._session
 
+    @staticmethod
+    def _extract_text(html: str) -> Optional[str]:
+        """Extract main text via trafilatura, with a basic HTML-strip fallback."""
+        try:
+            import trafilatura  # type: ignore
+            content = trafilatura.extract(
+                html,
+                include_comments=False,
+                include_tables=False,
+                no_fallback=False,
+                favor_recall=True,
+            )
+            if content and len(content.strip()) > 200:
+                return content.strip()
+        except ImportError:
+            pass
+        except Exception:
+            pass
+        plain = html_to_text_basic(html)
+        return plain if (plain and len(plain) > 200) else None
+
     def fetch(
         self,
         url: str,
@@ -278,10 +299,27 @@ class HTTPClient:
         - html:        raw HTML (None if the fetch fails)
         - text:        text extracted via trafilatura / fallback (None if none)
         - status_code: HTTP status (None on network error)
+
+        If cfg.render_js is True, the HTML is obtained from a headless browser
+        (Playwright); on browser failure/unavailability it falls back to requests.
         """
         cfg = self.cfg
-        last_exc = None
 
+        # JavaScript rendering path (opt-in).
+        if cfg.render_js:
+            from .browser import render
+            html = render(
+                url,
+                user_agent=cfg.user_agent,
+                headless=cfg.browser_headless,
+                wait_until=cfg.browser_wait_until,
+                timeout_ms=cfg.browser_timeout_ms,
+            )
+            if html:
+                return html, self._extract_text(html), 200
+            # browser unavailable/failed -> fall through to requests
+
+        last_exc = None
         for attempt in range(1, cfg.max_retries + 1):
             try:
                 headers = extra_headers or None
@@ -297,27 +335,7 @@ class HTTPClient:
                     raise requests.HTTPError(f"HTTP {status}")
                 resp.raise_for_status()
                 html = resp.text or ""
-
-                try:
-                    import trafilatura  # type: ignore
-                    content = trafilatura.extract(
-                        html,
-                        include_comments=False,
-                        include_tables=False,
-                        no_fallback=False,
-                        favor_recall=True,
-                    )
-                    if content and len(content.strip()) > 200:
-                        return html, content.strip(), status
-                except ImportError:
-                    pass
-                except Exception:
-                    pass
-
-                plain = html_to_text_basic(html)
-                if plain and len(plain) > 200:
-                    return html, plain, status
-                return html, None, status
+                return html, self._extract_text(html), status
 
             except Exception as e:
                 last_exc = e

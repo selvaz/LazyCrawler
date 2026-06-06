@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lazycrawler"
-version = "0.1.0"
+version = "0.2.0"
 description = "Web crawler + search with pure (no-LLM) and smart (LazyBridge LLM) modes, SQLite persistence and 3-level dedup."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,6 +27,8 @@ smart = ["lazybridge>=0.9"]
 pdf = ["pymupdf>=1.23", "pypdf>=4.0", "pdfplumber>=0.10"]
 # WebSearch via DuckDuckGo.
 search = ["ddgs>=2.0"]
+# JavaScript rendering (SPAs) via a headless browser.
+js = ["playwright>=1.40"]
 # Blacklist domini da file Excel.
 excel = ["openpyxl>=3.1"]
 # Parsing date robusto (estrazione published_iso).
@@ -35,7 +37,7 @@ dates = ["python-dateutil>=2.8"]
 all = [
     "lazybridge>=0.9",
     "pymupdf>=1.23", "pypdf>=4.0", "pdfplumber>=0.10",
-    "ddgs>=2.0", "openpyxl>=3.1", "python-dateutil>=2.8",
+    "ddgs>=2.0", "playwright>=1.40", "openpyxl>=3.1", "python-dateutil>=2.8",
 ]
 
 [project.urls]

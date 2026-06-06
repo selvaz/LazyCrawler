@@ -47,6 +47,11 @@ class CrawlerConfig:
         Max candidate links extracted from a page before filtering.
     same_domain_only : bool
         If True, only follow links within the source page's domain.
+    max_workers : int
+        Concurrency. 1 = sequential DFS (default). N>1 = native parallel mode:
+        a bounded thread pool crawls level-by-level (BFS) with N workers.
+        In parallel mode the per-fetch link_delay is not applied (parallelism
+        replaces it); use a polite max_workers for shared/target sites.
     max_chars_content : int
         Max characters of text sent to the LLM (smart mode).
     max_chars_pure : int
@@ -72,6 +77,7 @@ class CrawlerConfig:
     max_links_per_level: int = 15
     max_candidate_links: int = 300
     same_domain_only: bool = True
+    max_workers: int = 1
 
     max_chars_content: int = 100_000
     max_chars_pure: int = 10_000
@@ -119,6 +125,17 @@ class HTTPConfig:
         Optional path to a custom CA bundle (.pem). If set, it takes precedence
         over verify_ssl (this is the *secure* way to handle a MITM: point at the
         antivirus/proxy cert instead of disabling verification).
+    render_js : bool
+        If True, fetch HTML through a headless browser (Playwright) so that
+        client-side-rendered pages (SPAs, dynamic content) are captured. Requires
+        ``pip install playwright`` + ``playwright install chromium``. Falls back to
+        plain requests if Playwright is unavailable.
+    browser_headless : bool
+        Run the browser headless (default True).
+    browser_wait_until : str
+        Playwright wait condition: "load" | "domcontentloaded" | "networkidle".
+    browser_timeout_ms : int
+        Per-page navigation timeout for the browser (milliseconds).
     """
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -133,6 +150,10 @@ class HTTPConfig:
     pdf_timeout: int = 60
     verify_ssl: bool = True
     ca_bundle: str = ""
+    render_js: bool = False
+    browser_headless: bool = True
+    browser_wait_until: str = "domcontentloaded"
+    browser_timeout_ms: int = 30000
 
 
 # =============================================================================

@@ -18,6 +18,10 @@ pdfplumber>=0.10
 # WebSearch (DuckDuckGo):
 ddgs>=2.0
 
+# JavaScript rendering (optional, for HTTPConfig(render_js=True)):
+#   pip install playwright && playwright install chromium
+playwright>=1.40
+
 # Blacklist da Excel:
 openpyxl>=3.1
 

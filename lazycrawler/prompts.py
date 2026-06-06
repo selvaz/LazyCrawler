@@ -51,6 +51,21 @@ CONTENT_EXTRACTION_SYSTEM = (
 
 
 # =============================================================================
+# 1b. CUSTOM-SCHEMA EXTRACTION  (-> user-provided Pydantic model)
+# =============================================================================
+# Used by: CrawlerLLM.extract_content(..., schema=MyModel)
+# The field descriptions of the user's model guide what to extract; this prompt
+# only sets the general task and cleaning rules.
+
+CUSTOM_EXTRACTION_SYSTEM = (
+    "You extract structured information from a web page.\n"
+    "Fill every field of the requested schema using only information present in\n"
+    "the page text. Ignore navigation, ads, cookie notices, and other boilerplate.\n"
+    "Do not invent data: if a field is not present, leave it empty / null."
+)
+
+
+# =============================================================================
 # 2. LINK SELECTION — web page  (-> LinkSelection)
 # =============================================================================
 # Used by: CrawlerLLM.build_link_selector() / select_links()

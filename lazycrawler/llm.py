@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from .config import LLMConfig
 from .prompts import (
     CONTENT_EXTRACTION_SYSTEM,
+    CUSTOM_EXTRACTION_SYSTEM,
     LARGE_DOC_SUMMARY_SYSTEM,
     TOPIC_EXPANSION_SYSTEM,
     build_link_selection_system,
@@ -82,6 +83,7 @@ class CrawlerLLM:
         self._clean = None
         self._topic = None
         self._summary = None
+        self._schema_agents: dict = {}   # custom output schema -> agent
 
     # -- agent construction (lazy) --------------------------------------------
 
@@ -100,6 +102,17 @@ class CrawlerLLM:
                 output=PageExtract,
             )
         return self._clean
+
+    def _schema_agent(self, schema: type):
+        """Agent for a user-provided output schema (cached per schema)."""
+        agent = self._schema_agents.get(schema)
+        if agent is None:
+            agent = self._Agent(
+                engine=self._engine(self.cfg.model, CUSTOM_EXTRACTION_SYSTEM),
+                output=schema,
+            )
+            self._schema_agents[schema] = agent
+        return agent
 
     def _topic_agent(self):
         if self._topic is None:
@@ -123,19 +136,22 @@ class CrawlerLLM:
 
     # -- operations -----------------------------------------------------------
 
-    def extract_content(self, url: str, text: str) -> Optional[PageExtract]:
+    def extract_content(self, url: str, text: str, schema: Optional[type] = None):
         """
         Extract structured content from pre-cleaned text.
-        Returns PageExtract, or None on error (the caller records llm_error).
-        The text must already be truncated upstream by the crawler
-        (max_chars_content).
+
+        Returns a ``PageExtract`` (default), or an instance of ``schema`` when a
+        custom Pydantic model is provided, or None on error (the caller records
+        llm_error). The text must already be truncated upstream by the crawler.
         """
+        out_type = schema or PageExtract
+        agent = self._schema_agent(schema) if schema is not None else self._clean_agent()
         try:
-            env = self._clean_agent()(f"SOURCE URL: {url}\n\n{text}")
+            env = agent(f"SOURCE URL: {url}\n\n{text}")
         except Exception as e:
             print(f"    [LLM] extract_content error: {type(e).__name__}: {e}")
             return None
-        if env.ok and isinstance(env.payload, PageExtract):
+        if env.ok and isinstance(env.payload, out_type):
             return env.payload
         print(f"    [LLM] extract_content unexpected output "
               f"({'error: ' + env.error.message if env.error else 'no payload'})")
