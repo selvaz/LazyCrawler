@@ -396,7 +396,9 @@ class WebSearch:
         if engine == "gemini":
             results = self._run_gemini(query, topic, content_mode)
         elif engine == "brave":
-            results = self._run_brave(query, topic, content_mode, link_mode, session_id, max_results)
+            results = self._run_brave(
+                query, topic, content_mode, link_mode, session_id, max_results
+            )
         elif engine == "tavily":
             results = self._run_tavily(
                 query, topic, content_mode, link_mode, session_id, max_results

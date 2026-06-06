@@ -93,7 +93,9 @@ def test_websearch_crawls_results(monkeypatch, stub_fetch, tmp_db):
 
 def _brave_response(urls):
     """Build a minimal Brave Search API response dict."""
-    return {"web": {"results": [{"url": u, "title": f"T {u}", "description": "desc"} for u in urls]}}
+    return {
+        "web": {"results": [{"url": u, "title": f"T {u}", "description": "desc"} for u in urls]}
+    }
 
 
 def test_brave_no_api_key_raises():
@@ -115,10 +117,17 @@ def test_brave_params_and_url_extraction(monkeypatch):
         )
         return resp
 
-    monkeypatch.setattr(search_mod, "os", MagicMock(getenv=lambda k, d="": "TESTKEY" if k == "BRAVE_API_KEY" else d))
+    monkeypatch.setattr(
+        search_mod, "os", MagicMock(getenv=lambda k, d="": "TESTKEY" if k == "BRAVE_API_KEY" else d)
+    )
 
-    with patch("lazycrawler.search._requests" if hasattr(search_mod, "_requests") else "requests.get", fake_get, create=True):
+    with patch(
+        "lazycrawler.search._requests" if hasattr(search_mod, "_requests") else "requests.get",
+        fake_get,
+        create=True,
+    ):
         import requests as _req
+
         monkeypatch.setattr(_req, "get", fake_get)
         urls = search_brave_urls("test query", 2, api_key="TESTKEY")
 
@@ -138,6 +147,7 @@ def test_brave_timelimit_mapped():
         return resp
 
     import requests as _req
+
     with patch.object(_req, "get", fake_get):
         search_brave_urls("q", 5, api_key="KEY", timelimit="w")
     assert captured_params.get("freshness") == "pw"
@@ -226,6 +236,7 @@ def test_tavily_no_api_key_raises():
 
 def test_tavily_params_and_url_extraction():
     import requests as _req
+
     captured = {}
 
     def fake_post(url, *, json, headers, timeout):
@@ -234,9 +245,7 @@ def test_tavily_params_and_url_extraction():
         captured["auth"] = headers.get("Authorization")
         resp = MagicMock()
         resp.raise_for_status = lambda: None
-        resp.json.return_value = _tavily_response(
-            ["https://tavily.io/a", "https://tavily.io/b"]
-        )
+        resp.json.return_value = _tavily_response(["https://tavily.io/a", "https://tavily.io/b"])
         return resp
 
     with patch.object(_req, "post", fake_post):
@@ -250,6 +259,7 @@ def test_tavily_params_and_url_extraction():
 
 def test_tavily_timelimit_mapped():
     import requests as _req
+
     captured = {}
 
     def fake_post(url, *, json, headers, timeout):
@@ -266,6 +276,7 @@ def test_tavily_timelimit_mapped():
 
 def test_tavily_advanced_depth():
     import requests as _req
+
     captured = {}
 
     def fake_post(url, *, json, headers, timeout):
@@ -286,9 +297,7 @@ def test_tavily_blacklist_filtered():
     def fake_post(url, *, json, headers, timeout):
         resp = MagicMock()
         resp.raise_for_status = lambda: None
-        resp.json.return_value = _tavily_response(
-            ["https://good.org/x", "https://evil.com/x"]
-        )
+        resp.json.return_value = _tavily_response(["https://good.org/x", "https://evil.com/x"])
         return resp
 
     with patch.object(_req, "post", fake_post):
