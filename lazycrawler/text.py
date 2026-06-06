@@ -114,17 +114,24 @@ def extract_candidate_links(
     soup = BeautifulSoup(html, "html.parser")
     seen: set = set()
     result: List[Tuple[str, str]] = []
+    n_raw = 0
+    n_offdom = 0
+    n_excluded = 0
+    n_dup = 0
 
     for a in soup.find_all("a", href=True):
         href = (a.get("href") or "").strip()
         text = a.get_text(separator=" ", strip=True)
         if not href or href.startswith("#"):
             continue
+        n_raw += 1
         try:
             href = urljoin(base_url, href)
         except Exception:
+            n_offdom += 1
             continue
         if not href.startswith(("http://", "https://")):
+            n_offdom += 1
             continue
         if same_domain_only and start_domain:
             link_domain = get_base_domain(href)
@@ -133,16 +140,24 @@ def extract_candidate_links(
                 or link_domain.endswith("." + start_domain)
                 or start_domain.endswith("." + link_domain)
             ):
+                n_offdom += 1
                 continue
         if is_excluded_url(href, text):
+            n_excluded += 1
             continue
         norm = normalize_url(href)
         if norm in seen:
+            n_dup += 1
             continue
         seen.add(norm)
         result.append((text or "(no text)", href))
         if len(result) >= max_links:
             break
+
+    log.debug(
+        "  links: %d <a> tags | -%d off-domain | -%d excluded | -%d dup -> %d candidates",
+        n_raw, n_offdom, n_excluded, n_dup, len(result),
+    )
     return result
 
 

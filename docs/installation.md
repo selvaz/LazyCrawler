@@ -1,0 +1,129 @@
+# Installation
+
+## Requirements
+
+- Python **3.10** or later
+- pip
+
+## Install
+
+=== "Pure mode only"
+
+    ```bash
+    pip install lazycrawler
+    ```
+
+    Includes: httpx, beautifulsoup4, trafilatura, pydantic, robotparser.
+    No LLM, no API key needed.
+
+=== "With LLM (smart mode)"
+
+    ```bash
+    pip install "lazycrawler[smart]"
+    ```
+
+    Adds: `lazybridge` (multi-provider LLM abstraction).
+
+=== "Everything"
+
+    ```bash
+    pip install "lazycrawler[all]"
+    ```
+
+    Adds: smart + pdf + search + js + excel + dates.
+
+## Optional extras
+
+| Extra | Adds | When to use |
+|---|---|---|
+| `smart` | `lazybridge` | LLM extraction / link selection |
+| `pdf` | `pymupdf`, `pypdf`, `pdfplumber` | Crawl and extract PDF files |
+| `search` | `duckduckgo-search` | `WebSearch` with DDG engine |
+| `js` | `playwright` | Render JavaScript/SPA sites |
+| `excel` | `openpyxl` | Load URL blacklist from Excel |
+| `dates` | `dateparser` | Parse `published_iso` from page metadata |
+| `all` | all of the above | Full feature set |
+
+### After installing `js`
+
+The Playwright browsers must be installed separately:
+
+```bash
+playwright install chromium
+```
+
+## API key setup
+
+Smart mode uses LazyBridge, which infers the provider from the model string. Set the API key as an environment variable:
+
+=== "OpenAI"
+
+    ```bash
+    # Windows
+    set OPENAI_API_KEY=sk-...
+    # Linux/macOS
+    export OPENAI_API_KEY=sk-...
+    ```
+
+=== "Anthropic"
+
+    ```bash
+    set ANTHROPIC_API_KEY=sk-ant-...
+    ```
+
+=== "Google"
+
+    ```bash
+    set GOOGLE_API_KEY=...
+    ```
+
+=== "DeepSeek"
+
+    ```bash
+    set DEEPSEEK_API_KEY=...
+    ```
+
+LazyBridge supports `.env` files — place them in the working directory and they are loaded automatically.
+
+## SSL / Corporate proxy (Avast, Zscaler, etc.)
+
+Some antivirus or proxy tools intercept HTTPS and replace certificates. This causes `SSLCertVerificationError`.
+
+**Quick fix — disable verification:**
+
+```python
+from lazycrawler.config import HTTPConfig
+
+http_cfg = HTTPConfig(verify_ssl=False)
+crawler = WebCrawler(http_cfg=http_cfg)
+```
+
+**Better fix — provide the CA bundle:**
+
+```python
+http_cfg = HTTPConfig(ca_bundle="C:/path/to/corporate-ca.pem")
+```
+
+Export your proxy CA certificate in PEM format and pass the path to `ca_bundle`.
+
+## Verify the installation
+
+```python
+from lazycrawler import WebCrawler
+
+crawler = WebCrawler()
+results = crawler.crawl("https://quotes.toscrape.com", mode="pure")
+crawler.close()
+
+print(f"Crawled {len(results)} pages")
+for r in results[:3]:
+    print(f"  {r.status} | {r.url}")
+```
+
+Expected output (approx.):
+```
+Crawled 10 pages
+  done | https://quotes.toscrape.com
+  done | https://quotes.toscrape.com/page/2/
+  done | https://quotes.toscrape.com/page/3/
+```

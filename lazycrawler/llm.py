@@ -212,6 +212,8 @@ class CrawlerLLM:
             for idx in idxs:
                 if isinstance(idx, int) and 1 <= idx <= len(subset):
                     out.append(subset[idx - 1])
+            log.debug("  LLM selector: %d candidates -> indices %s -> %d valid",
+                      len(subset), (idxs[:10] if idxs else []), len(out))
             return out[:max_links]
         except Exception as e:
             log.warning("LLM select_links failed (%s: %s) - falling back to first %d candidates",
@@ -234,15 +236,19 @@ class CrawlerLLM:
         if len(text) <= threshold:
             return text[:max_chars_out]
 
-        log.info("large document (%d chars) - map-reduce summarization", len(text))
+        log.info("large document (%d chars) - map-reduce summarization (%d chunks ~%d chars ea)",
+                 len(text), min(len(text) // chunk_chars + 1, max_chunks), chunk_chars)
         agent = self._summary_agent()
         chunks = [text[i:i + chunk_chars] for i in range(0, len(text), chunk_chars)][:max_chunks]
 
         partials: List[str] = []
         for i, chunk in enumerate(chunks, 1):
+            log.debug("  large-doc: summarizing chunk %d/%d (%d chars)...", i, len(chunks), len(chunk))
             try:
                 env = agent(f"URL: {url}\nChunk {i}/{len(chunks)}\n\n{chunk}")
-                partials.append((env.text() or "").strip() if env.ok else chunk[:1500])
+                partial = (env.text() or "").strip() if env.ok else chunk[:1500]
+                log.debug("  large-doc: chunk %d -> %d chars output", i, len(partial))
+                partials.append(partial)
             except Exception as e:
                 log.warning("large-doc chunk %d failed (%s: %s) - keeping raw chunk prefix",
                             i, type(e).__name__, e, exc_info=True)
@@ -250,7 +256,10 @@ class CrawlerLLM:
 
         merged = "\n\n".join(p for p in partials if p.strip())
         if not merged.strip():
+            log.debug("  large-doc: all partials empty -> returning raw text prefix")
             return text[:max_chars_out]
+        log.debug("  large-doc: merging %d partials (%d chars) -> final synthesis...",
+                  len(partials), len(merged))
         try:
             env = agent(
                 f"URL: {url}\nMerge and compress the partial summaries into a "
@@ -259,6 +268,7 @@ class CrawlerLLM:
             )
             final = (env.text() or "").strip() if env.ok else ""
             if final:
+                log.debug("  large-doc: final synthesis -> %d chars", len(final))
                 return final[:max_chars_out]
         except Exception as e:
             log.warning("large-doc final synthesis failed (%s: %s) - returning merged partials",

@@ -286,14 +286,21 @@ class HTTPClient:
                 favor_recall=True,
             )
             if content and len(content.strip()) > 200:
+                log.debug("  text: trafilatura -> %d chars", len(content.strip()))
                 return content.strip()
+            log.debug("  text: trafilatura returned %s chars (<200) -> trying basic strip",
+                      len(content.strip()) if content else 0)
         except ImportError:
-            log.debug("trafilatura not installed - using basic HTML strip "
+            log.debug("  text: trafilatura not installed -> basic HTML strip "
                       "(pip install trafilatura for better extraction)")
         except Exception:
-            log.debug("trafilatura.extract failed - using basic HTML strip", exc_info=True)
+            log.debug("  text: trafilatura.extract failed -> basic HTML strip", exc_info=True)
         plain = html_to_text_basic(html)
-        return plain if (plain and len(plain) > 200) else None
+        if plain and len(plain) > 200:
+            log.debug("  text: basic HTML strip (fallback) -> %d chars", len(plain))
+            return plain
+        log.debug("  text: no extractable content (<200 chars from both trafilatura and basic strip)")
+        return None
 
     def fetch(
         self,
