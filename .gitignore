@@ -1,0 +1,38 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Databases (test/example artifacts) ───────────────────────────────────────
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# ── Secrets / config ─────────────────────────────────────────────────────────
+.env
+*.env
+*_apikey.txt
+*.key
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Legacy reference files (kept locally as salvage source, not part of the
+#    clean package — see lazycrawler/ for the rewrite) ─────────────────────────
+web_crawler_json.py
+web_crawler_json_pdf_aware.py
+web_search_duckduckgo.py
+web_search_gemini_grounded_best_practice_v4.py
+web_search_tool.py
+pipeline_lib/
+blacklist_finance_example.xlsx
