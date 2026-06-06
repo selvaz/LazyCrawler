@@ -15,7 +15,6 @@ what to remove). The shape is guaranteed by the Pydantic model.
 
 from __future__ import annotations
 
-
 # =============================================================================
 # 1. CONTENT EXTRACTION — web page  (-> PageExtract)
 # =============================================================================
@@ -74,6 +73,7 @@ CUSTOM_EXTRACTION_SYSTEM = (
 # =============================================================================
 # Used by: CrawlerLLM.build_link_selector() / select_links()
 # Output:  LinkSelection(indices=[...])  1-based indices of relevant links
+
 
 def build_link_selection_system(topic: str, max_links: int) -> str:
     """

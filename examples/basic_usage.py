@@ -24,8 +24,14 @@ if env.exists():
             os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 from lazycrawler import (
-    CrawlerConfig, CrawlerDB, DBConfig, HTTPConfig, LLMConfig,
-    SearchConfig, WebCrawler, WebSearch,
+    CrawlerConfig,
+    CrawlerDB,
+    DBConfig,
+    HTTPConfig,
+    LLMConfig,
+    SearchConfig,
+    WebCrawler,
+    WebSearch,
 )
 
 HTTP = HTTPConfig(link_delay=0.5, verify_ssl=False)  # verify_ssl: see README
@@ -44,7 +50,7 @@ db = CrawlerDB(DBConfig(db_path="example_crawl.db", ttl_hours=24))
 crawler = WebCrawler(
     CrawlerConfig(max_depth=1, max_pages=8),
     HTTP,
-    llm_cfg=LLMConfig(model="gpt-4o-mini"),     # switch provider = change the string
+    llm_cfg=LLMConfig(model="gpt-4o-mini"),  # switch provider = change the string
     db=db,
 )
 results = crawler.crawl(
@@ -89,18 +95,23 @@ crawler = WebCrawler(
 )
 results = crawler.crawl(
     "https://en.wikipedia.org/wiki/Artificial_intelligence",
-    content="pure", links="smart",          # LLM only for link selection
+    content="pure",
+    links="smart",  # LLM only for link selection
     topic="machine learning, neural networks",
 )
 crawler.close()
-print(f"\ncontent=pure/links=smart -> {len(results)} pages, "
-      f"summaries: {sum(r.summary is not None for r in results)}")
+print(
+    f"\ncontent=pure/links=smart -> {len(results)} pages, "
+    f"summaries: {sum(r.summary is not None for r in results)}"
+)
 
 # Inverse: LLM summary on a single page, no link selection (depth 0):
-crawler = WebCrawler(CrawlerConfig(max_depth=0, max_pages=1), HTTP,
-                     llm_cfg=LLMConfig(model="gpt-4o-mini"))
-results = crawler.crawl("https://en.wikipedia.org/wiki/Photosynthesis",
-                        content="smart", links="pure")
+crawler = WebCrawler(
+    CrawlerConfig(max_depth=0, max_pages=1), HTTP, llm_cfg=LLMConfig(model="gpt-4o-mini")
+)
+results = crawler.crawl(
+    "https://en.wikipedia.org/wiki/Photosynthesis", content="smart", links="pure"
+)
 crawler.close()
 print(f"content=smart/links=pure -> summary: {(results[0].summary or '')[:100]}")
 
@@ -118,15 +129,17 @@ print(f"\nparallel -> {sum(r.status == 'done' for r in results)} pages")
 # %% 6. CUSTOM OUTPUT SCHEMA — extract arbitrary fields
 from pydantic import BaseModel, Field
 
+
 class Article(BaseModel):
     headline: str = Field(default="", description="the main headline")
     author: str = Field(default="", description="author if present")
     key_points: list[str] = Field(default_factory=list, description="3-5 takeaways")
 
-crawler = WebCrawler(CrawlerConfig(max_depth=0, max_pages=1), HTTP,
-                     llm_cfg=LLMConfig(model="gpt-4o-mini"))
-results = crawler.crawl("https://en.wikipedia.org/wiki/CRISPR",
-                        content="smart", schema=Article)
+
+crawler = WebCrawler(
+    CrawlerConfig(max_depth=0, max_pages=1), HTTP, llm_cfg=LLMConfig(model="gpt-4o-mini")
+)
+results = crawler.crawl("https://en.wikipedia.org/wiki/CRISPR", content="smart", schema=Article)
 crawler.close()
 print(f"\ncustom schema -> {results[0].data}")
 
@@ -142,6 +155,7 @@ print(f"\ncustom schema -> {results[0].data}")
 
 # %% 8. AS A LAZYBRIDGE TOOL — LazyCrawler is the tool, you build the agent
 from lazybridge import Agent, LLMEngine
+
 from lazycrawler import CrawlerTools
 
 db = CrawlerDB(DBConfig(db_path="research.db"))
@@ -150,7 +164,7 @@ crawler_tools = CrawlerTools(
     crawler_cfg=CrawlerConfig(max_depth=1, max_pages=8, respect_robots=True),
     http_cfg=HTTP,
     llm_cfg=LLMConfig(model="gpt-4o-mini"),
-    content="smart",     # the agent gets summaries + sentiment per page
+    content="smart",  # the agent gets summaries + sentiment per page
     links="pure",
 )
 agent = Agent(engine=LLMEngine("gpt-4o-mini"), tools=crawler_tools.as_tools())
@@ -160,8 +174,9 @@ crawler_tools.close()
 
 
 # %% 9. SENTIMENT in smart structured output
-crawler = WebCrawler(CrawlerConfig(max_depth=0, max_pages=1), HTTP,
-                     llm_cfg=LLMConfig(model="gpt-4o-mini"))
+crawler = WebCrawler(
+    CrawlerConfig(max_depth=0, max_pages=1), HTTP, llm_cfg=LLMConfig(model="gpt-4o-mini")
+)
 r = crawler.crawl("https://en.wikipedia.org/wiki/Renewable_energy", content="smart")[0]
 crawler.close()
 print(f"sentiment={r.sentiment}  topics={r.topics}  notes={r.notes!r}")

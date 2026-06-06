@@ -15,8 +15,14 @@ Agent (LLM)
     │
     ├─ web_crawl("url", depth=1)  ← crawl a page and its links
     │
-    └─ get_page("url")            ← fetch a single page
+    ├─ get_page("url")            ← fetch a single page
+    │
+    └─ get_session_pages("sid")   ← list pages from a previous search/crawl run
 ```
+
+`web_search` / `web_crawl` return a `session_id`; pass it to `get_session_pages`
+to list everything reached in that run. Per-page results also carry
+`source_url`, `from_cache`, and `depth`.
 
 **Cache-first strategy**: always check `search_cached` before `web_search`. This avoids redundant HTTP requests when the agent asks similar questions in the same session.
 

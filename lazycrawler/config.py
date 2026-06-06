@@ -25,10 +25,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Literal, Optional
 
-
 # =============================================================================
 # CrawlerConfig
 # =============================================================================
+
 
 @dataclass
 class CrawlerConfig:
@@ -71,6 +71,17 @@ class CrawlerConfig:
         Size of each chunk for map-reduce summarization.
     large_doc_max_chunks : int
         Maximum number of chunks processed (cost cap).
+    recurse_from_cache : bool
+        If True, when a page is served from the cache its stored candidate links
+        are followed (recursion continues) instead of stopping. This makes the
+        result set independent of whether the DB is warm or cold. Default False
+        (a cache hit is terminal — the historical behavior).
+    exclude_patterns : list[str] | None
+        Regex fragments used to drop uninteresting links during crawling. None
+        uses the built-in default (login/cart/checkout/account, tracking,
+        social, mailto/tel). Unlike older versions this default no longer drops
+        /about, /contact, /tag/, /category/ or /author/ — for a generic crawler
+        those are often real content. Pass a custom list to fully override.
     blacklist : list[str]
         Domains to always skip (e.g. ["facebook.com", "x.com"]).
     blacklist_excel : str
@@ -80,6 +91,7 @@ class CrawlerConfig:
     blacklist_excel_column : str | None
         Excel column holding the domains (None = autodetect / first column).
     """
+
     max_depth: int = 2
     max_pages: int = 20
     max_links_per_level: int = 15
@@ -88,6 +100,7 @@ class CrawlerConfig:
     max_workers: int = 1
     respect_robots: bool = True
     strict: bool = False
+    recurse_from_cache: bool = False
 
     max_chars_content: int = 100_000
     max_chars_pure: int = 10_000
@@ -96,6 +109,7 @@ class CrawlerConfig:
     large_doc_chunk_chars: int = 12_000
     large_doc_max_chunks: int = 12
 
+    exclude_patterns: Optional[List[str]] = None
     blacklist: List[str] = field(default_factory=list)
     blacklist_excel: str = ""
     blacklist_excel_sheet: Optional[str] = None
@@ -105,6 +119,7 @@ class CrawlerConfig:
 # =============================================================================
 # HTTPConfig
 # =============================================================================
+
 
 @dataclass
 class HTTPConfig:
@@ -124,7 +139,17 @@ class HTTPConfig:
     backoff_base_sec : float
         Base backoff; actual wait = backoff_base_sec * 2^(attempt-1).
     link_delay : float
-        Pause (seconds) between consecutive fetches, to respect rate limits.
+        Pause (seconds) between consecutive fetches in *sequential* mode. Not
+        applied in parallel mode — use ``per_host_delay`` for politeness there.
+    per_host_delay : float
+        Minimum seconds between two fetches to the *same host*. Applied in BOTH
+        sequential and parallel mode (a per-host rate limiter). 0 disables it.
+        robots.txt ``Crawl-delay`` is always honored on top of this when
+        ``respect_robots`` is on, so the effective delay is the larger of the two.
+    min_text_chars : int
+        Minimum length (characters) for extracted text to be accepted. Shorter
+        pages (docs, changelogs, landing pages) are no longer discarded as
+        ``no_text``. Default 50 (was an implicit 200 in older versions).
     pdf_timeout : int
         Dedicated timeout for PDF downloads (usually larger).
     verify_ssl : bool
@@ -147,16 +172,15 @@ class HTTPConfig:
     browser_timeout_ms : int
         Per-page navigation timeout for the browser (milliseconds).
     """
-    user_agent: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/121.0.0.0 Safari/537.36"
-    )
+
+    user_agent: str = "LazyCrawler/0.5 (+https://github.com/selvaz/lazycrawler)"
     timeout_connect: int = 5
     timeout_read: int = 25
     max_retries: int = 4
     backoff_base_sec: float = 1.0
     link_delay: float = 1.0
+    per_host_delay: float = 0.0
+    min_text_chars: int = 50
     pdf_timeout: int = 60
     verify_ssl: bool = True
     ca_bundle: str = ""
@@ -169,6 +193,7 @@ class HTTPConfig:
 # =============================================================================
 # LLMConfig  (always via LazyBridge)
 # =============================================================================
+
 
 @dataclass
 class LLMConfig:
@@ -199,6 +224,7 @@ class LLMConfig:
     max_candidates_to_llm : int
         Maximum candidate links passed to the LLM for selection.
     """
+
     model: str = "gpt-4o-mini"
     large_doc_model: str = ""
     temperature: float = 0.0
@@ -210,6 +236,7 @@ class LLMConfig:
 # =============================================================================
 # SearchConfig
 # =============================================================================
+
 
 @dataclass
 class SearchConfig:
@@ -233,18 +260,34 @@ class SearchConfig:
         used for link selection during the crawl.
     gemini_model : str
         LazyBridge model for grounded search (engine="gemini").
+    region : str
+        DuckDuckGo region code (e.g. "us-en", "wt-wt" for no region). Default
+        "wt-wt".
+    timelimit : str | None
+        DuckDuckGo time filter: "d" (day), "w" (week), "m" (month), "y" (year),
+        or None for no limit.
+    safesearch : str
+        DuckDuckGo safe-search level: "on", "moderate", or "off".
+    backend : str
+        DuckDuckGo backend selection passed through to ddgs (e.g. "auto").
     """
+
     engine: Literal["duckduckgo", "gemini"] = "duckduckgo"
     n_results: int = 10
     crawl_depth: int = 0
     same_domain_only: bool = False
     expand_topic: bool = True
     gemini_model: str = "gemini-3-flash-preview"
+    region: str = "wt-wt"
+    timelimit: Optional[str] = None
+    safesearch: str = "moderate"
+    backend: str = "auto"
 
 
 # =============================================================================
 # DBConfig
 # =============================================================================
+
 
 @dataclass
 class DBConfig:
@@ -263,6 +306,7 @@ class DBConfig:
     enable_fts : bool
         If True, build and maintain the full-text (FTS5) index on clean_text.
     """
+
     db_path: str = "lazycrawler.db"
     ttl_hours: float = 24.0
     force_refresh: bool = False

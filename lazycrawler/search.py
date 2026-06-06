@@ -31,15 +31,27 @@ from .crawler import PageResult, WebCrawler
 from .db import CrawlerDB
 from .http import is_blacklisted_domain, is_excluded_url, normalize_url, url_hash
 
-
 # =============================================================================
 # DUCKDUCKGO
 # =============================================================================
 
-def search_ddg_urls(query: str, max_results: int, blacklist: Optional[List[str]] = None) -> List[str]:
+
+def search_ddg_urls(
+    query: str,
+    max_results: int,
+    blacklist: Optional[List[str]] = None,
+    *,
+    region: str = "wt-wt",
+    safesearch: str = "moderate",
+    timelimit: Optional[str] = None,
+    backend: str = "auto",
+) -> List[str]:
     """
     Search DuckDuckGo and return normalized URLs, filtered and with blacklisted
     domains removed. Empty list on error.
+
+    ``region`` / ``safesearch`` / ``timelimit`` / ``backend`` are passed through
+    to ddgs (see SearchConfig). Unsupported kwargs are ignored gracefully.
 
     Requires ``pip install ddgs`` (or the older ``duckduckgo_search``).
     """
@@ -49,15 +61,27 @@ def search_ddg_urls(query: str, max_results: int, blacklist: Optional[List[str]]
         try:
             from duckduckgo_search import DDGS  # type: ignore
         except ImportError as e:
-            raise RuntimeError(
-                "DuckDuckGo library missing. Install with: pip install ddgs"
-            ) from e
+            raise RuntimeError("DuckDuckGo library missing. Install with: pip install ddgs") from e
+
+    text_kwargs = dict(
+        max_results=max_results * 2,
+        region=region,
+        safesearch=safesearch,
+        timelimit=timelimit,
+        backend=backend,
+    )
 
     results: List[str] = []
     seen: set = set()
     try:
         with DDGS() as ddgs_client:
-            for r in ddgs_client.text(query, max_results=max_results * 2):
+            try:
+                hits = ddgs_client.text(query, **text_kwargs)
+            except TypeError:
+                # older ddgs/duckduckgo_search without some kwargs
+                log.debug("ddgs.text rejected extra kwargs - retrying with basics", exc_info=True)
+                hits = ddgs_client.text(query, max_results=max_results * 2)
+            for r in hits:
                 href = (r.get("href") or "").strip()
                 if not href or not href.startswith(("http://", "https://")):
                     continue
@@ -78,6 +102,7 @@ def search_ddg_urls(query: str, max_results: int, blacklist: Optional[List[str]]
 # =============================================================================
 # WEB SEARCH
 # =============================================================================
+
 
 class WebSearch:
     """
@@ -150,9 +175,14 @@ class WebSearch:
             self.crawler._ensure_llm()
             topic = self.crawler._llm.expand_topic(query)
 
-        log.info("web search: engine=%s content=%s links=%s query=%r%s",
-                 engine, content_mode, link_mode, query,
-                 f" topic={topic!r}" if topic != query else "")
+        log.info(
+            "web search: engine=%s content=%s links=%s query=%r%s",
+            engine,
+            content_mode,
+            link_mode,
+            query,
+            f" topic={topic!r}" if topic != query else "",
+        )
 
         if engine == "gemini":
             results = self._run_gemini(query, topic, content_mode)
@@ -164,8 +194,11 @@ class WebSearch:
         pages_found = sum(1 for r in results if r.status == "done")
         log.info("web search done: %d pages extracted (%d entries)", pages_found, len(results))
         return {
-            "query": query, "topic": topic, "engine": engine,
-            "pages_found": pages_found, "results": results,
+            "query": query,
+            "topic": topic,
+            "engine": engine,
+            "pages_found": pages_found,
+            "results": results,
         }
 
     # -- DuckDuckGo: URLs -> crawl --------------------------------------------
@@ -174,15 +207,28 @@ class WebSearch:
         self, query, topic, content_mode, link_mode, session_id, max_results
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
-        urls = search_ddg_urls(query, n_results, self.crawler.blacklist)
+        scfg = self.search_cfg
+        urls = search_ddg_urls(
+            query,
+            n_results,
+            self.crawler.blacklist,
+            region=scfg.region,
+            safesearch=scfg.safesearch,
+            timelimit=scfg.timelimit,
+            backend=scfg.backend,
+        )
         log.info("%d URLs from DuckDuckGo", len(urls))
         for i, u in enumerate(urls, 1):
             log.debug("  %2d. %s", i, u[:90])
         if not urls:
             return []
         return self.crawler.crawl_many(
-            urls, content=content_mode, links=link_mode, topic=topic,
-            session_id=session_id, source="search:duckduckgo",
+            urls,
+            content=content_mode,
+            links=link_mode,
+            topic=topic,
+            session_id=session_id,
+            source="search:duckduckgo",
         )
 
     # -- Gemini grounded (answer mode) ----------------------------------------
@@ -195,10 +241,12 @@ class WebSearch:
             raise RuntimeError("Engine 'gemini' requires LazyBridge.") from e
 
         try:
-            agent = Agent(engine=LLMEngine(
-                self.search_cfg.gemini_model,
-                native_tools=[NativeTool.GOOGLE_SEARCH],
-            ))
+            agent = Agent(
+                engine=LLMEngine(
+                    self.search_cfg.gemini_model,
+                    native_tools=[NativeTool.GOOGLE_SEARCH],
+                )
+            )
             env = agent(
                 "Use Google Search grounding. Search the public web and answer "
                 "using grounded, current sources. Keep it compact.\n\n"
@@ -212,21 +260,38 @@ class WebSearch:
         if not answer:
             return []
 
+        # NOTE: this is a SYNTHETIC result, not a navigable source. LazyBridge's
+        # Agent layer does not expose Gemini's grounding source URLs, so the
+        # answer cannot be audited against citations. ``notes`` flags this so
+        # callers/agents do not treat it as a real, fetchable web page.
         url = "gemini://grounded-web-search"
         result = PageResult(
-            url=url, url_hash=url_hash(url), status="done",
+            url=url,
+            url_hash=url_hash(url),
+            status="done",
             mode="smart" if mode == "smart" else "pure",
             title="Gemini grounded web search",
-            text=answer, summary=answer[:500], depth=0,
+            text=answer,
+            summary=answer[:500],
+            depth=0,
+            notes="synthetic: grounded answer, no verifiable source URLs",
         )
         # optional persistence
         if self.db is not None:
             sid = self.crawler._default_session_id(topic, mode)
             self.db.create_session(sid, topic=topic, seed=query, mode=mode, source="search:gemini")
-            self.db.upsert_page({
-                "url": url, "url_hash": result.url_hash, "status": "done",
-                "mode": result.mode, "title": result.title, "clean_text": answer,
-                "summary": result.summary, "raw_text": answer,
-            })
+            self.db.upsert_page(
+                {
+                    "url": url,
+                    "url_hash": result.url_hash,
+                    "status": "done",
+                    "mode": result.mode,
+                    "title": result.title,
+                    "clean_text": answer,
+                    "summary": result.summary,
+                    "raw_text": answer,
+                    "notes": result.notes,
+                }
+            )
             self.db.add_edge(sid, result.url_hash, depth=0)
         return [result]

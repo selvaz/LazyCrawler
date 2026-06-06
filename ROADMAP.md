@@ -17,6 +17,38 @@ by impact.
       HTTP/LLM resources, thread-safe DB (`check_same_thread=False` + lock).
       `max_workers=1` keeps the original sequential DFS.
 
+## Done (v0.5)
+
+- [x] **Test suite + CI** — idiomatic `pytest` (fixtures, `monkeypatch`, markers)
+      replacing the diagnostic scripts; `.github/workflows/ci.yml` runs lint
+      (ruff), tests on 3.10/3.11/3.12, and a build + `twine check`.
+- [x] **Per-host rate limiting** — `HostRateLimiter` enforces
+      `HTTPConfig.per_host_delay` in **both** sequential and parallel mode, and
+      honors robots.txt **`Crawl-delay`** on top of it.
+- [x] **Single PDF download** — `HTTPClient.fetch` detects PDFs (Content-Type /
+      extension / magic bytes) and returns the bytes once; the PDF pipeline
+      extracts from those bytes (no second download).
+- [x] **Configurable, less-aggressive link exclusion** —
+      `CrawlerConfig.exclude_patterns`; the default no longer drops `/about`,
+      `/contact`, `/tag/`, `/category/`, `/author/`.
+- [x] **Dedicated User-Agent** — `LazyCrawler/<version>` instead of a spoofed
+      browser string.
+- [x] **Configurable short-page threshold** — `HTTPConfig.min_text_chars`
+      (default 50) instead of a hardcoded 200.
+- [x] **Cache recursion** — candidate links are stored per page;
+      `CrawlerConfig(recurse_from_cache=True)` keeps following them from a warm
+      cache (same frontier cold vs warm, no re-fetch).
+- [x] **Thread-safe tools + richer returns** — `web_crawl` no longer mutates
+      shared config (per-call `max_depth` override); tool results carry
+      `session_id` / `source_url` / `from_cache` / `depth`; new
+      `get_session_pages` tool.
+- [x] **DuckDuckGo params** — `region` / `timelimit` / `safesearch` / `backend`
+      on `SearchConfig`. **Gemini** results are flagged synthetic (no verifiable
+      source URLs) rather than presented as navigable pages.
+- [x] **Packaging** — physical `LICENSE`, `dev` extra, ruff/pytest config,
+      version 0.5.0; the Spyder `setup_paths` bootstrap moved to
+      `examples/spyder_setup.py` (out of the package and tests).
+
 ## Done (v0.4)
 
 - [x] **LazyBridge tool layer** — `lazycrawler.tools.CrawlerTools` (a
@@ -38,8 +70,8 @@ by impact.
 
 ## Next
 
-- [ ] **4. Politeness (rest)** — autothrottle, optional proxy rotation,
-      per-host concurrency / crawl-delay honoring.
+- [ ] **4. Politeness (rest)** — autothrottle and optional proxy rotation.
+      (Per-host rate limiting and robots `Crawl-delay` shipped in v0.5.)
 - [ ] **5. Markdown output** — an optional markdown renderer (heading hierarchy,
       tables, link citations) for RAG ingestion.
 - [ ] **6. Smarter link frontier** — URL scoring / best-first traversal,
@@ -60,6 +92,7 @@ by impact.
   option could be added for storage-sensitive deployments.
 - **`same_domain_only`** compares full netloc (incl. port), so
   `example.com:8080` and `example.com` are treated as different hosts.
-- **No robots.txt** (see item 4): the crawler is intended for authorized
-  crawling only; it sends a browser-like User-Agent and honors only a global
-  `link_delay` (no per-domain rate limiting).
+- **Politeness scope**: the crawler is intended for authorized crawling. As of
+  v0.5 it sends a dedicated `LazyCrawler/<version>` User-Agent and honors
+  `link_delay`, per-host `per_host_delay`, and robots.txt `Crawl-delay`;
+  autothrottle and proxy rotation are still future work (item 4).

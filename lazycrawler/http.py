@@ -16,7 +16,8 @@ import hashlib
 import re
 import threading
 import time
-from typing import Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Set
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
@@ -25,31 +26,80 @@ import requests
 from ._log import log
 from .config import HTTPConfig
 
-
 # =============================================================================
 # URL CONSTANTS
 # =============================================================================
 
-_EXCLUDE_RE = re.compile(
-    r"unsubscribe|manage.prefer|opt.out|privacy.polic|terms.of"
-    r"|facebook\.com|twitter\.com|x\.com/|instagram\.com"
-    r"|youtube\.com|substack\.com/subscribe|mailto:|tel:"
-    r"|/login|/signin|/register|/signup|/cart|/checkout|/account"
-    r"|/search\?|/tag/|/category/|/author/|/about|/contact",
-    re.IGNORECASE,
-)
+# Default link-exclusion fragments. Intentionally conservative for a *generic*
+# crawler: it drops auth/commerce/tracking/social noise but NOT content-y paths
+# like /about, /contact, /tag/, /category/ or /author/ (those are often real
+# content). Override via CrawlerConfig.exclude_patterns.
+DEFAULT_EXCLUDE_PATTERNS: List[str] = [
+    r"unsubscribe",
+    r"manage.prefer",
+    r"opt.out",
+    r"privacy.polic",
+    r"terms.of",
+    r"facebook\.com",
+    r"twitter\.com",
+    r"x\.com/",
+    r"instagram\.com",
+    r"youtube\.com",
+    r"substack\.com/subscribe",
+    r"mailto:",
+    r"tel:",
+    r"/login",
+    r"/signin",
+    r"/register",
+    r"/signup",
+    r"/cart",
+    r"/checkout",
+    r"/account",
+    r"/search\?",
+]
+
+
+def compile_exclude(patterns: Optional[List[str]] = None) -> "re.Pattern[str]":
+    """Compile a link-exclusion regex from fragments (None = built-in default)."""
+    frags = DEFAULT_EXCLUDE_PATTERNS if patterns is None else list(patterns)
+    if not frags:
+        # Match nothing (exclude disabled).
+        return re.compile(r"(?!x)x")
+    return re.compile("|".join(frags), re.IGNORECASE)
+
+
+_EXCLUDE_RE = compile_exclude()
 
 _TRACKING_PARAMS: Set[str] = {
-    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-    "utm_id", "utm_name", "utm_reader", "utm_viz_id",
-    "gclid", "fbclid", "mc_cid", "mc_eid", "cmpid", "icid", "iid",
-    "ref", "referrer", "source", "ns_campaign", "ns_mchannel", "ns_source",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "utm_id",
+    "utm_name",
+    "utm_reader",
+    "utm_viz_id",
+    "gclid",
+    "fbclid",
+    "mc_cid",
+    "mc_eid",
+    "cmpid",
+    "icid",
+    "iid",
+    "ref",
+    "referrer",
+    "source",
+    "ns_campaign",
+    "ns_mchannel",
+    "ns_source",
 }
 
 
 # =============================================================================
 # URL UTILITIES
 # =============================================================================
+
 
 def get_base_domain(url: str) -> str:
     """Lowercase domain (netloc) from a URL."""
@@ -72,11 +122,14 @@ def strip_tracking_params(url: str) -> str:
     try:
         p = urlparse(url)
         q = [
-            (k, v) for (k, v) in parse_qsl(p.query, keep_blank_values=True)
+            (k, v)
+            for (k, v) in parse_qsl(p.query, keep_blank_values=True)
             if k.lower() not in _TRACKING_PARAMS
         ]
         q.sort(key=lambda kv: kv[0].lower())
-        return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(q, doseq=True), p.fragment))
+        return urlunparse(
+            (p.scheme, p.netloc, p.path, p.params, urlencode(q, doseq=True), p.fragment)
+        )
     except Exception:
         return url
 
@@ -95,11 +148,16 @@ def normalize_url(url: str) -> str:
         return url.strip()
 
 
-def is_excluded_url(url: str, text: str = "") -> bool:
-    """True if the URL or anchor text matches the exclusion pattern."""
-    if _EXCLUDE_RE.search(url):
+def is_excluded_url(url: str, text: str = "", pattern: "Optional[re.Pattern[str]]" = None) -> bool:
+    """True if the URL or anchor text matches the exclusion pattern.
+
+    ``pattern`` defaults to the built-in exclusion regex; pass a custom compiled
+    pattern (see ``compile_exclude``) to honor CrawlerConfig.exclude_patterns.
+    """
+    pat = pattern or _EXCLUDE_RE
+    if pat.search(url):
         return True
-    if text and _EXCLUDE_RE.search(text):
+    if text and pat.search(text):
         return True
     return False
 
@@ -107,6 +165,7 @@ def is_excluded_url(url: str, text: str = "") -> bool:
 # =============================================================================
 # HASHING (dedup)
 # =============================================================================
+
 
 def sha256_hex(s: str) -> str:
     """SHA256 hex of a UTF-8 string."""
@@ -135,6 +194,7 @@ def content_hash(text: str) -> str:
 # =============================================================================
 # DOMAIN BLACKLIST
 # =============================================================================
+
 
 def is_blacklisted_domain(url: str, blacklist: Optional[List[str]] = None) -> bool:
     """
@@ -165,15 +225,13 @@ def load_blacklist_from_excel(
     try:
         from openpyxl import load_workbook
     except Exception:
-        log.warning("openpyxl not installed - Excel blacklist ignored "
-                    "(pip install openpyxl)")
+        log.warning("openpyxl not installed - Excel blacklist ignored (pip install openpyxl)")
         return []
 
     try:
         wb = load_workbook(excel_path, read_only=True, data_only=True)
     except Exception as e:
-        log.warning("error opening Excel blacklist %s: %s: %s",
-                    excel_path, type(e).__name__, e)
+        log.warning("error opening Excel blacklist %s: %s: %s", excel_path, type(e).__name__, e)
         return []
 
     ws = wb[sheet_name] if (sheet_name and sheet_name in wb.sheetnames) else wb[wb.sheetnames[0]]
@@ -194,8 +252,13 @@ def load_blacklist_from_excel(
             target_idx = 0
     else:
         candidates = {
-            "domain", "domains", "blacklisted_domain", "blacklisted_domains",
-            "blacklist", "blocked_domain", "blocked_domains",
+            "domain",
+            "domains",
+            "blacklisted_domain",
+            "blacklisted_domains",
+            "blacklist",
+            "blocked_domain",
+            "blocked_domains",
         }
         target_idx = next((i for i, n in enumerate(header_lower) if n in candidates), 0)
 
@@ -222,6 +285,7 @@ def load_blacklist_from_excel(
 # HTML -> TEXT (basic fallback)
 # =============================================================================
 
+
 def html_to_text_basic(html: str) -> str:
     """Convert HTML to plain text via regex (fallback when trafilatura is absent)."""
     html = re.sub(r"(?is)<(script|style).*?>.*?</\1>", "", html)
@@ -229,8 +293,12 @@ def html_to_text_basic(html: str) -> str:
     html = re.sub(r"(?is)</p\s*>", "\n\n", html)
     html = re.sub(r"(?is)<.*?>", "", html)
     html = (
-        html.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<")
-        .replace("&gt;", ">").replace("&quot;", '"').replace("&#39;", "'")
+        html.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&#39;", "'")
     )
     return html.strip()
 
@@ -238,6 +306,29 @@ def html_to_text_basic(html: str) -> str:
 # =============================================================================
 # HTTP CLIENT
 # =============================================================================
+
+
+@dataclass
+class FetchResult:
+    """
+    Outcome of a single fetch.
+
+    For HTML resources ``html``/``text`` are populated. For PDFs (detected via
+    Content-Type, a .pdf extension, or the %PDF- magic bytes) the raw bytes are
+    returned in ``content`` and text extraction is deferred to the PDF pipeline
+    — so a PDF is downloaded exactly once.
+    """
+
+    html: Optional[str] = None
+    text: Optional[str] = None
+    status: Optional[int] = None
+    content: Optional[bytes] = None
+    content_type: str = ""
+
+    def __iter__(self):
+        # Backward-compatible unpacking: html, text, status = client.fetch(url)
+        return iter((self.html, self.text, self.status))
+
 
 class HTTPClient:
     """
@@ -252,6 +343,7 @@ class HTTPClient:
         if self._verify is False:
             try:
                 import urllib3
+
                 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             except Exception:
                 log.debug("could not disable urllib3 InsecureRequestWarning", exc_info=True)
@@ -260,24 +352,31 @@ class HTTPClient:
 
     def _make_session(self) -> requests.Session:
         s = requests.Session()
-        s.headers.update({
-            "User-Agent": self.cfg.user_agent,
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-        })
+        s.headers.update(
+            {
+                "User-Agent": self.cfg.user_agent,
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+            }
+        )
         return s
 
     @property
     def session(self) -> requests.Session:
         return self._session
 
-    @staticmethod
-    def _extract_text(html: str) -> Optional[str]:
-        """Extract main text via trafilatura, with a basic HTML-strip fallback."""
+    def _extract_text(self, html: str) -> Optional[str]:
+        """Extract main text via trafilatura, with a basic HTML-strip fallback.
+
+        Text shorter than ``cfg.min_text_chars`` is rejected so short-but-valid
+        pages (docs, changelogs, landing pages) are not silently dropped.
+        """
+        min_chars = self.cfg.min_text_chars
         try:
             import trafilatura  # type: ignore
+
             content = trafilatura.extract(
                 html,
                 include_comments=False,
@@ -285,34 +384,46 @@ class HTTPClient:
                 no_fallback=False,
                 favor_recall=True,
             )
-            if content and len(content.strip()) > 200:
+            if content and len(content.strip()) >= min_chars:
                 log.debug("  text: trafilatura -> %d chars", len(content.strip()))
                 return content.strip()
-            log.debug("  text: trafilatura returned %s chars (<200) -> trying basic strip",
-                      len(content.strip()) if content else 0)
+            log.debug(
+                "  text: trafilatura returned %s chars (<%d) -> trying basic strip",
+                len(content.strip()) if content else 0,
+                min_chars,
+            )
         except ImportError:
-            log.debug("  text: trafilatura not installed -> basic HTML strip "
-                      "(pip install trafilatura for better extraction)")
+            log.debug(
+                "  text: trafilatura not installed -> basic HTML strip "
+                "(pip install trafilatura for better extraction)"
+            )
         except Exception:
             log.debug("  text: trafilatura.extract failed -> basic HTML strip", exc_info=True)
         plain = html_to_text_basic(html)
-        if plain and len(plain) > 200:
+        if plain and len(plain) >= min_chars:
             log.debug("  text: basic HTML strip (fallback) -> %d chars", len(plain))
             return plain
-        log.debug("  text: no extractable content (<200 chars from both trafilatura and basic strip)")
+        log.debug(
+            "  text: no extractable content (<%d chars from both trafilatura and basic strip)",
+            min_chars,
+        )
         return None
 
     def fetch(
         self,
         url: str,
         extra_headers: Optional[dict] = None,
-    ) -> Tuple[Optional[str], Optional[str], Optional[int]]:
+    ) -> FetchResult:
         """
-        Fetch with retry. Returns (html, text, status_code).
+        Fetch with retry. Returns a :class:`FetchResult`.
 
-        - html:        raw HTML (None if the fetch fails)
-        - text:        text extracted via trafilatura / fallback (None if none)
-        - status_code: HTTP status (None on network error)
+        - html:         raw HTML (None on failure or for PDFs)
+        - text:         text extracted via trafilatura / fallback (None if none)
+        - status:       HTTP status (None on network error)
+        - content:      raw bytes for PDF resources (so they are downloaded once)
+        - content_type: response Content-Type (lowercased)
+
+        Unpacks as ``html, text, status`` for backward compatibility.
 
         If cfg.render_js is True, the HTML is obtained from a headless browser
         (Playwright); on browser failure/unavailability it falls back to requests.
@@ -323,10 +434,9 @@ class HTTPClient:
         if cfg.render_js:
             html = self._browser_renderer().render(url)
             if html:
-                return html, self._extract_text(html), 200
+                return FetchResult(html=html, text=self._extract_text(html), status=200)
             # browser unavailable/failed -> fall through to requests
 
-        last_exc = None
         for attempt in range(1, cfg.max_retries + 1):
             try:
                 headers = extra_headers or None
@@ -341,22 +451,39 @@ class HTTPClient:
                 if status in (429, 500, 502, 503, 504):
                     raise requests.HTTPError(f"HTTP {status}")
                 resp.raise_for_status()
+
+                ctype = (resp.headers.get("Content-Type") or "").lower()
+                body = resp.content or b""
+                if (
+                    "application/pdf" in ctype
+                    or url.lower().split("?")[0].endswith(".pdf")
+                    or body[:5] == b"%PDF-"
+                ):
+                    # PDF: hand the bytes straight to the PDF pipeline (no re-download).
+                    return FetchResult(status=status, content=body, content_type=ctype)
+
                 html = resp.text or ""
-                return html, self._extract_text(html), status
+                return FetchResult(
+                    html=html, text=self._extract_text(html), status=status, content_type=ctype
+                )
 
             except Exception as e:
-                last_exc = e
                 if attempt < cfg.max_retries:
-                    log.debug("fetch attempt %d/%d for %s failed: %s",
-                              attempt, cfg.max_retries, url, e)
+                    log.debug(
+                        "fetch attempt %d/%d for %s failed: %s", attempt, cfg.max_retries, url, e
+                    )
                     time.sleep(cfg.backoff_base_sec * (2 ** (attempt - 1)))
                 else:
-                    log.warning("fetch failed for %s after %d attempts: %s: %s",
-                                url, cfg.max_retries, type(e).__name__, e)
-                    return None, None, None
+                    log.warning(
+                        "fetch failed for %s after %d attempts: %s: %s",
+                        url,
+                        cfg.max_retries,
+                        type(e).__name__,
+                        e,
+                    )
+                    return FetchResult()
 
-        log.warning("fetch failed for %s: %s", url, last_exc)
-        return None, None, None
+        return FetchResult()
 
     def get_text(self, url: str) -> Optional[str]:
         """
@@ -365,8 +492,10 @@ class HTTPClient:
         """
         try:
             resp = self._session.get(
-                url, timeout=(self.cfg.timeout_connect, self.cfg.timeout_read),
-                allow_redirects=True, verify=self._verify,
+                url,
+                timeout=(self.cfg.timeout_connect, self.cfg.timeout_read),
+                allow_redirects=True,
+                verify=self._verify,
             )
             if resp.status_code >= 400:
                 return None
@@ -387,6 +516,7 @@ class HTTPClient:
     def _browser_renderer(self):
         if self._browser is None:
             from .browser import BrowserRenderer
+
             cfg = self.cfg
             self._browser = BrowserRenderer(
                 user_agent=cfg.user_agent,
@@ -401,6 +531,7 @@ class HTTPClient:
 # ROBOTS.TXT
 # =============================================================================
 
+
 class RobotsChecker:
     """
     Thread-safe robots.txt gate. Fetches each host's robots.txt once (honoring
@@ -414,6 +545,9 @@ class RobotsChecker:
         self._ua = user_agent or "*"
         self._cache: Dict[str, Optional[RobotFileParser]] = {}
         self._lock = threading.Lock()
+        # Per-host locks so two threads never fetch the same robots.txt twice
+        # (and never block on *other* hosts while one fetch is in flight).
+        self._host_locks: Dict[str, threading.Lock] = {}
 
     def allowed(self, url: str) -> bool:
         try:
@@ -432,20 +566,53 @@ class RobotsChecker:
             log.debug("robots can_fetch errored for %s - allowing", url, exc_info=True)
             return True
 
+    def crawl_delay(self, url: str) -> Optional[float]:
+        """robots.txt Crawl-delay (seconds) for the configured UA, or None."""
+        try:
+            p = urlparse(url)
+        except Exception:
+            return None
+        host = (p.netloc or "").lower()
+        if not host:
+            return None
+        rp = self._get(p.scheme or "https", host)
+        if rp is None:
+            return None
+        try:
+            delay = rp.crawl_delay(self._ua)
+            return float(delay) if delay is not None else None
+        except Exception:
+            return None
+
+    def _host_lock(self, host: str) -> threading.Lock:
+        with self._lock:
+            lk = self._host_locks.get(host)
+            if lk is None:
+                lk = threading.Lock()
+                self._host_locks[host] = lk
+            return lk
+
     def _get(self, scheme: str, host: str) -> Optional[RobotFileParser]:
         with self._lock:
             if host in self._cache:
                 return self._cache[host]
-        robots_url = urljoin(f"{scheme}://{host}", "/robots.txt")
-        rp: Optional[RobotFileParser] = None
-        text = self._http.get_text(robots_url)
-        if text:
-            rp = RobotFileParser()
-            try:
-                rp.parse(text.splitlines())
-            except Exception:
-                log.debug("failed to parse robots.txt at %s - allowing", robots_url, exc_info=True)
-                rp = None
-        with self._lock:
-            self._cache[host] = rp
-        return rp
+        # Serialize per-host so the robots.txt for this host is fetched once.
+        with self._host_lock(host):
+            with self._lock:
+                if host in self._cache:  # double-check after acquiring the host lock
+                    return self._cache[host]
+            robots_url = urljoin(f"{scheme}://{host}", "/robots.txt")
+            rp: Optional[RobotFileParser] = None
+            text = self._http.get_text(robots_url)
+            if text:
+                rp = RobotFileParser()
+                try:
+                    rp.parse(text.splitlines())
+                except Exception:
+                    log.debug(
+                        "failed to parse robots.txt at %s - allowing", robots_url, exc_info=True
+                    )
+                    rp = None
+            with self._lock:
+                self._cache[host] = rp
+            return rp
