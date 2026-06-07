@@ -53,6 +53,10 @@ class CrawlPreset:
         Crawl depth (0 = only the seed/result URLs).
     max_pages : int
         Hard cap on extracted pages for the run.
+    max_links_per_level : int | None
+        Branching factor: links followed **per page** (see
+        ``CrawlerConfig.max_links_per_level``). None = keep the crawler's own
+        default (only meaningful when ``max_depth > 0``).
     max_results : int
         Default number of search results (web_search only).
     extract_artifacts : bool
@@ -76,6 +80,7 @@ class CrawlPreset:
     links: str = "pure"
     max_depth: int = 0
     max_pages: int = 5
+    max_links_per_level: Optional[int] = None
     max_results: int = 8
     extract_artifacts: bool = False
     artifact_types: Tuple[str, ...] = ("table", "image", "figure", "svg", "chart")
@@ -90,13 +95,18 @@ class CrawlPreset:
         content/links/depth and search recency are passed separately (they are
         not ``CrawlerConfig`` fields).
         """
-        return {
+        overrides: Dict[str, object] = {
             "max_pages": self.max_pages,
             "extract_artifacts": self.extract_artifacts,
             "artifact_types": self.artifact_types,
             "emit_markdown": self.emit_markdown,
             "markdown_artifact_anchors": self.markdown_artifact_anchors,
         }
+        # Only override the branching factor when the preset sets it (else keep
+        # the crawler's own max_links_per_level).
+        if self.max_links_per_level is not None:
+            overrides["max_links_per_level"] = self.max_links_per_level
+        return overrides
 
     def brief(self) -> Dict[str, object]:
         """Compact, LLM-friendly view of the preset (for ``list_presets``)."""
@@ -108,6 +118,7 @@ class CrawlPreset:
             "follows_links": self.max_depth > 0,
             "link_mode": self.links,
             "depth": self.max_depth,
+            "links_per_page": self.max_links_per_level,
             "artifacts": self.extract_artifacts,
             "markdown": self.emit_markdown,
             "recency": self.timelimit,
@@ -144,6 +155,7 @@ DEFAULT_PRESETS: Dict[str, CrawlPreset] = {
         links="smart",
         max_depth=1,
         max_pages=20,
+        max_links_per_level=25,  # wide branching: chase more links from each source
         max_results=12,
     ),
     "news_scan": CrawlPreset(

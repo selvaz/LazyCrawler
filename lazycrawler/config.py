@@ -42,9 +42,14 @@ class CrawlerConfig:
     max_pages : int
         Hard cap on successfully extracted pages per run.
     max_links_per_level : int
-        Max links followed per page (after heuristic/LLM selection).
+        Max links followed **per page** (after heuristic/LLM selection) — the
+        branching factor. NOTE: despite the historical name, this is enforced
+        once per page (over that page's link set), NOT once per depth level.
+        The pages reached at a level are therefore bounded by
+        ``pages_at_level * max_links_per_level`` (and ultimately by ``max_pages``).
     max_candidate_links : int
-        Max candidate links extracted from a page before filtering.
+        Max candidate links extracted from a page before filtering/selection
+        (the raw pool from which ``max_links_per_level`` are then chosen).
     same_domain_only : bool
         If True, only follow links within the source page's domain.
     max_workers : int

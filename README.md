@@ -158,10 +158,15 @@ still overrides the preset.
 | Preset | Bundle | Cost |
 |--------|--------|------|
 | `quick_lookup` | pure · depth 0 · ~5 pages · no artifacts | minimal |
-| `deep_research` | smart content+links · depth 1 · ~20 pages · topic-driven | high |
+| `deep_research` | smart content+links · depth 1 · ~20 pages · wide branching (25 links/page) · topic-driven | high |
 | `news_scan` | smart (sentiment+date) · depth 0 · last week · more results | medium |
 | `extract_data` | pure · tables/images as artifacts · depth 0 | low |
 | `rag_ingest` | pure · Markdown + artifact anchors · depth 0 | low |
+
+A preset can also tune the **branching factor** (`max_links_per_level`: links
+followed *per page*) — `deep_research` widens it; `quick_lookup`/`news_scan`
+follow no links at all (depth 0). Custom presets set it via
+`CrawlPreset(max_links_per_level=...)`.
 
 ```python
 agent("...")   # the model: list_presets() -> web_search(q, preset="deep_research")

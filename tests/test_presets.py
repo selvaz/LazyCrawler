@@ -34,6 +34,13 @@ def test_crawl_overrides_only_exposes_config_fields():
         assert k not in ov
 
 
+def test_crawl_overrides_includes_branching_only_when_set():
+    # quick_lookup leaves branching to the crawler default (max_depth 0 anyway)
+    assert "max_links_per_level" not in DEFAULT_PRESETS["quick_lookup"].crawl_overrides()
+    # deep_research widens the fan-out explicitly
+    assert DEFAULT_PRESETS["deep_research"].crawl_overrides()["max_links_per_level"] == 25
+
+
 def test_resolve_presets_merges_and_overrides():
     custom = {
         "tiny": CrawlPreset(name="tiny", description="x", max_pages=1),
@@ -134,3 +141,15 @@ def test_preset_max_pages_override_is_per_call(stub_fetch, tools):
     out = json.loads(tools.web_crawl("https://e.org/seed", preset="extract_data", depth=1))
     assert out["found"] <= 5
     assert tools._crawler.cfg.max_pages == 20  # shared cfg untouched
+
+
+def test_branching_override_is_per_call(stub_fetch, make_crawler):
+    # 10 children on the seed; an overrides branching of 2 must cap how many are
+    # followed, per call, without mutating shared config.
+    fanout = "".join(f'<a href="https://e.org/c{i}">c{i}</a>' for i in range(10))
+    stub_fetch(links_map={"https://e.org/seed": fanout})
+    c = make_crawler(max_depth=1, max_pages=50, max_links_per_level=15)
+    res = c.crawl("https://e.org/seed", overrides={"max_links_per_level": 2})
+    done = [r for r in res if r.status == "done"]
+    assert len(done) <= 3  # seed + at most 2 followed children
+    assert c.cfg.max_links_per_level == 15  # shared cfg untouched
