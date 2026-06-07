@@ -90,6 +90,12 @@ class _State:
     results: List[PageResult] = field(default_factory=list)
     pages_done: int = 0
     lock: Any = field(default_factory=threading.Lock)
+    # Per-worker resources live on the run state (not the crawler instance) so two
+    # concurrent crawl() calls on one shared crawler never clobber each other's
+    # thread-local resources / created-client list (parallel & best-first modes).
+    tls: Any = None
+    created_res: List["_Res"] = field(default_factory=list)
+    res_lock: Any = field(default_factory=threading.Lock)
 
 
 @dataclass
@@ -144,8 +150,6 @@ class WebCrawler:
 
         self._http = HTTPClient(self.http_cfg)
         self._llm = None  # lazy CrawlerLLM for sequential mode
-        self._tls = threading.local()
-        self._created_res: List[_Res] = []
         self._robots = (
             RobotsChecker(HTTPClient(self.http_cfg), self.http_cfg.user_agent)
             if self.cfg.respect_robots
@@ -322,12 +326,12 @@ class WebCrawler:
         return None
 
     def _worker_res(self, st: _State) -> _Res:
-        r = getattr(self._tls, "res", None)
+        r = getattr(st.tls, "res", None)
         if r is None:
             r = self._build_res(st)
-            self._tls.res = r
-            with st.lock:
-                self._created_res.append(r)
+            st.tls.res = r
+            with st.res_lock:
+                st.created_res.append(r)
         return r
 
     # -- traversal strategies -------------------------------------------------
@@ -351,8 +355,7 @@ class WebCrawler:
 
     def _crawl_parallel(self, st, seeds) -> None:
         """Native parallel BFS over a bounded thread pool (level-by-level)."""
-        self._tls = threading.local()
-        self._created_res = []
+        st.tls = threading.local()
         frontier = [(url, dom, None) for (url, dom) in seeds]
         depth = 0
         try:
@@ -384,12 +387,11 @@ class WebCrawler:
                         break
                     frontier = next_frontier
         finally:
-            self._close_worker_res()
+            self._close_worker_res(st)
 
     def _crawl_ordered(self, st, seeds) -> None:
         """Best-first BFS (links="ml"): globally score-ordered frontier."""
-        self._tls = threading.local()
-        self._created_res = []
+        st.tls = threading.local()
         counter = itertools.count()
         heap: List[Tuple[float, int, int, str, Optional[str], str]] = []
         for url, dom in seeds:
@@ -434,7 +436,7 @@ class WebCrawler:
                                 ),
                             )
         finally:
-            self._close_worker_res()
+            self._close_worker_res(st)
 
     def _worker_process(self, st, url, depth, source_url, start_domain):
         return self._pipeline.process_one(
@@ -448,12 +450,13 @@ class WebCrawler:
         with st.lock:
             return st.pages_done >= st.cfg.max_pages
 
-    def _close_worker_res(self) -> None:
-        for r in self._created_res:
+    def _close_worker_res(self, st: _State) -> None:
+        for r in st.created_res:
             try:
                 r.http.close()
             except Exception:
                 log.debug("failed closing a worker HTTP client", exc_info=True)
+        st.created_res = []
 
     def _ensure_llm(self) -> None:
         if self._llm is None:
@@ -469,19 +472,17 @@ class WebCrawler:
         return f"{slug}_{content_mode}_{ts}_{rand}"
 
     def release(self) -> None:
-        """Release transient HTTP resources (sockets/browser), keeping the crawler reusable."""
+        """Release transient HTTP resources (sockets/browser), keeping the crawler reusable.
+
+        Per-run worker clients live on the run state and are closed in the
+        parallel/best-first crawl's ``finally`` (``_close_worker_res``), so by the
+        time a tool call releases there is nothing per-worker left to free here."""
         self._http.release()
         if self._robots is not None:
             try:
                 self._robots._http.release()
             except Exception:
                 log.debug("failed releasing robots HTTP client", exc_info=True)
-        for r in self._created_res:
-            try:
-                r.http.release()
-            except Exception:
-                log.debug("failed releasing a worker HTTP client", exc_info=True)
-        self._created_res = []
 
     def close(self) -> None:
         self.release()

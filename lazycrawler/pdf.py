@@ -136,8 +136,14 @@ def _extract_with_pymupdf(data: bytes) -> Tuple[str, str, Optional[str]]:
     """Return (text, title, published_iso) via PyMuPDF. ("", "", None) if absent."""
     try:
         import fitz  # PyMuPDF
-    except Exception:
-        log.debug("PyMuPDF (fitz) not available - trying pypdf fallback")
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        # A broken optional native dependency (e.g. a cryptography/cffi build with
+        # a missing _cffi_backend) can raise a low-level panic — a BaseException,
+        # NOT an Exception — on import. Degrade to the next parser rather than
+        # letting it crash the whole PDF pipeline (mirrors extract_pdf_artifacts).
+        log.debug("PyMuPDF (fitz) unavailable - trying pypdf fallback", exc_info=True)
         return "", "", None
     try:
         doc = fitz.open(stream=data, filetype="pdf")
@@ -165,8 +171,14 @@ def _extract_with_pypdf(data: bytes) -> Tuple[str, str, Optional[str]]:
     """Return (text, title, published_iso) via pypdf. ("", "", None) if absent."""
     try:
         from pypdf import PdfReader
-    except Exception:
-        log.debug("pypdf not available (pip install pypdf)")
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        # pypdf transitively imports ``cryptography``, whose Rust binding can raise
+        # a ``pyo3_runtime.PanicException`` (a BaseException, not Exception) when the
+        # native build is broken (e.g. missing _cffi_backend). Catch BaseException so
+        # a busted optional dep degrades gracefully instead of crashing extraction.
+        log.debug("pypdf unavailable (pip install pypdf)", exc_info=True)
         return "", "", None
     try:
         reader = PdfReader(io.BytesIO(data))

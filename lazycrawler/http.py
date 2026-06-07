@@ -318,7 +318,14 @@ def normalize_url(url: str) -> str:
         url = strip_tracking_params(url.strip())
         p = urlparse(url)
         path = p.path.rstrip("/") or "/"
-        return urlunparse((p.scheme.lower(), p.netloc.lower(), path, p.params, p.query, ""))
+        scheme = p.scheme.lower()
+        netloc = p.netloc.lower()
+        # Drop the default port so http://host:80/ and http://host/ (and the
+        # https/:443 pair) collapse to one dedup key instead of being fetched twice.
+        default_port = {"http": ":80", "https": ":443"}.get(scheme)
+        if default_port and netloc.endswith(default_port):
+            netloc = netloc[: -len(default_port)]
+        return urlunparse((scheme, netloc, path, p.params, p.query, ""))
     except Exception:
         return url.strip()
 
