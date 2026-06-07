@@ -29,13 +29,13 @@ from .artifacts import (
     extract_html_artifacts_anchored,
     sniff_image,
 )
+from .http import content_hash as _content_hash
 from .http import (
-    content_hash as _content_hash,
     get_base_domain,
     is_blacklisted_domain,
     normalize_url,
-    url_hash as _url_hash,
 )
+from .http import url_hash as _url_hash
 from .models import PageResult
 from .pdf import looks_like_pdf, title_from_pdf_text, title_from_url
 from .text import (
