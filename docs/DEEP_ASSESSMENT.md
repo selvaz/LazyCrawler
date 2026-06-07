@@ -1,15 +1,17 @@
 # LazyCrawler — Deep Assessment
 
-> Independent technical review of **LazyCrawler v0.9.0** (June 2026).
+> Independent technical review of **LazyCrawler v0.12.0** (June 2026).
 > Scope: code quality, architecture, feature inventory, a status check of every
-> finding from the previous (v0.5/0.6) review, and a competitive comparison.
+> prior finding, and a competitive comparison.
 >
-> Method: full read of all 17 source modules (~6,500 LOC), the test suite, CI,
+> Method: full read of all 18 source modules (~7,300 LOC), the test suite, CI,
 > packaging and docs. Verified locally: `ruff check` + `ruff format --check`
-> clean; `pytest -m "not integration"` → **133 passed, 1 skipped**.
+> clean; `pytest -m "not integration"` → **154 passed, 2 skipped**.
 >
-> This review supersedes the v0.5/0.6 edition. Where a section reflects a change
-> since then it is flagged **[since v0.6]**.
+> This review supersedes the v0.9 edition. Two big things landed since: the
+> **`ml` mode** (a no-LLM, zero-token "smart" tier — best-first semantic frontier
+> + local structured extraction) and an **external-audit remediation** that closed
+> the security blockers (SSRF-on-redirects, download byte caps).
 
 ---
 
@@ -21,12 +23,15 @@ crawler for research/monitoring workloads, not a general-purpose industrial
 crawler. Judged against that goal the design is coherent and the execution is
 unusually clean for a solo, pre-1.0 project.
 
-**Overall grade: A− / "strong pre-production" as an ecosystem component.** Since
-v0.6 the project has closed its biggest functional gaps (Markdown output,
-artifacts, an SSRF guard, a per-call resource-lifecycle model, intent presets,
-two more search engines) without losing the qualities that made the earlier
-review positive: clean module boundaries, lazy optional dependencies, no
-swallowed exceptions, and a genuinely well-designed agent tool layer.
+**Overall grade: A / "production-capable for its niche" as an ecosystem
+component.** The v0.10–0.12 cycle closed the two things the v0.9 review flagged
+hardest: the **"frontier intelligence" gap** (the new `ml` mode adds a best-first
+semantic frontier) and the **security blockers** (SSRF-on-redirects and download
+byte caps are fixed). Combined with the earlier closes (Markdown, artifacts, RAG
+assembly, presets, per-call lifecycle), the feature surface now matches the goal,
+without losing the qualities that made the earlier review positive: clean module
+boundaries, lazy optional dependencies, no swallowed exceptions, careful
+concurrency, and a genuinely well-designed agent tool layer.
 
 **Transparency note — component, not standalone product.** Read as a *standalone
 crawler competing for users on PyPI*, the realistic grade is closer to a **C**:
@@ -41,14 +46,14 @@ questions. The open strategic decision (see §6) is whether to fold it into
 
 | Axis | Rating | One-line |
 |---|---|---|
-| Architecture & module boundaries | ★★★★★ | clean separation, single-responsibility modules |
+| Architecture & module boundaries | ★★★★★ | clean separation; `ml`/`smart` are interchangeable engines behind one interface |
 | Code quality / readability | ★★★★★ | idiomatic, well-documented, consistent; careful concurrency |
-| Test coverage | ★★★★☆ | 133 offline tests; LLM/network paths integration-gated; ratio is the group's lowest |
-| Feature completeness (vs goal) | ★★★★★ | markdown + artifacts + RAG + presets closed the prior gaps |
-| Robustness / production hardening | ★★★☆☆ | good politeness & cleanup; SSRF-redirect & soft-cap edges remain |
-| Competitive position (general crawler) | ★★★☆☆ | loses to crawl4ai/Firecrawl on scale/anti-bot/frontier |
-| Competitive position (as ecosystem infra) | ★★★★★ | distinctive; the integration value is real |
-| Distribution / process maturity | ★★☆☆☆ | not on PyPI; CI lacks codeql/boundary/release |
+| Test coverage | ★★★★☆ | 154 offline tests; LLM/network paths integration-gated; ratio still the group's lowest |
+| Feature completeness (vs goal) | ★★★★★ | markdown + artifacts + RAG + presets + a no-LLM `ml` tier |
+| Robustness / production hardening | ★★★★☆ | SSRF-on-redirect, byte caps and the hard `max_pages` cap closed; no anti-bot/proxy |
+| Competitive position (general crawler) | ★★★★☆ | best-first semantic frontier closes the biggest gap; still no anti-bot/scale |
+| Competitive position (as ecosystem infra) | ★★★★★ | distinctive; a *zero-token* smart tier is a unique angle |
+| Distribution / process maturity | ★★☆☆☆ | **still not on PyPI**; CI lacks codeql/boundary/release |
 
 ---
 
@@ -85,10 +90,35 @@ honest part most assessments skip.
   `CrawlerDB` also arm a `weakref.finalize` GC/exit backstop. `close()` is no longer
   required in the agent path and is not exposed as a tool.
 
-**Reviewed and intentionally left**
+**New in the v0.10–v0.12 cycle (since the v0.9 review)**
 
-- §4.2 parallel `max_pages` soft cap — still a soft cap (low impact, high
-  regression risk to make atomic); now acknowledged in code comments.
+- **`ml` mode — a no-LLM, zero-token "smart" tier** (v0.10–0.11). A third value for
+  the content/link knobs (`pure | ml | smart`), implemented as an `MLEngine` that
+  mirrors `CrawlerLLM`'s interface so the crawler stays engine-agnostic.
+  - `links="ml"` → relevance scoring (semantic via **Model2Vec** static embeddings
+    + lexical + structural) driving a **best-first frontier** (`_crawl_ordered`,
+    score-ordered, works sequential **and** parallel). This closes the v0.9
+    "frontier intelligence" gap at zero token cost.
+  - `content="ml"` → structured extraction (`summary` via TextRank over the shared
+    embedder, `topics` via YAKE, `entities` via spaCy, `sentiment` via VADER) — the
+    same fields as `smart`, no LLM. Graceful fallbacks for every optional dep.
+- **External-audit remediation** (v0.12) — verified and fixed:
+  - **SSRF on redirects** ✅ — fetches now follow redirects *manually* and
+    re-validate **every hop**, bounded by `max_redirects` (this was the v0.9 §5.1
+    open finding).
+  - **Download byte caps** ✅ — streamed, hard-capped (`max_html/pdf/asset_bytes`).
+  - **`max_pages` hard cap** ✅ — atomic slot reservation; no parallel overshoot
+    (this was the v0.9 §5.2 "left as soft" item).
+  - Plus: explicit `enforce_ssrf_guard`, prompt-injection hardening, `same_host_only`,
+    `search_cfg` in `CrawlerTools`, `figure` removed from artifacts, Python-version
+    extras marker, `PRAGMA user_version` DB migrations, clearer Gemini doc.
+
+**Resolved from the v0.9 review's own open list (§5)**
+
+- §5.1 SSRF redirect bypass → **fixed** (manual per-hop validation).
+- §5.2 parallel `max_pages` soft cap → **fixed** (atomic reservation).
+- §5.3 port-in-host domain compare → **mitigated** (`same_host_only` option added;
+  the registrable-site default is now documented as intentional).
 
 ---
 
@@ -97,8 +127,8 @@ honest part most assessments skip.
 ```
 lazycrawler/
 ├── _log.py        single logger ("lazycrawler"), set_log_level
-├── config.py      5 dataclass configs (Crawler/HTTP/LLM/Search/DB) — no domain coupling
-├── http.py        HTTPClient (retry/backoff, lazy session, release), URL utils, hashing, blacklist, RobotsChecker
+├── config.py      6 dataclass configs (Crawler/HTTP/LLM/ML/Search/DB) — no domain coupling
+├── http.py        HTTPClient (retry/backoff, manual SSRF-checked redirects, byte caps, lazy session), URL utils, RobotsChecker
 ├── ratelimit.py   HostRateLimiter (per-host min-gap, robots Crawl-delay aware)
 ├── text.py        pure-function HTML→text, link/date/canonical/title extraction
 ├── pdf.py         remote PDF extraction (PyMuPDF → pypdf → pdfplumber) + PDF artifacts
@@ -107,6 +137,7 @@ lazycrawler/
 ├── markdown.py    HTML→Markdown + render_for_rag (text + artifacts → one RAG doc)
 ├── prompts.py     domain-agnostic smart-mode prompts (incl. vision/table)
 ├── llm.py         LazyBridge wrapper + structured-output models (PageExtract, LinkSelection, ArtifactVision)
+├── ml.py          no-LLM MLEngine: Model2Vec link scorer + TextRank/YAKE/spaCy/VADER extraction
 ├── presets.py     CrawlPreset + built-in catalog + resolve_presets
 ├── db.py          SQLite: sessions/pages/crawl_edges/artifacts, 3-level dedup, TTL, FTS5
 ├── crawler.py     WebCrawler — orchestration, cache/dedup, sequential DFS + parallel BFS, per-call overrides
@@ -183,57 +214,67 @@ warm-cache frontier identical to a cold one.
 | **Artifacts (tables/images/charts/SVG)** | ✅ **[since v0.7]** | reference + optional bytes(sha256) + optional vision; HTML & PDF |
 | **RAG document assembly** | ✅ **[since v0.8]** | `[[artifact:<hash>]]` anchors + `render_for_rag()` |
 | **Intent presets** | ✅ **[since v0.9]** | `list_presets()` + `preset=`, developer-extensible |
+| **`ml` content (no-LLM, zero token)** | ✅ **[since v0.11]** | TextRank summary + YAKE topics + spaCy entities + VADER sentiment; graceful fallbacks |
+| **`ml` links + best-first frontier** | ✅ **[since v0.10]** | Model2Vec semantic + lexical + structural scoring; score-ordered frontier, sequential & parallel |
 | JS rendering | ✅ (opt-in) | Playwright, reused per HTTP client, thread-safe; falls back to requests |
-| Parallel crawl | ✅ | bounded thread pool, BFS |
+| Parallel crawl | ✅ | bounded thread pool, BFS / best-first; `max_pages` now a hard cap |
 | robots.txt | ✅ default-on | disallowed URLs reported as `robots_blocked`, never dropped |
 | WebSearch | ✅ | DuckDuckGo / **Brave** / **Tavily** (crawl results) + Gemini grounding (answer-only, flagged synthetic) |
 | Agent tool layer | ✅ | `CrawlerTools` → list_presets + up to 6 tools, cache-first, token-frugal, per-call cleanup |
-| SSRF guard | ◐ | private/loopback/metadata blocked on the tool path; **redirects not re-checked** |
+| SSRF guard | ✅ **[since v0.12]** | private/loopback/metadata blocked; **redirects re-validated per hop**; explicit `enforce_ssrf_guard` |
+| Download caps (memory safety) | ✅ **[since v0.12]** | streamed, hard-capped HTML/PDF/asset bytes |
 | SSL-inspection envs | ✅ | `verify_ssl` / `ca_bundle` across HTML, PDF, robots |
 | Politeness | ◐ | `link_delay` + per-host limiter + robots `Crawl-delay`; **no autothrottle/proxy** |
 | Anti-bot / proxy rotation | ❌ | dedicated UA only; not a stealth crawler |
 | Interactive actions (click/scroll/form) | ❌ | roadmap "Later" |
-| Frontier intelligence (URL scoring, sitemap) | ❌ | heuristic first-N or LLM rank only |
+| Frontier intelligence | ✅ **[since v0.10]** | best-first semantic scoring (`ml`); still no sitemap seeding |
 
 ---
 
-## 5. Code-level findings (open)
+## 5. Code-level findings
 
-Concrete issues from the read, by severity. None are blockers.
+What the v0.9 review (and the external audit) flagged, with current status.
 
-### 5.1 SSRF guard does not re-check redirects (security, medium) — **OPEN**
-`is_blocked_address` resolves the host *before* the fetch, but `HTTPClient.fetch`
-calls `requests` with `allow_redirects=True`, which follows 30x internally. A
-public host that redirects to `169.254.169.254` or an RFC-1918 address is **not**
-blocked. Documented in the README, but it is the one genuine security gap on the
-agent path. **Fix:** `allow_redirects=False` + a manual hop loop that re-validates
-each `Location` through `is_blocked_address`.
+**Closed in v0.12**
 
-### 5.2 `max_pages` is a soft cap in parallel mode (low) — **acknowledged**
-A whole BFS level is submitted at once and the counter is incremented late, so
-workers can overshoot by up to (frontier width − 1). Reviewed and left as-is (low
-impact, high regression risk); now noted in comments. Either reserve the slot
-atomically or document it as best-effort in the public config docstring.
+- **SSRF redirect bypass** (was the one real security gap) → **fixed**: redirects
+  are followed manually and every hop is re-validated against the guard, bounded by
+  `max_redirects`. *Test added.*
+- **`max_pages` soft cap in parallel** → **fixed**: atomic slot reservation in
+  `_add_counted`/`_emit`; the cap holds with N workers. *Test added.*
+- **No download byte caps** → **fixed**: streamed + hard-capped HTML/PDF/asset.
+- **`CrawlerTools` SSRF override doc/code mismatch** → **fixed**: explicit
+  `enforce_ssrf_guard`.
+- **No prompt-injection hardening** → **fixed**: page text marked untrusted in all
+  smart prompts.
 
-### 5.3 `get_base_domain`/host keys include the port (low) — **OPEN**
-`netloc` carries host **+ port**, so `example.com:8080` and `example.com` are
-distinct hosts in the same-domain filter and robots keys. Normalize to hostname
-for the domain check.
+**Still open (low severity)**
 
-### 5.4 PDF fallback path bypasses the shared client (low) — **OPEN**
+### 5.1 `get_base_domain`/host keys include the port (low) — **partly mitigated**
+`netloc` carries host **+ port**, so `example.com:8080` and `example.com` differ in
+the domain filter and robots keys. `same_host_only` now offers a strict hostname
+rule, but the underlying `netloc` comparison still carries the port; a future
+normalization to hostname would be cleaner.
+
+### 5.2 PDF fallback path uses `urllib` (low) — **open (now capped)**
 The fallback `extract_pdf` (reached only via the JS-render magic-bytes path) still
 uses `urllib` directly — no retry/backoff, no session, no proxy — a second network
-path with different semantics. Rare.
+path. It is now byte-capped (`max_pdf_bytes`), so the memory risk is gone; the
+semantic-divergence point remains.
 
-### 5.5 `max_links_per_level` is a misnomer (trivial) — **mitigated**
+### 5.3 `max_links_per_level` is a misnomer (trivial) — **mitigated**
 Enforced **per page**, not per depth level. Not renamed (back-compat); the
-docstring now states it explicitly. A future major could add a `max_links_per_page`
-alias.
+docstring states it explicitly.
 
-### 5.6 Test/code ratio is the lowest in the ecosystem (process, low)
-133 well-targeted offline tests, but ~0.25 test-file-to-source ratio vs LazyPulse's
-~0.5. Coverage of the new artifact/preset/cleanup paths is good; the thin spots are
-the LLM/vision paths (correctly integration-gated, so unrun in CI).
+### 5.4 Instance-level concurrency caveat (low)
+A single `WebCrawler` should run one *parallel* crawl at a time (`self._tls` /
+`_created_res` live on the instance). Concurrent sequential calls and concurrent
+tool calls are fine.
+
+### 5.5 Test/code ratio is the lowest in the ecosystem (process, low)
+154 well-targeted offline tests, but ~0.27 test-file-to-source ratio vs LazyPulse's
+~0.5. The thin spots are the LLM/vision and the `ml` semantic/NLP paths (the latter
+correctly fall back to pure-python in CI, so the heavy-dep branches are unrun).
 
 ---
 
@@ -250,13 +291,15 @@ the LLM/vision paths (correctly integration-gated, so unrun in CI).
 
 ### Matrix
 
-| Dimension | LazyCrawler 0.9 | crawl4ai | Firecrawl | ScrapeGraphAI | Scrapy |
+| Dimension | LazyCrawler 0.12 | crawl4ai | Firecrawl | ScrapeGraphAI | Scrapy |
 |---|---|---|---|---|---|
 | JS rendering | ◐ opt-in Playwright | ✅ | ✅ | ✅ | ❌ |
-| Concurrency | ✅ thread pool (BFS) | ✅ async dispatcher | ✅ (managed) | ◐ | ✅ Twisted |
-| No-LLM / zero-cost mode | ✅ `pure` | ◐ | ◐ | ❌ | ✅ |
+| Concurrency | ✅ thread pool (BFS / best-first) | ✅ async dispatcher | ✅ (managed) | ◐ | ✅ Twisted |
+| No-LLM / zero-cost mode | ✅ `pure` **and `ml`** | ◐ | ◐ | ❌ | ✅ |
 | LLM content extraction | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **No-LLM structured extraction** | ✅ **`ml` (TextRank/YAKE/spaCy/VADER)** | ❌ | ❌ | ❌ | ❌ |
 | LLM *only* for link choice | ✅ **separate knob** | ◐ (scorer) | ❌ | ❌ | ❌ |
+| Frontier intelligence | ✅ **best-first semantic (no-LLM)** | ✅ best-first | ✅ map | ◐ | ✅ |
 | Intent presets for agents | ✅ **list_presets+preset=** | ❌ | ◐ params | ❌ | ❌ |
 | Custom output schema | ✅ Pydantic | ✅ | ✅ | ✅ | n/a |
 | Output format | text / Pydantic / **markdown** | rich markdown | rich markdown | free schema | raw HTML |
@@ -266,59 +309,63 @@ the LLM/vision paths (correctly integration-gated, so unrun in CI).
 | Persistence + provenance | ✅ **relational + FTS5** | ❌ | ❌ (API) | ❌ | ◐ feed export |
 | Native PDF | ✅ fallback chain + artifacts | ◐ | ◐ | ❌ | ❌ |
 | robots.txt | ✅ default-on | ◐ | ✅ | ◐ | ✅ |
+| SSRF guard (per-hop) + byte caps | ✅ | ❌ | n/a (hosted) | ❌ | ◐ |
 | Anti-bot / proxy rotation | ❌ | ✅ | ✅ | ◐ | ◐ |
-| Frontier intelligence | ❌ first-N / LLM rank | ✅ best-first | ✅ map | ◐ | ✅ |
 | Interactive actions | ❌ | ✅ | ✅ | ◐ | ◐ |
 | Provider-agnostic LLM | ✅ LazyBridge | ✅ | ◐ | ✅ | — |
-| Maturity / distribution | v0.9, solo, **not on PyPI** | high | high | medium | very high |
+| Maturity / distribution | v0.12, solo, **not on PyPI** | high | high | medium | very high |
 
 ### Where LazyCrawler genuinely wins
-1. **Two independent LLM knobs** — the finest-grained cost control in the field,
-   now surfaced as **intent presets** for agents.
-2. **Token economy by design** — dedup caches across the *LLM* boundary, not just
+1. **A coherent no-LLM "smart" tier (`ml`)** — best-first **semantic** frontier +
+   local structured extraction (summary/entities/topics/sentiment) at **zero token
+   cost**. No other framework here offers an intelligent-but-tokenless tier; crawl4ai
+   has best-first scoring but its content intelligence is LLM or CSS/XPath.
+2. **Two/three independent knobs + intent presets** — the finest-grained cost
+   control in the field (`pure`/`ml`/`smart`, content vs links independently).
+3. **Token economy by design** — dedup caches across the *LLM* boundary, not just
    the HTTP response.
-3. **Persistence with provenance** — sessions/pages/edges/artifacts + FTS5 fits a
-   "monitor a topic over time / cite sources" workload.
-4. **RAG document assembly** — markdown + artifact anchors + `render_for_rag()` is a
-   built-in multi-vector pipeline the stateless fetchers leave to you.
-5. **Drop-in agent tooling** — cache-first, token-frugal, preset-driven, and it
-   cleans up per call. Cleaner than hand-wiring crawl4ai/Firecrawl into an agent.
+4. **Persistence with provenance** — sessions/pages/edges/artifacts + FTS5 for
+   "monitor a topic over time / cite sources".
+5. **RAG document assembly** — markdown + artifact anchors + `render_for_rag()`.
+6. **Drop-in, hardened agent tooling** — cache-first, token-frugal, preset-driven,
+   per-call cleanup, per-hop SSRF guard + byte caps.
 
 ### Where it loses (as a *general* crawler)
-- **Scale & robustness** — thread pool vs async dispatchers; no anti-bot/proxy, so
-  it will be blocked on protected sites.
-- **Frontier intelligence** — no best-first/URL scoring/sitemap seeding.
-- **Maturity & distribution** — solo, pre-1.0, not on PyPI; incumbents have years
+- **Scale & robustness** — thread pool vs async dispatchers; **no anti-bot/proxy**,
+  so it will be blocked on protected sites (the remaining hard gap).
+- **`ml` quality ceiling** — local extraction is extractive/statistical, below an
+  LLM's abstractive summary and reasoned topics; static embeddings < contextual.
+  `ml` is for breadth/triage; `smart` for depth.
+- **Maturity & distribution** — solo, pre-1.0, **not on PyPI**; incumbents have years
   and communities.
 
 ---
 
 ## 7. Verdict & recommendations
 
-As an **ecosystem component**, LazyCrawler is close to best-in-class for its niche:
-a cost-controlled, persistence-first, agent-native crawler with token economy,
-provenance, PDFs, artifacts, RAG assembly and provider-agnostic LLM as first-class
-— exactly the axes the incumbents de-emphasize. As a **standalone product** it
-should not try to fight crawl4ai/Firecrawl on scale/anti-bot/frontier; that is not
-its purpose and not a market it can win solo.
+As an **ecosystem component**, LazyCrawler is now best-in-class for its niche, and
+the niche itself widened: with `ml` mode it is the only framework here offering an
+*intelligent, zero-token* tier (semantic frontier + structured extraction). The
+v0.12 security work (per-hop SSRF, byte caps, hard `max_pages`) removed the
+"not agent-safe" blocker the v0.9 review called out. As a **standalone product** it
+still should not fight crawl4ai/Firecrawl on scale/anti-bot; that is not its purpose.
 
 **Highest-leverage next steps (in order):**
 
-1. **Fix the SSRF redirect bypass (§5.1)** — the one real security gap on the agent
-   path; `allow_redirects=False` + per-hop re-validation.
-2. **Publish to PyPI + add CI `codeql`/`release` (and a `boundary` workflow)** — the
-   distribution/process gap is now larger than the code gap; the other ecosystem
-   packages already ship this way.
-3. **Smarter frontier** — URL scoring / sitemap seeding closes the most visible
-   "general crawler" gap.
-4. **Autothrottle + optional proxy** — required before any at-scale/unattended use.
-5. **Resolve the build-vs-wrap question (option C)** — keep LazyCrawler a standalone
+1. **Publish to PyPI + add CI `codeql`/`release` (and a `boundary` workflow)** — now
+   the #1 gap: the distribution/process maturity lags the (good) code, and the other
+   ecosystem packages already ship this way.
+2. **`ml` Phase 3** — near-duplicate detection (SimHash) + relevance-gated early-stop
+   to make the no-LLM research loop genuinely *targeted*.
+3. **Autothrottle + optional proxy** — the remaining hard gap before at-scale or
+   unattended use; without anti-bot it is blocked on protected sites.
+4. **Resolve the build-vs-wrap question (option C)** — keep LazyCrawler a standalone
    package and let `lazytools.connectors.web` re-export `CrawlerTools` as a thin
-   adapter (heavy deps stay isolated, the crawler iterates at its own pace), rather
-   than folding ~6.5k LOC into the younger `lazytoolkit`. Do it once the public API
-   is frozen.
+   adapter (heavy deps stay isolated; the crawler iterates at its own pace), rather
+   than folding ~7k LOC into the younger `lazytoolkit`. Do it once the public API is
+   frozen.
 
 The codebase remains a low-risk component to fold into the wider ecosystem: clean
-module boundaries, lazy optional deps, no swallowed exceptions, automatic
-per-call resource cleanup, and an offline test suite make the migration mechanical
-once the items above land.
+module boundaries, lazy optional deps, no swallowed exceptions, automatic per-call
+cleanup, a hardened agent path, and an offline test suite make the migration
+mechanical once the items above land.
