@@ -89,6 +89,72 @@ def preprocess_text(raw: str) -> str:
 # LINK EXTRACTION
 # =============================================================================
 
+# Generic, non-descriptive anchor texts that carry no topical signal. When a link
+# has one of these (or no text), scoring context is back-filled from its
+# surroundings so "read more"/icon links are no longer near-invisible to the
+# semantic/lexical scorer.
+_GENERIC_ANCHORS = frozenset(
+    {
+        "read more",
+        "more",
+        "click here",
+        "here",
+        "continue reading",
+        "read",
+        "see more",
+        "learn more",
+        "details",
+        "link",
+        "this",
+        "go",
+        "view",
+        "open",
+        "next",
+        "previous",
+        "read the full story",
+        "full story",
+    }
+)
+
+
+def _clean_ws(s: Optional[str]) -> str:
+    return re.sub(r"\s+", " ", (s or "")).strip()
+
+
+def _is_weak_anchor(text: str) -> bool:
+    """True for empty / generic / ultra-short anchors that need context back-fill."""
+    t = (text or "").strip().lower()
+    if not t or t in _GENERIC_ANCHORS:
+        return True
+    return len(t) <= 2
+
+
+def _link_context(a: Any) -> str:
+    """Descriptive text for a weak anchor, drawn from its surroundings (best effort):
+    an inner ``<img alt>``, the link's ``title``/``aria-label``, the nearest
+    preceding heading, or the enclosing block element. Capped to a short span so it
+    sharpens the scoring signal without swamping the anchor."""
+    try:
+        img = a.find("img")
+        if img is not None and img.get("alt"):
+            return _clean_ws(img.get("alt"))[:200]
+        for attr in ("title", "aria-label"):
+            if a.get(attr):
+                return _clean_ws(a.get(attr))[:200]
+        h = a.find_previous(["h1", "h2", "h3", "h4"])
+        if h is not None:
+            ht = _clean_ws(h.get_text(" ", strip=True))
+            if ht:
+                return ht[:200]
+        parent = a.find_parent(["li", "p", "td", "figcaption", "article", "section"])
+        if parent is not None:
+            pt = _clean_ws(parent.get_text(" ", strip=True))
+            if pt:
+                return pt[:200]
+    except Exception:
+        log.debug("link-context back-fill failed", exc_info=True)
+    return ""
+
 
 def extract_candidate_links(
     html: str,
@@ -160,7 +226,15 @@ def extract_candidate_links(
             n_dup += 1
             continue
         seen.add(norm)
-        result.append((text or "(no text)", href))
+        # Back-fill scoring context for weak/empty anchors ("read more", icons) from
+        # the link's surroundings, so the ml/llm selectors can judge them on more
+        # than an uninformative label. Strong anchors are kept verbatim.
+        anchor = text
+        if _is_weak_anchor(text):
+            ctx = _link_context(a)
+            if ctx:
+                anchor = f"{text} {ctx}".strip() if text else ctx
+        result.append((anchor[:200] or "(no text)", href))
         if len(result) >= max_links:
             break
 

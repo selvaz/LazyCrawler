@@ -9,7 +9,7 @@ There are **two independent knobs** (content / links), each taking one of
 
 | Knob | `pure` | `ml` (no-LLM, zero tokens) | `smart` |
 |------|--------|----------------------------|---------|
-| **content** (page text) | trafilatura/regex clean text | TextRank summary + YAKE topics + spaCy entities + VADER sentiment | LLM structured extraction (title, summary, entities, topics, **sentiment**, notes) |
+| **content** (page text) | trafilatura/regex clean text | TextRank summary + keyphrase topics (KeyBERT-style/YAKE) + spaCy entities + VADER sentiment | LLM structured extraction (title, summary, entities, topics, **sentiment**, notes) |
 | **links** (which to follow) | heuristic (first N) | best-first **semantic** scoring (Model2Vec) | LLM relevance ranking against the topic |
 
 `mode` is a shortcut that sets both; `content=` / `links=` override either one:

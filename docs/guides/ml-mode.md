@@ -39,6 +39,12 @@ score blends three signals:
   stripped, so common words neither dilute the topic nor match spuriously);
 - **structural** — URL depth / query / anchor-quality priors (topic-independent).
 
+Weak or empty anchors (`read more`, icons, image links) are **back-filled with
+scoring context** from their surroundings — an inner `<img alt>`, the link's
+`title`/`aria-label`, the nearest preceding heading, or the enclosing block — so a
+`read more` under a *"Lithium battery storage"* heading is scored on that heading,
+not on two uninformative words. Strong anchors are used verbatim.
+
 The score is normalized to `[0, 1]`. When the semantic signal is unavailable
 (no `ml` extra, or the embedding fails) its weight is redistributed across the
 lexical + structural signals, so the score stays on the same scale and a
@@ -81,7 +87,7 @@ and statistics instead of an LLM, so it costs **no tokens**:
 | Field | Technique | Dependency |
 |-------|-----------|------------|
 | `summary` | extractive **TextRank** over static sentence embeddings (reuses the Model2Vec embedder) | `[ml]` (else lead sentences) |
-| `topics` | **YAKE** statistical keyphrases | `[nlp]` (else frequency fallback) |
+| `topics` | **KeyBERT-style** keyphrases — candidate n-grams ranked by similarity to the document (reusing the embedder) and diversified with **MMR** | `[ml]` (else **YAKE**/`[nlp]`, else frequency) |
 | `entities` | **spaCy** NER | `[nlp]` + a model (else regex fallback) |
 | `sentiment` | **VADER** (lexicon + rules) | `[nlp]` (else `"neutral"`) |
 
@@ -116,9 +122,11 @@ python -m spacy download en_core_web_sm   # optional: spaCy entity model
 Without the extra, ML mode still runs — semantic scoring is simply skipped and
 the **lexical + structural** signals are used (still topic-aware, and the score is
 renormalized so `min_link_score` gates stay meaningful). This degraded path is the
-one exercised in CI; the offline test suite includes a benchmark asserting that,
-under a fixed page budget, the best-first frontier collects the on-topic links a
-plain document-order "first N" pass would miss. The Model2Vec model (~30 MB)
+one exercised in CI; the offline test suite includes a **harvest-rate harness**
+(`tests/test_ml_eval.py`) — the canonical focused-crawl metric (fraction of fetched
+pages that are on-topic) — asserting the best-first frontier achieves a perfect
+harvest under a fixed page budget while a document-order "first N" pass harvests
+nothing. Score-engine changes are judged against this harness, not by assertion. The Model2Vec model (~30 MB)
 downloads once on first use and is cached; the embedder is loaded once and shared
 across all workers.
 

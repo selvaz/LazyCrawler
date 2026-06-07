@@ -371,6 +371,63 @@ def keyphrases(text: str, topk: int) -> List[str]:
         return [w for w, _ in Counter(words).most_common(topk)]
 
 
+def _candidate_phrases(text: str, max_candidates: int = 250) -> List[str]:
+    """Content n-grams (1–3 contiguous non-stopword tokens) as keyphrase candidates.
+    Cheap, dependency-free; the semantic ranker scores these against the document."""
+    toks = [t for t in _WORD.findall((text or "").lower()) if len(t) > 2 and t not in _STOP]
+    seen: set = set()
+    cands: List[str] = []
+    for n in (1, 2, 3):
+        for i in range(len(toks) - n + 1):
+            phrase = " ".join(toks[i : i + n])
+            if phrase not in seen:
+                seen.add(phrase)
+                cands.append(phrase)
+                if len(cands) >= max_candidates:
+                    return cands
+    return cands
+
+
+def _mmr_select(doc_vec, cand_vecs, cands: List[str], topk: int, lambda_: float = 0.6) -> List[str]:
+    """Maximal Marginal Relevance: pick ``topk`` candidates that are each similar to
+    the document yet diverse from one another (avoids near-duplicate keyphrases).
+    Vectorized per step — no per-iteration closure."""
+    import numpy as np
+
+    rel = cand_vecs @ doc_vec  # cosine (both L2-normalized)
+    remaining = list(range(len(cands)))
+    chosen: List[int] = []
+    while remaining and len(chosen) < topk:
+        if not chosen:
+            best = max(remaining, key=lambda j: float(rel[j]))
+        else:
+            # Max similarity of each remaining candidate to any already-chosen one.
+            div = (cand_vecs[remaining] @ cand_vecs[chosen].T).max(axis=1)
+            mmr = lambda_ * rel[remaining] - (1.0 - lambda_) * div
+            best = remaining[int(np.argmax(mmr))]
+        chosen.append(best)
+        remaining.remove(best)
+    return [cands[i] for i in chosen]
+
+
+def keyphrases_semantic(text: str, embedder, topk: int) -> List[str]:
+    """KeyBERT-style keyphrases: rank candidate n-grams by cosine similarity to the
+    document embedding, diversified with MMR — reusing the same Model2Vec embedder
+    (no extra model, no tokens). Falls back to YAKE/frequency without an embedder."""
+    if embedder is None:
+        return keyphrases(text, topk)
+    cands = _candidate_phrases(text)
+    if not cands:
+        return keyphrases(text, topk)
+    try:
+        cand_vecs = embedder.encode(cands)
+        doc_vec = embedder.encode([(text or "")[:5000]])[0]
+        return _mmr_select(doc_vec, cand_vecs, cands, topk)
+    except Exception:
+        log.debug("ml: semantic keyphrases failed - YAKE/frequency fallback", exc_info=True)
+        return keyphrases(text, topk)
+
+
 def entities(text: str) -> List[str]:
     global _NLP, _NLP_FAILED
     if _NLP is None and not _NLP_FAILED:
@@ -465,7 +522,9 @@ class MLEngine:
             summary=summarize(
                 text, self.embedder, cfg.summary_sentences, cfg.summary_max_sentences
             ),
-            topics=keyphrases(text, cfg.keyphrase_topk),
+            # KeyBERT-style semantic keyphrases when the embedder is present (reuses
+            # it, no tokens); YAKE/frequency fallback otherwise.
+            topics=keyphrases_semantic(text, self.embedder, cfg.keyphrase_topk),
             entities=entities(text) if cfg.use_spacy_ner else [],
             sentiment=sentiment(text) if cfg.sentiment else "neutral",
         )
