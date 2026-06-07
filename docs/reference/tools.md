@@ -16,10 +16,13 @@ CrawlerTools(
     llm_cfg: LLMConfig | None = None,
     crawler_cfg: CrawlerConfig | None = None,
     http_cfg: HTTPConfig | None = None,
-    content: Literal["pure", "smart"] = "smart",
-    links: Literal["pure", "smart"] = "pure",
+    content: Literal["pure", "ml", "smart"] = "smart",
+    links: Literal["pure", "ml", "smart"] = "pure",
     topic: str = "",
     presets: dict[str, CrawlPreset] | None = None,
+    ml_cfg: MLConfig | None = None,
+    search_cfg: SearchConfig | None = None,
+    enforce_ssrf_guard: bool = True,
     verbose: bool = False,
 )
 ```
@@ -30,10 +33,13 @@ CrawlerTools(
 | `llm_cfg` | `LLMConfig \| None` | `None` | LLM config for smart-mode extraction |
 | `crawler_cfg` | `CrawlerConfig \| None` | `None` | Crawler limits (depth, pages, etc.) |
 | `http_cfg` | `HTTPConfig \| None` | `None` | HTTP settings |
-| `content` | `"pure"` or `"smart"` | `"smart"` | Content extraction mode for `web_crawl` and `get_page` |
-| `links` | `"pure"` or `"smart"` | `"pure"` | Link selection mode for `web_crawl` |
+| `content` | `"pure"` / `"ml"` / `"smart"` | `"smart"` | Content extraction mode for `web_crawl` and `get_page` (`"ml"` = no-LLM local extraction) |
+| `links` | `"pure"` / `"ml"` / `"smart"` | `"pure"` | Link selection mode (`"ml"` = best-first semantic, no tokens) |
 | `topic` | `str` | `""` | Topic passed to the crawler for context |
 | `presets` | `dict[str, CrawlPreset] \| None` | `None` | Extra/override named presets merged on top of the built-in catalog (same key = override). See the [Presets guide](../guides/presets.md) |
+| `ml_cfg` | `MLConfig \| None` | `None` | Config for `ml` mode (Model2Vec model, score weights, local-extraction knobs) |
+| `search_cfg` | `SearchConfig \| None` | `None` | Search engine for `web_search` (DuckDuckGo / Brave / Tavily / Gemini). Default DuckDuckGo |
+| `enforce_ssrf_guard` | `bool` | `True` | Force the SSRF guard ON for the tool path. Set `False` to allow internal hosts (honors your `http_cfg`) |
 | `verbose` | `bool` | `False` | Print tool call details to stdout |
 
 !!! note "Cleanup is automatic"

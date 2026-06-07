@@ -51,41 +51,62 @@ cfg = DBConfig(
 | `created_at` | TEXT | ISO timestamp |
 | `topic` | TEXT | crawl topic |
 | `seed` | TEXT | first seed URL |
-| `mode` | TEXT | `"pure"` or `"smart"` |
-| `source` | TEXT | `"crawl"`, `"search"`, etc. |
+| `mode` | TEXT | `"pure"` / `"ml"` / `"smart"` |
+| `source` | TEXT | `"crawl"`, `"search:duckduckgo"`, etc. |
 
-**`pages`** — one row per unique URL
+**`pages`** — global content cache, one row per unique URL (cross-session)
 
 | Column | Type | Notes |
 |---|---|---|
-| `url_hash` | TEXT PK | SHA-256 of URL |
+| `url_hash` | TEXT PK | SHA-256 of normalized URL |
 | `url` | TEXT | original URL |
+| `domain` | TEXT | host (indexed) |
 | `status` | TEXT | `"done"`, `"fetch_error"`, etc. |
-| `mode` | TEXT | extraction mode used |
-| `fetched_at` | TEXT | ISO timestamp of last fetch |
-| `content_hash` | TEXT | SHA-256 of raw text |
+| `mode` | TEXT | extraction mode used (`pure`/`ml`/`smart`) |
+| `crawled_at` | TEXT | ISO timestamp of last crawl (drives TTL) |
+| `content_hash` | TEXT | SHA-256 of raw text (level-2 dedup) |
 | `title` | TEXT | |
-| `raw_text` | TEXT | text before LLM processing |
-| `clean_text` | TEXT | final text (LLM-cleaned or raw) |
-| `summary` | TEXT | smart mode only |
-| `entities` | TEXT | JSON array |
-| `topics` | TEXT | JSON array |
-| `sentiment` | TEXT | |
+| `raw_text` | TEXT | text before LLM/ML processing |
+| `clean_text` | TEXT | final text (cleaned) |
+| `summary` | TEXT | smart / ml |
+| `entities_json` / `topics_json` | TEXT | JSON arrays |
+| `sentiment` | TEXT | smart / ml |
+| `notes` | TEXT | reserved (smart) |
+| `markdown` | TEXT | HTML→Markdown render (`emit_markdown`) |
 | `is_pdf` | INTEGER | 0 or 1 |
 | `published_iso` | TEXT | |
-| `extract_json` | TEXT | custom schema data (JSON) |
+| `extract_json` | TEXT | custom-schema data (JSON) |
+| `links_json` | TEXT | candidate links found at crawl time (for `recurse_from_cache`) |
 | `error` | TEXT | error message if failed |
 
-**`crawl_edges`** — links between pages in a session
+**`crawl_edges`** — which session reached which page (provenance), `UNIQUE(session_id, url_hash)`
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | INTEGER PK | |
-| `session_id` | TEXT FK → sessions | |
-| `url_hash` | TEXT FK → pages | |
+| `session_id` | TEXT FK → sessions | ON DELETE CASCADE |
+| `url_hash` | TEXT FK → pages | ON DELETE CASCADE |
 | `source_url` | TEXT | which page linked here |
 | `depth` | INTEGER | crawl depth |
-| `visited_at` | TEXT | ISO timestamp |
+| `added_at` | TEXT | ISO timestamp |
+
+**`artifacts`** — non-textual content per page (tables/images/charts/svg), `UNIQUE(url_hash, content_hash)`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `url_hash` | TEXT FK → pages | ON DELETE CASCADE |
+| `artifact_type` | TEXT | `table` / `image` / `chart` / `svg` |
+| `position` | INTEGER | order on the page |
+| `src_url`, `alt`, `caption`, `context` | TEXT | provenance |
+| `content`, `content_format` | TEXT | e.g. Markdown table / SVG markup |
+| `data_json` | TEXT | structured rows / chart data |
+| `summary` | TEXT | vision-LLM enrichment (smart) |
+| `mime`, `width`, `height`, `bytes_hash`, `size_bytes` | | image metadata |
+| `blob` | BLOB | downloaded image bytes (optional) |
+| `content_hash` | TEXT | dedup + anchor join key |
+
+> Schema migrations are gated by `PRAGMA user_version` (forward-only, idempotent).
 
 ---
 
@@ -222,6 +243,41 @@ def stats() -> dict
 ```
 
 Return aggregate counts: `{"sessions": int, "pages": int, "pages_done": int, "edges": int}`.
+
+---
+
+### get_artifacts()
+
+```python
+def get_artifacts(
+    url_hash: str | None = None,
+    session_id: str | None = None,
+    artifact_type: str | None = None,
+    include_blob: bool = False,
+    limit: int = 0,
+) -> list[dict]
+```
+
+Retrieve a page's (or a whole session's) artifacts — tables, images, charts, SVG.
+`data`/`meta` are deserialized; the raw `blob` is dropped unless `include_blob=True`.
+See the [Artifacts guide](../guides/artifacts.md).
+
+```python
+from lazycrawler.http import url_hash
+arts = db.get_artifacts(url_hash=url_hash("https://example.com/report"))
+tables = db.get_artifacts(session_id="run-1", artifact_type="table")
+```
+
+---
+
+### add_artifacts()
+
+```python
+def add_artifacts(url_hash: str, artifacts: list[Artifact]) -> int
+```
+
+Persist a page's artifacts (idempotent per `(url_hash, content_hash)`). Returns the
+number inserted. Called automatically by `WebCrawler` when `extract_artifacts=True`.
 
 ---
 

@@ -36,13 +36,20 @@
 
 | Extra | Adds | When to use |
 |---|---|---|
-| `smart` | `lazybridge` | LLM extraction / link selection |
-| `pdf` | `pymupdf`, `pypdf`, `pdfplumber` | Crawl and extract PDF files |
-| `search` | `duckduckgo-search` | `WebSearch` with DDG engine |
+| `smart` | `lazybridge` (Python ≥3.11) | LLM extraction / link selection (`mode="smart"`) |
+| `ml` | `model2vec`, `numpy` | **No-LLM** `mode="ml"`: semantic link scoring + TextRank summary |
+| `nlp` | `yake`, `vaderSentiment`, `spacy` | `content="ml"` topics/entities/sentiment (local, no tokens) |
+| `pdf` | `pymupdf`, `pypdf`, `pdfplumber` | Crawl and extract PDF files (+ PDF artifacts) |
+| `search` | `ddgs` | `WebSearch` with the DuckDuckGo engine |
 | `js` | `playwright` | Render JavaScript/SPA sites |
+| `markdown` | `markdownify` | `emit_markdown` HTML→Markdown for RAG |
+| `image` | `pillow` | Artifact image dimensions / format sniffing |
 | `excel` | `openpyxl` | Load URL blacklist from Excel |
-| `dates` | `dateparser` | Parse `published_iso` from page metadata |
+| `dates` | `python-dateutil` | Parse `published_iso` from page metadata |
 | `all` | all of the above | Full feature set |
+
+Brave and Tavily search need **no extra** (they use `requests`); just set
+`BRAVE_API_KEY` / `TAVILY_API_KEY`.
 
 ### After installing `js`
 
@@ -50,6 +57,15 @@ The Playwright browsers must be installed separately:
 
 ```bash
 playwright install chromium
+```
+
+### After installing `nlp`
+
+The spaCy entity model is downloaded separately (else entities fall back to a
+regex extractor):
+
+```bash
+python -m spacy download en_core_web_sm
 ```
 
 ## API key setup
