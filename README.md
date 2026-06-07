@@ -382,23 +382,29 @@ internally).
 
 ## Resource cleanup (automatic — no `close()` in the agent path)
 
-Cleanup is **automatic**. `HTTPClient` and `CrawlerDB` arm a `weakref.finalize`,
-so the underlying HTTP session, Playwright browser and SQLite connection are
-released on garbage-collection or at interpreter exit — **you never need to call
-`close()`**. This matters for the agent/tool path: an LLM driving `CrawlerTools`
-only calls `web_search` / `web_crawl` / … — lifecycle methods are not exposed as
-tools, and nothing in your code has to close the crawler.
+You never call `close()` in the agent/tool path, and nothing lingers between calls:
+
+- **Per tool call**: each `web_search` / `web_crawl` **releases its HTTP sockets
+  (and browser) at the end of the call** — the call is a self-contained
+  transaction. The shared **DB cache stays open** (it's the persistent store),
+  and the HTTP session is rebuilt lazily on the next call. Release is
+  reference-counted, so a release never closes a session a concurrent call is
+  still using.
+- **As a backstop**: `HTTPClient` and `CrawlerDB` also arm a `weakref.finalize`,
+  so any remaining session / browser / SQLite connection is freed on
+  garbage-collection or at interpreter exit.
+
+Lifecycle methods are **not exposed as tools**, so the LLM can only call
+`web_search` / `web_crawl` / `get_page` / …:
 
 ```python
 crawler_tools = CrawlerTools(db=db, llm_cfg=LLMConfig(model="claude-haiku-4-5"))
 agent = Agent(engine=engine, tools=crawler_tools.as_tools())
-agent("Research solid-state batteries.")   # no close() anywhere — released on GC/exit
+agent("Research solid-state batteries.")   # no close() anywhere; sockets freed per call
 ```
 
-`close()` / `with` remain available for **deterministic** release (e.g. to tear
-down a Playwright browser subprocess immediately, or checkpoint the SQLite WAL
-the moment you're done) and disarm the finalizer; a second `close()` is a safe
-no-op.
+`close()` / `with` remain available for **deterministic** full teardown (they
+release immediately and are idempotent — a second `close()` is a safe no-op):
 
 ```python
 with WebCrawler(CrawlerConfig(max_depth=1)) as crawler:   # optional, deterministic

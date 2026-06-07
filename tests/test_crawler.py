@@ -111,20 +111,22 @@ def test_markdown_persisted_and_restored_from_cache(stub_fetch, tmp_db, make_cra
 def test_webcrawler_context_manager_closes(stub_fetch, monkeypatch):
     import lazycrawler.http as http_mod
 
-    closed = {"n": 0}
-    orig = http_mod.HTTPClient.close
+    released = {"n": 0}
+    orig = http_mod.HTTPClient.release
 
-    def counting_close(self):
-        closed["n"] += 1
+    def counting_release(self):
+        released["n"] += 1
         return orig(self)
 
-    monkeypatch.setattr(http_mod.HTTPClient, "close", counting_close)
+    monkeypatch.setattr(http_mod.HTTPClient, "release", counting_release)
     stub_fetch()
     with WebCrawler(
         CrawlerConfig(max_depth=0, respect_robots=False), HTTPConfig(verify_ssl=False)
     ) as c:
         c.crawl(U, mode="pure")
-    assert closed["n"] >= 1  # __exit__ -> close() ran
+        assert c._http._session is not None  # session alive while in use
+    assert released["n"] >= 1  # __exit__ -> close() -> release() ran
+    assert c._http._session is None  # sockets freed on exit
 
 
 # -- max_depth runtime override (no shared-config mutation) ------------------

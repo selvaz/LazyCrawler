@@ -339,6 +339,16 @@ class WebSearch:
         )
         self.crawler = WebCrawler(crawler_cfg=base, http_cfg=http_cfg, llm_cfg=llm_cfg, db=db)
 
+    def release(self) -> None:
+        """Release the underlying crawler's transient HTTP resources (per-call)."""
+        self.crawler.release()
+
+    def _begin_call(self) -> None:
+        self.crawler._begin_call()
+
+    def _end_call_release(self) -> None:
+        self.crawler._end_call_release()
+
     def close(self) -> None:
         """Release the underlying crawler's HTTP/browser resources."""
         self.crawler.close()

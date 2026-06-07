@@ -190,6 +190,10 @@ class WebCrawler:
         # compiled link-exclusion regex (configurable) and per-host rate limiter
         self._exclude_re = compile_exclude(self.cfg.exclude_patterns)
         self._rate = HostRateLimiter(self.http_cfg.per_host_delay, self._robots)
+        # In-flight call counter so a per-call release() never frees a session
+        # another concurrent call is still using (tool calls may overlap).
+        self._call_depth = 0
+        self._call_lock = threading.Lock()
 
     # -- public API -----------------------------------------------------------
 
@@ -1082,18 +1086,43 @@ class WebCrawler:
         slug = re.sub(r"[^a-z0-9]+", "-", (topic or "crawl").lower()).strip("-")[:32] or "crawl"
         return f"{slug}_{content_mode}_{ts}_{rand}"
 
-    def close(self) -> None:
-        self._http.close()
+    def release(self) -> None:
+        """Release transient HTTP resources (sockets/browser) of this crawler, its
+        robots client and any parallel-worker clients — **at the end of a call** —
+        while keeping the crawler reusable (its robots/rate caches live on and the
+        sessions are rebuilt lazily on the next call).
+        """
+        self._http.release()
         if self._robots is not None:
             try:
-                self._robots._http.close()
+                self._robots._http.release()
             except Exception:
-                log.debug("failed closing robots HTTP client", exc_info=True)
+                log.debug("failed releasing robots HTTP client", exc_info=True)
         for r in self._created_res:
             try:
-                r.http.close()
+                r.http.release()
             except Exception:
-                log.debug("failed closing a worker HTTP client", exc_info=True)
+                log.debug("failed releasing a worker HTTP client", exc_info=True)
+        self._created_res = []
+
+    # Full teardown is the same as a per-call release (sessions are lazy, so the
+    # client is simply reusable afterwards).
+    def close(self) -> None:
+        self.release()
+
+    def _begin_call(self) -> None:
+        """Mark a tool call as in flight (pairs with _end_call_release)."""
+        with self._call_lock:
+            self._call_depth += 1
+
+    def _end_call_release(self) -> None:
+        """End one in-flight call; release HTTP only when the LAST concurrent call
+        finishes, so a release never closes a session another call still uses."""
+        with self._call_lock:
+            self._call_depth = max(0, self._call_depth - 1)
+            if self._call_depth > 0:
+                return
+        self.release()
 
     def __enter__(self) -> "WebCrawler":
         return self

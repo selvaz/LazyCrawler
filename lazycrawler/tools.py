@@ -233,20 +233,27 @@ class CrawlerTools:
             f"search query={query!r} preset={preset or '-'} max_results={n} "
             f"content={content} links={links}"
         )
-        out = self._search.run(
-            query,
-            content=content,
-            links=links,
-            max_results=n,
-            session_id=sid,
-            overrides=overrides,
-            timelimit=timelimit,
-        )
-        pages = [_brief(r.model_dump()) for r in out["results"]]
-        self._say(f"search done: extracted={out['pages_found']} entries={len(pages)}")
-        return _dumps(
-            {"query": query, "found": out["pages_found"], "session_id": sid, "pages": pages}
-        )
+        self._search._begin_call()
+        try:
+            out = self._search.run(
+                query,
+                content=content,
+                links=links,
+                max_results=n,
+                session_id=sid,
+                overrides=overrides,
+                timelimit=timelimit,
+            )
+            pages = [_brief(r.model_dump()) for r in out["results"]]
+            self._say(f"search done: extracted={out['pages_found']} entries={len(pages)}")
+            return _dumps(
+                {"query": query, "found": out["pages_found"], "session_id": sid, "pages": pages}
+            )
+        finally:
+            # Free the call's HTTP sockets/browser at the end of the call — nothing
+            # lingers between tool calls (the shared DB cache stays open; sessions
+            # rebuild lazily; release waits for any concurrent call to finish).
+            self._search._end_call_release()
 
     def web_crawl(self, url: str, depth: Optional[int] = None, preset: str = "") -> str:
         """Crawl a specific URL (and optionally its links) and return clean content.
@@ -287,19 +294,26 @@ class CrawlerTools:
         )
         # Pass depth/overrides as per-call overrides instead of mutating shared
         # config, so concurrent tool calls never clobber each other.
-        results = self._crawler.crawl(
-            url,
-            content=content,
-            links=links,
-            topic=self.topic,
-            session_id=sid,
-            max_depth=eff_depth,
-            overrides=overrides,
-        )
-        pages = [_brief(r.model_dump()) for r in results]
-        found = sum(1 for r in results if r.status == "done")
-        self._say(f"crawl done: extracted={found} entries={len(pages)}")
-        return _dumps({"url": url, "found": found, "session_id": sid, "pages": pages})
+        self._crawler._begin_call()
+        try:
+            results = self._crawler.crawl(
+                url,
+                content=content,
+                links=links,
+                topic=self.topic,
+                session_id=sid,
+                max_depth=eff_depth,
+                overrides=overrides,
+            )
+            pages = [_brief(r.model_dump()) for r in results]
+            found = sum(1 for r in results if r.status == "done")
+            self._say(f"crawl done: extracted={found} entries={len(pages)}")
+            return _dumps({"url": url, "found": found, "session_id": sid, "pages": pages})
+        finally:
+            # Free the call's HTTP sockets/browser at the end of the call — nothing
+            # lingers between tool calls (the shared DB cache stays open; sessions
+            # rebuild lazily; release waits for any concurrent call to finish).
+            self._crawler._end_call_release()
 
     def list_presets(self) -> str:
         """List the named crawl presets you can pass as ``preset=`` to web_search / web_crawl.

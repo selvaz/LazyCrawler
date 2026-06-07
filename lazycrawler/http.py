@@ -410,13 +410,14 @@ class HTTPClient:
                 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             except Exception:
                 log.debug("could not disable urllib3 InsecureRequestWarning", exc_info=True)
-        self._session = self._make_session()
+        self._session: "Optional[requests.Session]" = None
         self._browser = None
         self._browser_finalizer: "Optional[weakref.finalize]" = None
-        # Automatic cleanup on GC / interpreter exit, so the agent/tool path never
-        # needs an explicit close(). close()/`with` stay available for
-        # deterministic release (e.g. a Playwright browser subprocess).
-        self._finalizer = weakref.finalize(self, _quiet_close, self._session)
+        self._finalizer: "Optional[weakref.finalize]" = None
+        # Build the session now (and arm GC/exit cleanup). After a release() the
+        # session is rebuilt lazily, so a tool call can free its sockets between
+        # calls and the same client is reused on the next call.
+        self._ensure_session()
 
     def _make_session(self) -> requests.Session:
         s = requests.Session()
@@ -433,6 +434,17 @@ class HTTPClient:
 
     @property
     def session(self) -> requests.Session:
+        return self._ensure_session()
+
+    def _ensure_session(self) -> requests.Session:
+        """Return the live session, lazily (re)building it after a release().
+
+        Arms the GC/exit finalizer on the (re)built session so automatic cleanup
+        keeps working across release/reuse cycles.
+        """
+        if self._session is None:
+            self._session = self._make_session()
+            self._finalizer = weakref.finalize(self, _quiet_close, self._session)
         return self._session
 
     def _extract_text(self, html: str) -> Optional[str]:
@@ -513,7 +525,7 @@ class HTTPClient:
         for attempt in range(1, cfg.max_retries + 1):
             try:
                 headers = extra_headers or None
-                resp = self._session.get(
+                resp = self.session.get(
                     url,
                     timeout=(cfg.timeout_connect, cfg.timeout_read),
                     allow_redirects=True,
@@ -572,7 +584,7 @@ class HTTPClient:
             log.info("SSRF guard: refusing to fetch asset %s", url)
             return None, "", None
         try:
-            resp = self._session.get(
+            resp = self.session.get(
                 url,
                 timeout=(cfg.timeout_connect, cfg.timeout_read),
                 allow_redirects=True,
@@ -592,7 +604,7 @@ class HTTPClient:
         the SSL/verify configuration. Used for robots.txt. None on any failure.
         """
         try:
-            resp = self._session.get(
+            resp = self.session.get(
                 url,
                 timeout=(self.cfg.timeout_connect, self.cfg.timeout_read),
                 allow_redirects=True,
@@ -605,7 +617,14 @@ class HTTPClient:
             log.debug("get_text failed for %s: %s", url, e)
             return None
 
-    def close(self) -> None:
+    def release(self) -> None:
+        """Free OS resources (sockets + browser) but stay reusable.
+
+        The session is rebuilt lazily on the next request, so a tool call can
+        release everything it opened **at the end of the call** without discarding
+        the client (config, robots/rate caches live elsewhere). The GC/exit
+        finalizer is disarmed here and re-armed when the session is rebuilt.
+        """
         if self._browser is not None:
             try:
                 self._browser.close()
@@ -615,9 +634,15 @@ class HTTPClient:
             if self._browser_finalizer is not None:
                 self._browser_finalizer.detach()
                 self._browser_finalizer = None
-        self._session.close()
-        # Disarm the GC/exit finalizer: the resources are already released.
-        self._finalizer.detach()
+        if self._session is not None:
+            if self._finalizer is not None:
+                self._finalizer.detach()
+            _quiet_close(self._session)
+            self._session = None
+
+    # close() is an alias: release() already frees every OS resource, and the
+    # client stays reusable (lazy session) — harmless after an explicit close().
+    close = release
 
     def __enter__(self) -> "HTTPClient":
         return self
