@@ -45,7 +45,6 @@ Usage
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import ipaddress
 import re
 import socket
@@ -53,7 +52,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 
 from ._log import log
@@ -64,7 +63,6 @@ from .http import (
     get_hostname,
     is_blacklisted_domain,
     normalize_url,
-    strip_tracking_params,
 )
 from .http import url_hash as _url_hash
 from .models import PageResult

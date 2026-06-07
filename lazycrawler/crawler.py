@@ -58,17 +58,13 @@ from .http import (
     compile_exclude,
     get_base_domain,
     is_blacklisted_domain,
+    is_blocked_address,  # noqa: F401  (re-exported: tests patch lazycrawler.crawler.is_blocked_address)
     load_blacklist_from_excel,
     normalize_url,
 )
 from .models import PageResult  # noqa: F401  (re-exported for backward compat)
 from .pdf import extract_pdf, extract_pdf_bytes  # noqa: F401  (re-exported: tests patch these)
 from .ratelimit import HostRateLimiter
-
-# Re-export is_blocked_address so existing test monkeypatches continue to work.
-# Tests patch lazycrawler.crawler.is_blocked_address; _pipeline.py accesses it
-# lazily via this module to pick up the patch.
-from .http import is_blocked_address  # noqa: F401
 
 Mode = Literal["pure", "ml", "smart"]
 Status = Literal["done", "fetch_error", "no_text", "llm_error", "blacklisted", "robots_blocked"]
