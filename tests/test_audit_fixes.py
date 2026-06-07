@@ -282,3 +282,102 @@ def test_async_preserves_provenance(monkeypatch):
     child = next((r for r in results if r.url.endswith("/child")), None)
     assert child is not None
     assert child.source_url and "parent.example" in child.source_url
+
+
+# =============================================================================
+# Deep-audit round 2 — F1/F2/F3/F4/F5/F6/F7
+# =============================================================================
+
+
+def test_normalize_url_strips_default_ports():
+    """F6: http://h:80 and http://h dedup to one key (likewise https/:443)."""
+    from lazycrawler.http import normalize_url, url_hash
+
+    assert normalize_url("http://Example.com:80/a/") == "http://example.com/a"
+    assert normalize_url("https://example.com:443/a") == "https://example.com/a"
+    assert url_hash("http://example.com:80/a") == url_hash("http://example.com/a")
+    assert url_hash("https://example.com:443/a") == url_hash("https://example.com/a")
+    # A non-default port is preserved.
+    assert normalize_url("http://example.com:8080/a") == "http://example.com:8080/a"
+
+
+def test_pdf_import_basexception_degrades(monkeypatch):
+    """F1: a native-dep panic (BaseException, not Exception) on importing the PDF
+    parsers must degrade gracefully, not crash extraction."""
+    import builtins
+
+    from lazycrawler import pdf as pdfmod
+
+    class FakePanic(BaseException):  # mimics pyo3_runtime.PanicException
+        pass
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "fitz" or name == "pypdf" or name.startswith("pypdf."):
+            raise FakePanic("simulated broken native dependency")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    # Must not raise despite BaseException being raised on import.
+    text, title, pub = pdfmod.extract_pdf_bytes(b"%PDF-1.4 not a real pdf")
+    assert text == ""
+    assert title == ""
+
+
+def test_parallel_worker_state_is_per_call(make_crawler, stub_fetch):
+    """F2: worker resources live on the run state, not the crawler instance."""
+    stub_fetch()
+    c = make_crawler(max_workers=4, max_depth=0)
+    # The per-worker bookkeeping no longer hangs off the shared instance.
+    assert not hasattr(c, "_created_res")
+    assert not hasattr(c, "_tls")
+    results = c.crawl("https://e.org/a", mode="pure")
+    assert results and results[0].status == "done"
+
+
+def test_content_dedup_copy_keys_to_new_url(tmp_db, make_crawler, stub_fetch):
+    """F5: a level-2 (content_hash) dedup copy is keyed to the NEW url and stays a
+    valid independent 'done' row (the copy path, incl. fresh crawled_at)."""
+    from lazycrawler.db import _parse_iso
+    from lazycrawler.http import url_hash
+
+    stub_fetch()  # identical DEFAULT_BODY for every URL -> same content_hash
+    c = make_crawler(db=tmp_db, max_depth=0)
+    c.crawl("https://a.org/x", mode="pure")
+    c.crawl("https://b.org/y", mode="pure")  # triggers content-hash dedup copy
+    row_b = tmp_db.get_page(url_hash("https://b.org/y"))
+    assert row_b is not None
+    assert row_b["status"] == "done"
+    assert row_b["url"] == "https://b.org/y"
+    assert _parse_iso(row_b["crawled_at"]) is not None
+
+
+@requires_aiohttp
+def test_async_http_ssl_param_and_min_text():
+    """F3 + F4: async client honors ca_bundle/verify_ssl and min_text_chars."""
+    import ssl
+
+    from lazycrawler.async_crawler import _AsyncHTTPClient
+
+    assert _AsyncHTTPClient(HTTPConfig(verify_ssl=False))._ssl_param() is False
+    assert _AsyncHTTPClient(HTTPConfig(verify_ssl=True))._ssl_param() is True
+
+    certifi = pytest.importorskip("certifi")
+    ctx = _AsyncHTTPClient(HTTPConfig(ca_bundle=certifi.where()))._ssl_param()
+    assert isinstance(ctx, ssl.SSLContext)
+
+    short_html = "<html><body><p>tiny</p></body></html>"
+    assert _AsyncHTTPClient(HTTPConfig(min_text_chars=10000))._extract(short_html) is None
+    long_cfg = _AsyncHTTPClient(HTTPConfig(min_text_chars=4))
+    assert long_cfg._extract("<html><body><p>enough words here</p></body></html>")
+
+
+@requires_aiohttp
+def test_async_render_js_is_disabled():
+    """F7: render_js is ignored (not fatal) on the async path."""
+    from lazycrawler.async_crawler import AsyncWebCrawler
+
+    crawler = AsyncWebCrawler(http_cfg=HTTPConfig(render_js=True, block_private_addresses=True))
+    assert crawler.http_cfg.render_js is False
+    assert crawler.http_cfg.block_private_addresses is True

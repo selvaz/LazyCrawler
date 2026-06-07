@@ -19,6 +19,7 @@ and are not mixed into the pipeline logic.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
 
 from ._log import log
@@ -850,12 +851,21 @@ class PagePipeline:
         uh: str,
         candidate_links: Optional[List[Tuple[str, str]]] = None,
     ) -> None:
+        # Same content (content_hash match) reached under a new URL. ``existing`` is
+        # a RAW pages row (find_by_content_hash returns dict(row), not _row_to_page),
+        # so its serialized columns (raw_text/clean_text/*_json) copy across verbatim
+        # — correct, since the content is identical. We only re-key it to the new
+        # URL, attach THIS page's freshly-found candidate links, and stamp a fresh
+        # crawl time so the new URL gets its own TTL window (not the original's
+        # remaining one — upsert_page only defaults crawled_at when absent).
         page = dict(existing)
-        page.update({"url": url, "url_hash": uh})
-        page.pop("entities", None)
-        page.pop("topics", None)
-        page.pop("data", None)
-        page.pop("links", None)
+        page.update(
+            {
+                "url": url,
+                "url_hash": uh,
+                "crawled_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         page["links_json"] = (
             json.dumps([[a, u] for (a, u) in candidate_links], ensure_ascii=False)
             if candidate_links

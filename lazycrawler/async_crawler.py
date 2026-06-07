@@ -213,9 +213,19 @@ class _AsyncHTTPClient:
         self.cfg = cfg
         self._session: Optional[aiohttp.ClientSession] = None
 
+    def _ssl_param(self):
+        """SSL setting for aiohttp honoring the same semantics as the sync client:
+        a ``ca_bundle`` path -> custom CA context; ``verify_ssl=False`` -> no
+        verification; otherwise default verification."""
+        if self.cfg.ca_bundle:
+            import ssl as _ssl
+
+            return _ssl.create_default_context(cafile=self.cfg.ca_bundle)
+        return True if self.cfg.verify_ssl else False
+
     async def _ensure(self) -> "aiohttp.ClientSession":
         if self._session is None or self._session.closed:
-            connector = aiohttp.TCPConnector(ssl=self.cfg.verify_ssl)
+            connector = aiohttp.TCPConnector(ssl=self._ssl_param())
             headers = {
                 "User-Agent": self.cfg.user_agent,
                 "Accept-Language": "en-US,en;q=0.9",
@@ -302,12 +312,13 @@ class _AsyncHTTPClient:
         log.warning("async: too many redirects (> %d) for %s", cfg.max_redirects, url)
         return _AsyncFetchResult(final_url=current)
 
-    @staticmethod
-    def _extract(html: str) -> Optional[str]:
+    def _extract(self, html: str) -> Optional[str]:
+        # Honor the configured min_text_chars threshold (parity with the sync client).
+        min_chars = self.cfg.min_text_chars
         if _TRAFILATURA_OK:
             try:
                 out = trafilatura.extract(html, include_comments=False, favor_recall=True)
-                if out and len(out.strip()) >= 50:
+                if out and len(out.strip()) >= min_chars:
                     return out.strip()
             except Exception:
                 pass
@@ -315,7 +326,7 @@ class _AsyncHTTPClient:
         s = re.sub(r"(?is)<(script|style).*?>.*?</\1>", "", html)
         s = re.sub(r"(?is)<.*?>", " ", s)
         s = re.sub(r"\s+", " ", s).strip()
-        return s if len(s) >= 50 else None
+        return s if len(s) >= min_chars else None
 
     async def get_robots(self, url: str) -> Optional[str]:
         try:
@@ -441,6 +452,13 @@ class AsyncWebCrawler:
         self.cfg = crawler_cfg or CrawlerConfig()
         # SSRF guard is ON by default in the async crawler (external URL use case).
         raw_http = http_cfg or HTTPConfig()
+        # The async engine never renders JS (it fetches over aiohttp), and the SSRF
+        # guard it forces on below is incompatible with render_js in the sync helper
+        # client used for artifact/PDF downloads. Disable render_js (with a warning)
+        # rather than letting that helper raise mid-crawl.
+        if raw_http.render_js:
+            log.warning("AsyncWebCrawler does not render JS - ignoring render_js=True")
+            raw_http = replace(raw_http, render_js=False)
         if not raw_http.block_private_addresses:
             self.http_cfg = replace(raw_http, block_private_addresses=True)
             log.debug("AsyncWebCrawler: block_private_addresses enabled by default")
@@ -469,10 +487,9 @@ class AsyncWebCrawler:
             rate=HostRateLimiter(self.http_cfg.per_host_delay),
             exclude_re=self._exclude_re,
         )
-        # Per-worker (thread-local) resources built lazily in executor threads.
-        self._tls = threading.local()
-        self._created_res: List[_Res] = []
-        self._res_lock = threading.Lock()
+        # Per-worker (thread-local) resources are built lazily in executor threads
+        # and live on the per-run ``_State`` (not the instance), so concurrent
+        # crawl() calls on one AsyncWebCrawler never clobber each other's resources.
 
     # -- public API -----------------------------------------------------------
 
@@ -543,9 +560,8 @@ class AsyncWebCrawler:
             cfg=eff_cfg,
             ml_cfg=eff_ml_cfg,
         )
-        # Fresh per-run worker pool / resources.
-        self._tls = threading.local()
-        self._created_res = []
+        # Fresh per-run worker resources (on the run state, not the instance).
+        st.tls = threading.local()
 
         if self.db is not None:
             st.session_id = session_id or WebCrawler._default_session_id(topic, content_mode)
@@ -581,7 +597,7 @@ class AsyncWebCrawler:
                 await self._crawl_bfs(st, seeds, executor, workers)
         finally:
             executor.shutdown(wait=True)
-            self._close_worker_res()
+            self._close_worker_res(st)
 
         log.info("async crawl done: %d pages collected", len(st.results))
         return st.results
@@ -733,21 +749,21 @@ class AsyncWebCrawler:
         return _Res(http, llm=None, ml=ml, link_selector=selector)
 
     def _worker_res(self, st) -> _Res:
-        r = getattr(self._tls, "res", None)
+        r = getattr(st.tls, "res", None)
         if r is None:
             r = self._build_res(st)
-            self._tls.res = r
-            with self._res_lock:
-                self._created_res.append(r)
+            st.tls.res = r
+            with st.res_lock:
+                st.created_res.append(r)
         return r
 
-    def _close_worker_res(self) -> None:
-        for r in self._created_res:
+    def _close_worker_res(self, st) -> None:
+        for r in st.created_res:
             try:
                 r.http.close()
             except Exception:
                 log.debug("failed closing a worker HTTP client", exc_info=True)
-        self._created_res = []
+        st.created_res = []
 
     # -- state helpers (synchronous: shared _State uses a threading lock) ------
 
@@ -780,8 +796,9 @@ class AsyncWebCrawler:
         )
 
     async def close(self) -> None:
+        # Per-run worker clients are closed in crawl_many's ``finally`` (they live on
+        # the run state); here we only need to close the shared aiohttp session.
         await self._http.close()
-        self._close_worker_res()
 
     async def __aenter__(self) -> "AsyncWebCrawler":
         return self
