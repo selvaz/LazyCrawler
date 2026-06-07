@@ -132,6 +132,7 @@ class _State:
     schema: Optional[type] = None
     max_depth: int = 0  # effective depth for this run (cfg or override)
     cfg: Any = None  # effective CrawlerConfig for this run (base or preset-overridden)
+    ml_cfg: Any = None  # effective MLConfig for this run (base or preset-overridden)
     link_selector: Any = None  # sequential link-selection agent
     visited: Set[str] = field(default_factory=set)
     results: List[PageResult] = field(default_factory=list)
@@ -183,8 +184,7 @@ class WebCrawler:
             )
 
         self._http = HTTPClient(self.http_cfg)  # shared client for sequential mode
-        self._llm = None  # lazy CrawlerLLM for sequential mode
-        self._ml = None  # lazy MLEngine for sequential mode
+        self._llm = None  # lazy CrawlerLLM for sequential mode (LLMConfig isn't preset-overridable)
         self._tls = threading.local()  # per-thread resources (parallel)
         self._created_res: List[_Res] = []  # thread-local resources to close
         # robots.txt gate (shared, thread-safe, own HTTP client honoring verify)
@@ -215,6 +215,7 @@ class WebCrawler:
         session_id: Optional[str] = None,
         max_depth: Optional[int] = None,
         overrides: Optional[dict] = None,
+        ml_overrides: Optional[dict] = None,
     ) -> List[PageResult]:
         """Crawl a single URL (and its links up to max_depth).
 
@@ -222,7 +223,8 @@ class WebCrawler:
         without mutating shared config (safe for concurrent calls). ``overrides``
         is an optional dict of ``CrawlerConfig`` fields (e.g. ``max_pages``,
         ``extract_artifacts``, ``emit_markdown``) applied for this call only — the
-        mechanism behind named presets (see ``lazycrawler.presets``).
+        mechanism behind named presets (see ``lazycrawler.presets``). ``ml_overrides``
+        does the same for ``MLConfig`` fields (e.g. ``min_link_score``) in ml mode.
         """
         return self.crawl_many(
             [url],
@@ -234,6 +236,7 @@ class WebCrawler:
             session_id=session_id,
             max_depth=max_depth,
             overrides=overrides,
+            ml_overrides=ml_overrides,
         )
 
     def crawl_many(
@@ -249,18 +252,22 @@ class WebCrawler:
         source: str = "crawl",
         max_depth: Optional[int] = None,
         overrides: Optional[dict] = None,
+        ml_overrides: Optional[dict] = None,
     ) -> List[PageResult]:
         """Crawl a list of URLs sharing state (visited set, page counter).
 
         ``max_depth`` overrides ``CrawlerConfig.max_depth`` for this call only.
         ``overrides`` applies a dict of ``CrawlerConfig`` fields for this call
-        only (per-run effective config), without mutating ``self.cfg`` — used by
-        the named presets. Resource pools (HTTP/LLM/robots/rate limiter) and
+        only (per-run effective config); ``ml_overrides`` does the same for
+        ``MLConfig`` fields (ml mode) — without mutating shared config, used by the
+        named presets. Resource pools (HTTP/LLM/robots/rate limiter) and
         ``max_workers`` are built at construction and are NOT overridable here.
         """
         content_mode: Mode = content or mode
         link_mode: Mode = links or mode
         eff_cfg = replace(self.cfg, **overrides) if overrides else self.cfg
+        base_ml = self.ml_cfg or MLConfig()
+        eff_ml_cfg = replace(base_ml, **ml_overrides) if ml_overrides else base_ml
         eff_depth = eff_cfg.max_depth if max_depth is None else max(0, int(max_depth))
         st = _State(
             content_mode=content_mode,
@@ -270,6 +277,7 @@ class WebCrawler:
             schema=schema,
             max_depth=eff_depth,
             cfg=eff_cfg,
+            ml_cfg=eff_ml_cfg,
         )
 
         if self.db is not None:
@@ -299,7 +307,7 @@ class WebCrawler:
 
         log.debug("seeds: %d URL(s), start_domain(s): %s", len(seeds), [d for _, d in seeds])
 
-        if link_mode == "ml" and (self.ml_cfg or MLConfig()).best_first:
+        if link_mode == "ml" and st.ml_cfg.best_first:
             # best-first frontier (score-ordered); works sequential and parallel
             self._crawl_ordered(st, seeds)
         elif self.cfg.max_workers > 1:
@@ -324,14 +332,19 @@ class WebCrawler:
     # -- resource construction ------------------------------------------------
 
     def _sequential_res(self, st: _State) -> _Res:
-        """Shared resources for sequential mode (reuses self._http / engines)."""
+        """Shared resources for sequential mode (reuses self._http; the ML engine
+        is built from the per-run MLConfig so preset ml_overrides apply, and shares
+        the process-cached embedder)."""
         if st.content_mode == "smart" or st.link_mode == "smart":
             self._ensure_llm()
+        ml = None
         if st.content_mode == "ml" or st.link_mode == "ml":
-            self._ensure_ml()
-        selector = self._build_link_selector(st, self._llm, self._ml)
+            from .ml import MLEngine
+
+            ml = MLEngine(st.ml_cfg)
+        selector = self._build_link_selector(st, self._llm, ml)
         st.link_selector = selector
-        return _Res(self._http, llm=self._llm, ml=self._ml, link_selector=selector)
+        return _Res(self._http, llm=self._llm, ml=ml, link_selector=selector)
 
     def _build_res(self, st: _State) -> _Res:
         """Fresh resources for a parallel/best-first worker (own HTTP client +
@@ -346,7 +359,7 @@ class WebCrawler:
         if st.content_mode == "ml" or st.link_mode == "ml":
             from .ml import MLEngine
 
-            ml = MLEngine(self.ml_cfg or MLConfig())
+            ml = MLEngine(st.ml_cfg)
         selector = self._build_link_selector(st, llm, ml)
         return _Res(http, llm=llm, ml=ml, link_selector=selector)
 
@@ -441,7 +454,7 @@ class WebCrawler:
         heap: List[Tuple[float, int, int, str, Optional[str], str]] = []
         for url, dom in seeds:
             heapq.heappush(heap, (-1e9, 0, next(counter), url, None, dom))  # seeds first
-        min_score = (self.ml_cfg or MLConfig()).min_link_score
+        min_score = st.ml_cfg.min_link_score  # per-run (preset ml_overrides apply)
         workers = max(1, self.cfg.max_workers)
         try:
             with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -1237,12 +1250,6 @@ class WebCrawler:
         )
 
     # -- helpers --------------------------------------------------------------
-
-    def _ensure_ml(self) -> None:
-        if self._ml is None:
-            from .ml import MLEngine
-
-            self._ml = MLEngine(self.ml_cfg or MLConfig())
 
     def _ensure_llm(self) -> None:
         if self._llm is None:

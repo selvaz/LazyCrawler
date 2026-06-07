@@ -375,6 +375,7 @@ class WebSearch:
         session_id: Optional[str] = None,
         max_results: Optional[int] = None,
         overrides: Optional[dict] = None,
+        ml_overrides: Optional[dict] = None,
         timelimit: Optional[str] = None,
     ) -> dict:
         """
@@ -423,6 +424,7 @@ class WebSearch:
                 session_id,
                 max_results,
                 overrides,
+                ml_overrides,
                 eff_timelimit,
             )
         elif engine == "tavily":
@@ -434,6 +436,7 @@ class WebSearch:
                 session_id,
                 max_results,
                 overrides,
+                ml_overrides,
                 eff_timelimit,
             )
         else:
@@ -445,6 +448,7 @@ class WebSearch:
                 session_id,
                 max_results,
                 overrides,
+                ml_overrides,
                 eff_timelimit,
             )
 
@@ -469,6 +473,7 @@ class WebSearch:
         session_id,
         max_results,
         overrides=None,
+        ml_overrides=None,
         timelimit=None,
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
@@ -495,6 +500,7 @@ class WebSearch:
             session_id=session_id,
             source="search:duckduckgo",
             overrides=overrides,
+            ml_overrides=ml_overrides,
         )
 
     # -- Brave Search: URLs -> crawl ------------------------------------------
@@ -508,6 +514,7 @@ class WebSearch:
         session_id,
         max_results,
         overrides=None,
+        ml_overrides=None,
         timelimit=None,
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
@@ -534,6 +541,7 @@ class WebSearch:
             session_id=session_id,
             source="search:brave",
             overrides=overrides,
+            ml_overrides=ml_overrides,
         )
 
     # -- Tavily Search: URLs -> crawl -----------------------------------------
@@ -547,6 +555,7 @@ class WebSearch:
         session_id,
         max_results,
         overrides=None,
+        ml_overrides=None,
         timelimit=None,
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
@@ -572,6 +581,7 @@ class WebSearch:
             session_id=session_id,
             source="search:tavily",
             overrides=overrides,
+            ml_overrides=ml_overrides,
         )
 
     # -- Gemini grounded (answer mode) ----------------------------------------

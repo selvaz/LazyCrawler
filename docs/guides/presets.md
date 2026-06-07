@@ -26,21 +26,28 @@ agent = Agent(engine=engine, tools=tools.as_tools())
 | `quick_lookup` | Fast factual check / grab a page's text | pure / pure | 0 | — | 5 | — | — | minimal |
 | `deep_research` | Thorough multi-source research | smart / smart | 1 | 25 | 20 | topic-driven | — | high |
 | `news_scan` | Current events / monitoring | smart / pure | 0 | — | 15 | sentiment + date | last week | medium |
-| `extract_data` | Pull tables/images off a page | pure / pure | 0 | — | 5 | artifacts (table/image/figure/chart) | — | low |
+| `extract_data` | Pull tables/images off a page | pure / pure | 0 | — | 5 | artifacts (table/image/chart) | — | low |
 | `rag_ingest` | Load pages into a RAG pipeline | pure / pure | 0 | — | 8 | Markdown + artifact anchors | — | low |
 | `research_ml` | Zero-token research (local ML) | ml / ml | 1 | 25 | 20 | best-first frontier | — | minimal |
 | `news_scan_ml` | Zero-token news monitoring | ml / pure | 0 | — | 15 | sentiment+entities (local) | last week | minimal |
-| `topic_explore_ml` | Map a topic via semantic frontier | pure / ml | 2 | 20 | 30 | best-first, deep | — | low |
+| `topic_explore_ml` | Map a topic via semantic frontier | pure / ml | 2 | 20 | 30 | best-first, deep · gate 0.35 | — | low |
+| `triage_ml` | Cheap relevance triage / shortlist sources | pure / ml | 1 | 10 | 10 | strong-only links · gate 0.5 | — | minimal |
 | `rag_ingest_ml` | RAG ingestion + local enrichment | ml / pure | 0 | — | 8 | Markdown anchors + ML summary/topics | — | low |
 | `hybrid_research` | Semantic frontier (free) + LLM content | smart / ml | 1 | 25 | 20 | LLM only on reached pages | — | medium |
 
 Notes:
 
-- Only `deep_research` follows links (`depth > 0`), so the **branching factor**
-  (`links/page`, i.e. `max_links_per_level`) only matters there — it is widened
-  to 25 vs the default 15. The other presets are single-page (`depth 0`).
-- A preset applies **per call** — the shared `CrawlerConfig` is never mutated, so
-  concurrent tool calls stay isolated.
+- The link-following presets (`depth > 0`) are `deep_research`, `research_ml`,
+  `topic_explore_ml`, `triage_ml` and `hybrid_research`; for them the **branching
+  factor** (`links/page`, i.e. `max_links_per_level`) matters. The single-page
+  presets (`depth 0`) ignore it.
+- **gate** is `min_link_score` — the `ml`-mode relevance threshold. A frontier
+  link scoring below it is pruned, so `topic_explore_ml` (0.35) explores broadly
+  while `triage_ml` (0.5) keeps only clearly on-topic links. It only applies to
+  `links="ml"` presets and is passed per call as an `MLConfig` override (the
+  shared config is untouched).
+- A preset applies **per call** — the shared `CrawlerConfig` / `MLConfig` is
+  never mutated, so concurrent tool calls stay isolated.
 - An explicit `depth` / `max_results` on the tool call **overrides** the preset.
 
 ---
@@ -54,10 +61,12 @@ Notes:
   "presets": [
     {"name": "quick_lookup", "intent": "Fast, cheap lookup…", "cost": "minimal",
      "content": "pure", "follows_links": false, "link_mode": "pure", "depth": 0,
-     "links_per_page": null, "artifacts": false, "markdown": false, "recency": null},
-    {"name": "deep_research", "intent": "Thorough multi-source research…", "cost": "high",
-     "content": "smart", "follows_links": true, "link_mode": "smart", "depth": 1,
-     "links_per_page": 25, "artifacts": false, "markdown": false, "recency": null}
+     "links_per_page": null, "min_link_score": null, "artifacts": false,
+     "markdown": false, "recency": null},
+    {"name": "topic_explore_ml", "intent": "Map a topic via semantic frontier…",
+     "cost": "low", "content": "pure", "follows_links": true, "link_mode": "ml",
+     "depth": 2, "links_per_page": 20, "min_link_score": 0.35, "artifacts": false,
+     "markdown": false, "recency": null}
   ]
 }
 ```

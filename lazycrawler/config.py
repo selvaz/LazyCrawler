@@ -256,7 +256,7 @@ class HTTPConfig:
         blocked), bounded by ``max_redirects``.
     """
 
-    user_agent: str = "LazyCrawler/0.13 (+https://github.com/selvaz/lazycrawler)"
+    user_agent: str = "LazyCrawler/0.14 (+https://github.com/selvaz/lazycrawler)"
     timeout_connect: int = 5
     timeout_read: int = 25
     max_retries: int = 4

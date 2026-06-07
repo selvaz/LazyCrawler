@@ -24,6 +24,7 @@ def test_default_catalog_has_expected_presets():
         "research_ml",
         "news_scan_ml",
         "topic_explore_ml",
+        "triage_ml",
         "rag_ingest_ml",
         "hybrid_research",
     }
@@ -36,6 +37,13 @@ def test_ml_presets_use_ml_knobs():
     assert DEFAULT_PRESETS["rag_ingest_ml"].content == "ml"
     h = DEFAULT_PRESETS["hybrid_research"]
     assert h.content == "smart" and h.links == "ml"  # killer combo
+
+
+def test_ml_overrides_only_when_min_link_score_set():
+    # presets that set the gate expose it via ml_overrides(); others don't
+    assert DEFAULT_PRESETS["topic_explore_ml"].ml_overrides() == {"min_link_score": 0.35}
+    assert DEFAULT_PRESETS["triage_ml"].ml_overrides() == {"min_link_score": 0.5}
+    assert DEFAULT_PRESETS["research_ml"].ml_overrides() == {}
 
 
 def test_crawl_overrides_only_exposes_config_fields():
