@@ -21,6 +21,7 @@ def test_default_catalog_has_expected_presets():
         "news_scan",
         "extract_data",
         "rag_ingest",
+        "research_ml",
     }
 
 

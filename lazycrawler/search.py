@@ -41,7 +41,7 @@ from dataclasses import replace
 from typing import List, Optional
 
 from ._log import log
-from .config import CrawlerConfig, HTTPConfig, LLMConfig, SearchConfig
+from .config import CrawlerConfig, HTTPConfig, LLMConfig, MLConfig, SearchConfig
 from .crawler import PageResult, WebCrawler
 from .db import CrawlerDB
 from .http import is_blacklisted_domain, is_excluded_url, normalize_url, url_hash
@@ -325,6 +325,7 @@ class WebSearch:
         http_cfg: Optional[HTTPConfig] = None,
         llm_cfg: Optional[LLMConfig] = None,
         db: Optional[CrawlerDB] = None,
+        ml_cfg: Optional[MLConfig] = None,
     ):
         self.search_cfg = search_cfg or SearchConfig()
         self.llm_cfg = llm_cfg
@@ -337,7 +338,9 @@ class WebSearch:
             max_depth=self.search_cfg.crawl_depth,
             same_domain_only=self.search_cfg.same_domain_only,
         )
-        self.crawler = WebCrawler(crawler_cfg=base, http_cfg=http_cfg, llm_cfg=llm_cfg, db=db)
+        self.crawler = WebCrawler(
+            crawler_cfg=base, http_cfg=http_cfg, llm_cfg=llm_cfg, db=db, ml_cfg=ml_cfg
+        )
 
     def release(self) -> None:
         """Release the underlying crawler's transient HTTP resources (per-call)."""

@@ -115,3 +115,76 @@ def test_content_ml_produces_ml_pages(stub_fetch):
         results = c.crawl(U, content="ml")
     assert results[0].mode == "ml"
     assert results[0].text  # clean text filled (no LLM, no tokens)
+
+
+# -- Phase 2: local content extraction (no LLM) ----------------------------
+
+_ARTICLE = (
+    "OpenAI and Google announced new battery research in California. "
+    "The lithium breakthrough improves energy density significantly. "
+    "Researchers said the technology could reshape electric vehicles. "
+    "Analysts welcomed the news as a major step forward. "
+    "The companies plan to scale production next year."
+)
+
+
+def test_keyphrases_fallback_is_topic_relevant():
+    from lazycrawler.ml import keyphrases
+
+    kp = keyphrases(_ARTICLE, topk=6)
+    assert isinstance(kp, list) and kp
+    # statistical fallback should surface salient content words
+    assert any(w in " ".join(kp).lower() for w in ("battery", "lithium", "research", "energy"))
+
+
+def test_summarize_lead_without_embedder():
+    from lazycrawler.ml import summarize
+
+    s = summarize(_ARTICLE, embedder=None, n_sentences=2)
+    assert s and s.startswith("OpenAI and Google")  # lead sentences
+
+
+def test_regex_entities_extracts_proper_nouns():
+    from lazycrawler.ml import _regex_entities
+
+    ents = _regex_entities(_ARTICLE)
+    joined = " ".join(ents)
+    assert "OpenAI" in joined or "Google" in joined or "California" in joined
+
+
+def test_sentiment_returns_valid_label():
+    from lazycrawler.ml import sentiment
+
+    assert sentiment(_ARTICLE) in ("negative", "neutral", "positive")
+
+
+def test_extract_content_fills_structured_fields():
+    from lazycrawler.config import MLConfig
+    from lazycrawler.ml import MLEngine
+
+    eng = MLEngine(MLConfig(), embedder=None)
+    ex = eng.extract_content("https://e.org/a", _ARTICLE)
+    assert ex.clean_text == _ARTICLE
+    assert isinstance(ex.topics, list) and ex.topics
+    assert isinstance(ex.entities, list)
+    assert ex.sentiment in ("negative", "neutral", "positive")
+    assert isinstance(ex.summary, str) and ex.summary
+
+
+def test_content_ml_end_to_end_fields(stub_fetch):
+    stub_fetch(content_map={U: _ARTICLE})
+    with WebCrawler(
+        CrawlerConfig(max_depth=0, respect_robots=False),
+        HTTPConfig(verify_ssl=False, link_delay=0),
+    ) as c:
+        r = c.crawl(U, content="ml")[0]
+    assert r.mode == "ml"
+    assert r.topics  # keyphrases filled, no LLM
+    assert r.sentiment in ("negative", "neutral", "positive")
+
+
+def test_research_ml_preset_present():
+    from lazycrawler import DEFAULT_PRESETS
+
+    p = DEFAULT_PRESETS["research_ml"]
+    assert p.content == "ml" and p.links == "ml"

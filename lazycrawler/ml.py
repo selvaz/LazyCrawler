@@ -170,6 +170,193 @@ class _LinkScorer:
 
 
 # =============================================================================
+# LOCAL CONTENT EXTRACTION  (no LLM, no tokens)
+#   summary  -> TextRank over static sentence embeddings (reuses the embedder)
+#   topics   -> YAKE keyphrases (statistical)            [yake]   -> freq fallback
+#   entities -> spaCy NER                                [spacy]  -> regex fallback
+#   sentiment-> VADER (lexicon + rules)                  [nlp]    -> "neutral"
+# All optional deps are import-guarded; everything degrades gracefully.
+# =============================================================================
+
+_STOP = {
+    "the",
+    "and",
+    "for",
+    "are",
+    "but",
+    "not",
+    "you",
+    "all",
+    "any",
+    "can",
+    "had",
+    "her",
+    "was",
+    "one",
+    "our",
+    "out",
+    "has",
+    "him",
+    "his",
+    "how",
+    "its",
+    "may",
+    "new",
+    "now",
+    "old",
+    "see",
+    "two",
+    "way",
+    "who",
+    "did",
+    "get",
+    "use",
+    "this",
+    "that",
+    "with",
+    "from",
+    "they",
+    "have",
+    "more",
+    "will",
+    "your",
+    "than",
+    "then",
+    "them",
+    "been",
+    "what",
+    "when",
+    "which",
+    "their",
+    "would",
+    "there",
+    "could",
+    "other",
+    "about",
+    "into",
+    "also",
+    "such",
+    "only",
+    "some",
+    "over",
+    "most",
+    "these",
+    "those",
+    "said",
+}
+
+_NLP = None
+_NLP_FAILED = False
+_NLP_LOCK = threading.Lock()
+_VADER = None
+_VADER_FAILED = False
+_VADER_LOCK = threading.Lock()
+
+
+def _split_sentences(text: str) -> List[str]:
+    parts = re.split(r"(?<=[.!?])\s+", (text or "").strip())
+    return [p.strip() for p in parts if len(p.strip()) > 20]
+
+
+def summarize(text: str, embedder, n_sentences: int) -> str:
+    """Extractive TextRank summary over static sentence embeddings (or lead
+    sentences when no embedder is available). Returns the top sentences in their
+    original order."""
+    sents = _split_sentences(text)
+    if len(sents) <= n_sentences:
+        return " ".join(sents)[:1500]
+    if embedder is None:
+        return " ".join(sents[:n_sentences])[:1500]
+    try:
+        import numpy as np
+
+        cap = sents[:200]
+        v = embedder.encode(cap)  # L2-normalized
+        sim = np.clip(v @ v.T, 0.0, None)
+        np.fill_diagonal(sim, 0.0)
+        row = sim.sum(axis=1, keepdims=True)
+        row[row == 0] = 1.0
+        m = sim / row
+        n_s = m.shape[0]
+        r = np.ones(n_s) / n_s
+        for _ in range(30):  # power-iteration PageRank
+            r = 0.15 / n_s + 0.85 * (m.T @ r)
+        top = sorted(np.argsort(r)[::-1][:n_sentences])
+        return " ".join(cap[i] for i in top)[:1500]
+    except Exception:
+        log.debug("ml: TextRank summary failed - lead sentences", exc_info=True)
+        return " ".join(sents[:n_sentences])[:1500]
+
+
+def keyphrases(text: str, topk: int) -> List[str]:
+    try:
+        import yake
+
+        kw = yake.KeywordExtractor(n=2, top=topk, dedupLim=0.7)
+        return [k for k, _ in kw.extract_keywords((text or "")[:20000])]
+    except Exception:
+        from collections import Counter
+
+        words = [w for w in _WORD.findall((text or "").lower()) if len(w) > 3 and w not in _STOP]
+        return [w for w, _ in Counter(words).most_common(topk)]
+
+
+def entities(text: str) -> List[str]:
+    global _NLP, _NLP_FAILED
+    if _NLP is None and not _NLP_FAILED:
+        with _NLP_LOCK:
+            if _NLP is None and not _NLP_FAILED:
+                try:
+                    import spacy
+
+                    _NLP = spacy.load("en_core_web_sm", disable=["lemmatizer", "tagger", "parser"])
+                except Exception:
+                    _NLP_FAILED = True
+                    log.debug("spaCy NER unavailable - regex entity fallback", exc_info=True)
+    if _NLP is not None:
+        try:
+            doc = _NLP((text or "")[:100000])
+            keep = {"PERSON", "ORG", "GPE", "LOC", "PRODUCT", "EVENT", "FAC", "NORP", "WORK_OF_ART"}
+            out: List[str] = []
+            for e in doc.ents:
+                if e.label_ in keep and e.text not in out:
+                    out.append(e.text)
+            return out[:30]
+        except Exception:
+            log.debug("spaCy NER errored - regex fallback", exc_info=True)
+    return _regex_entities(text)
+
+
+def _regex_entities(text: str) -> List[str]:
+    from collections import Counter
+
+    cands = re.findall(r"\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){0,3})\b", text or "")
+    counts = Counter(c for c in cands if c.lower() not in _STOP)
+    return [w for w, _ in counts.most_common(20)]
+
+
+def sentiment(text: str) -> str:
+    global _VADER, _VADER_FAILED
+    if _VADER is None and not _VADER_FAILED:
+        with _VADER_LOCK:
+            if _VADER is None and not _VADER_FAILED:
+                try:
+                    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+                    _VADER = SentimentIntensityAnalyzer()
+                except Exception:
+                    _VADER_FAILED = True
+                    log.debug("VADER unavailable - sentiment defaults to neutral", exc_info=True)
+    if _VADER is None:
+        return "neutral"
+    try:
+        c = _VADER.polarity_scores((text or "")[:10000])["compound"]
+        return "positive" if c >= 0.05 else "negative" if c <= -0.05 else "neutral"
+    except Exception:
+        return "neutral"
+
+
+# =============================================================================
 # ML ENGINE  (mirrors CrawlerLLM's interface; no LLM, no tokens)
 # =============================================================================
 
@@ -194,10 +381,19 @@ class MLEngine:
     ) -> List[Tuple[float, str, str]]:
         return selector.rank(candidates, excerpt)[:max_links]
 
-    # -- content (Phase 2 fills summary/entities/topics/sentiment) ------------
+    # -- content (no LLM, no tokens) ------------------------------------------
 
     def extract_content(self, url: str, text: str, schema=None):
-        """Return a PageExtract. Phase 1: clean text only (no LLM, no tokens)."""
+        """Structured extraction with local ML / statistics:
+        TextRank summary, YAKE keyphrases, spaCy/regex entities, VADER sentiment.
+        Returns a ``PageExtract`` (same shape as the smart engine)."""
         from .llm import PageExtract  # local import keeps pure-mode free of this
 
-        return PageExtract(clean_text=text)
+        cfg = self.cfg
+        return PageExtract(
+            clean_text=text,
+            summary=summarize(text, self.embedder, cfg.summary_sentences),
+            topics=keyphrases(text, cfg.keyphrase_topk),
+            entities=entities(text) if cfg.use_spacy_ner else [],
+            sentiment=sentiment(text) if cfg.sentiment else "neutral",
+        )

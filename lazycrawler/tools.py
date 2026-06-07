@@ -40,7 +40,7 @@ import json
 import uuid
 from typing import Any, Dict, Optional
 
-from .config import CrawlerConfig, HTTPConfig, LLMConfig
+from .config import CrawlerConfig, HTTPConfig, LLMConfig, MLConfig
 from .crawler import WebCrawler
 from .db import CrawlerDB
 from .http import url_hash
@@ -130,6 +130,7 @@ class CrawlerTools:
         links: str = "pure",
         topic: str = "",
         presets: Optional[Dict[str, CrawlPreset]] = None,
+        ml_cfg: Optional[MLConfig] = None,
         verbose: bool = False,
     ):
         self.db = db
@@ -142,8 +143,10 @@ class CrawlerTools:
         # for the tool path (callers wanting internal hosts can pass an explicit
         # HTTPConfig(block_private_addresses=False)).
         http_cfg = self._with_ssrf_guard(http_cfg)
-        self._crawler = WebCrawler(crawler_cfg, http_cfg, llm_cfg, db)
-        self._search = WebSearch(crawler_cfg=crawler_cfg, http_cfg=http_cfg, llm_cfg=llm_cfg, db=db)
+        self._crawler = WebCrawler(crawler_cfg, http_cfg, llm_cfg, db, ml_cfg=ml_cfg)
+        self._search = WebSearch(
+            crawler_cfg=crawler_cfg, http_cfg=http_cfg, llm_cfg=llm_cfg, db=db, ml_cfg=ml_cfg
+        )
 
     @staticmethod
     def _with_ssrf_guard(http_cfg: Optional[HTTPConfig]) -> HTTPConfig:
