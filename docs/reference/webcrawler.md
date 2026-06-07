@@ -44,6 +44,8 @@ def crawl(
     topic: str = "",
     schema: type | None = None,
     session_id: str | None = None,
+    max_depth: int | None = None,
+    overrides: dict | None = None,
 ) -> list[PageResult]
 ```
 
@@ -58,6 +60,8 @@ Crawl a single seed URL recursively.
 | `topic` | `str` | `""` | Topic description for smart link selection and LLM context |
 | `schema` | Pydantic `BaseModel` subclass or `None` | `None` | Custom output schema (smart mode only). Result goes into `PageResult.data` |
 | `session_id` | `str \| None` | `None` | DB session identifier. Auto-generated if `None` and `db` is set |
+| `max_depth` | `int \| None` | `None` | Override `CrawlerConfig.max_depth` **for this call only** (no shared-config mutation) |
+| `overrides` | `dict \| None` | `None` | Per-call `CrawlerConfig` field overrides (e.g. `{"max_pages": 3, "extract_artifacts": True}`) applied to this call only — the mechanism behind [presets](../guides/presets.md) |
 
 **Returns**: `list[PageResult]` — one entry per page visited (including errors).
 
@@ -78,6 +82,8 @@ def crawl_many(
     schema: type | None = None,
     session_id: str | None = None,
     source: str = "crawl",
+    max_depth: int | None = None,
+    overrides: dict | None = None,
 ) -> list[PageResult]
 ```
 
@@ -88,17 +94,26 @@ Crawl multiple seed URLs, collecting results from all of them into a single list
 | `urls` | `list[str]` | List of seed URLs |
 | `source` | `str` | Label stored in the DB session (default `"crawl"`) |
 
-All other parameters are identical to `crawl()`.
+All other parameters are identical to `crawl()` (including `max_depth` and `overrides`).
 
 ---
 
-## close()
+## close() / release()
 
 ```python
-def close() -> None
+def close() -> None      # full teardown (alias of release)
+def release() -> None    # free HTTP sockets + browser, stay reusable
 ```
 
-Release HTTP client connections and Playwright browser (if used). Always call this when done, or use a `try/finally` block.
+Both free the crawler's HTTP client connections, robots client and any parallel
+worker clients, plus the Playwright browser (if used). `release()` keeps the
+crawler **reusable** — the HTTP session is rebuilt lazily on the next call — and
+is what the agent tools call at the end of every `web_search` / `web_crawl`.
+
+Calling `close()` is **optional**: `HTTPClient` and `CrawlerDB` arm a
+`weakref.finalize`, so resources are freed automatically on garbage-collection or
+at interpreter exit. Use `close()` / `with` for deterministic teardown; a second
+`close()` is a safe no-op. See [Agent Integration → Resource cleanup](../guides/agent-tools.md#resource-cleanup).
 
 ---
 

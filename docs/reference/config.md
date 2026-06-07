@@ -31,8 +31,8 @@ Controls traversal depth, page limits, domain filtering, and blacklists.
 |---|---|---|---|
 | `max_depth` | `int` | `2` | Maximum link-hop depth from the seed URL |
 | `max_pages` | `int` | `20` | Hard upper limit on total pages collected |
-| `max_links_per_level` | `int` | `15` | Max links to follow per page per depth level |
-| `max_candidate_links` | `int` | `300` | Max raw link candidates extracted before selection |
+| `max_links_per_level` | `int` | `15` | Branching factor: links to follow **per page** (despite the name, it is enforced once per page, not per depth level) |
+| `max_candidate_links` | `int` | `300` | Max raw link candidates extracted per page before selection (the pool `max_links_per_level` is chosen from) |
 | `same_domain_only` | `bool` | `True` | Restrict crawl to the same domain as the seed |
 | `max_workers` | `int` | `1` | Thread pool size. `1` = sequential DFS, `N>1` = parallel BFS |
 | `respect_robots` | `bool` | `True` | Honour `robots.txt` (including `Crawl-delay`) |
@@ -52,6 +52,12 @@ Controls traversal depth, page limits, domain filtering, and blacklists.
 | `blacklist_excel_sheet` | `str \| None` | `None` | Sheet name (first sheet if None) |
 | `blacklist_excel_column` | `str \| None` | `None` | Column name/letter (first column if None) |
 
+!!! tip "Per-call overrides & presets"
+    Most of these fields can be overridden for a **single call** via
+    `WebCrawler.crawl(..., overrides={...})` without mutating the shared config —
+    the mechanism behind named **presets** (`CrawlPreset`). See the
+    [Presets guide](../guides/presets.md).
+
 ---
 
 ## HTTPConfig
@@ -60,7 +66,7 @@ Controls HTTP client behaviour, timeouts, SSL, polite delays, and JavaScript ren
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `user_agent` | `str` | `"LazyCrawler/0.8 (+...)"` | HTTP User-Agent header (dedicated, not a spoofed browser) |
+| `user_agent` | `str` | `"LazyCrawler/0.9 (+...)"` | HTTP User-Agent header (dedicated, not a spoofed browser) |
 | `timeout_connect` | `int` | `5` | TCP connection timeout (seconds) |
 | `timeout_read` | `int` | `25` | Read timeout (seconds) |
 | `max_retries` | `int` | `4` | Max retry attempts on transient failures |
@@ -86,6 +92,7 @@ Controls LLM model selection and request parameters for smart mode.
 |---|---|---|---|
 | `model` | `str` | `"gpt-4o-mini"` | Model string — provider inferred by LazyBridge |
 | `large_doc_model` | `str` | `""` | Model for large-doc map-reduce. `""` = use `model` |
+| `vision_model` | `str` | `""` | Vision model for artifact enrichment (image caption / chart data). `""` = use `model` |
 | `temperature` | `float` | `0.0` | LLM sampling temperature |
 | `request_timeout` | `float` | `120.0` | Max seconds per LLM request |
 | `max_links_excerpt_chars` | `int` | `3_000` | Page excerpt chars sent to LLM for link selection |

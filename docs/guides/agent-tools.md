@@ -9,20 +9,25 @@
 ```
 Agent (LLM)
     │
+    ├─ list_presets()             ← discover named intents (quick_lookup, deep_research, …)
+    │
     ├─ search_cached("query")     ← check cache first (free, instant)
     │
-    ├─ web_search("query")        ← DuckDuckGo search (if cache miss)
+    ├─ web_search("query", preset=…)   ← search the web (if cache miss)
     │
-    ├─ web_crawl("url", depth=1)  ← crawl a page and its links
+    ├─ web_crawl("url", preset=…)      ← crawl a page (and its links)
     │
-    ├─ get_page("url")            ← fetch a single page
+    ├─ get_page("url")            ← fetch a single page's full text
+    │
+    ├─ get_artifacts("url")       ← tables/images/charts extracted from a page
     │
     └─ get_session_pages("sid")   ← list pages from a previous search/crawl run
 ```
 
-`web_search` / `web_crawl` return a `session_id`; pass it to `get_session_pages`
-to list everything reached in that run. Per-page results also carry
-`source_url`, `from_cache`, and `depth`.
+`web_search` / `web_crawl` accept a `preset=` selecting a ready-made
+configuration by intent — see the [Presets guide](presets.md). They return a
+`session_id`; pass it to `get_session_pages` to list everything reached in that
+run. Per-page results also carry `source_url`, `from_cache`, and `depth`.
 
 **Cache-first strategy**: always check `search_cached` before `web_search`. This avoids redundant HTTP requests when the agent asks similar questions in the same session.
 
@@ -53,10 +58,39 @@ agent = Agent(engine=engine, tools=crawler_tools.as_tools())
 
 response = agent("What is LazyCrawler and how does it work?")
 print(response.text())
-
-crawler_tools.close()
-db.close()
 ```
+
+!!! tip "No `close()` in the agent path"
+    You don't call `close()` here. Each `web_search` / `web_crawl` releases its
+    HTTP sockets at the end of the call, and `HTTPClient` / `CrawlerDB` free any
+    remainder on GC / interpreter exit. Lifecycle methods are not exposed as
+    tools, so the LLM can never call them. See
+    [Resource cleanup](#resource-cleanup). `close()` / `with` remain available
+    for deterministic teardown.
+
+---
+
+## Presets (pick a config by intent)
+
+Instead of exposing raw knobs, let the agent select a **named preset**. It calls
+`list_presets()` to discover them, then passes `preset="…"` to `web_search` /
+`web_crawl`:
+
+```python
+tools.web_search("EU AI Act enforcement 2026", preset="news_scan")
+tools.web_crawl("https://example.com/report", preset="extract_data")
+```
+
+| Preset | Intent | Cost |
+|--------|--------|------|
+| `quick_lookup` | fast factual check, single page, no LLM | minimal |
+| `deep_research` | smart extraction + LLM link-following, depth 1 | high |
+| `news_scan` | recent news, sentiment + date, last week | medium |
+| `extract_data` | tables/images as artifacts | low |
+| `rag_ingest` | Markdown + artifact anchors for RAG | low |
+
+Extend or override the catalog with `CrawlerTools(presets={...})`. Full details
+in the [Presets guide](presets.md).
 
 ---
 
@@ -109,9 +143,28 @@ for q in questions:
     response = agent(q)
     print(response.text())
 
-crawler_tools.close()
-db.close()
+# No close() needed — HTTP is released per tool call; the DB frees on GC/exit.
+# (db.close() remains available if you want a deterministic WAL checkpoint.)
 ```
+
+---
+
+## Resource cleanup
+
+Cleanup is automatic and you never call `close()` in the agent path:
+
+- **Per tool call** — each `web_search` / `web_crawl` releases its HTTP sockets
+  (and browser) when the call returns; the call is a self-contained transaction.
+  The shared **DB cache stays open**, and the HTTP session is rebuilt lazily on
+  the next call. Release is reference-counted, so it never closes a session a
+  concurrent call is still using.
+- **Backstop** — `HTTPClient` and `CrawlerDB` arm a `weakref.finalize`, so
+  anything left is freed on garbage-collection or at interpreter exit.
+- **Not a tool** — `close()` is not exposed via `as_tools()`, so the LLM can only
+  call `web_search` / `web_crawl` / `get_page` / ….
+
+`close()` / `with` stay available for deterministic teardown (idempotent — a
+second `close()` is a safe no-op).
 
 ---
 
@@ -119,7 +172,7 @@ db.close()
 
 All tools return JSON strings. The agent sees structured data:
 
-### web_search / web_crawl / web_crawl
+### web_search / web_crawl
 
 ```json
 [
@@ -202,8 +255,9 @@ response2 = agent("What are the latest quantum computing milestones?")
 
 ## Recommendations
 
-- Keep `depth` small (0 or 1) in `web_crawl` calls — deep crawls inside an agent loop consume many tokens
+- Prefer **presets** over raw knobs — let the model call `list_presets()` and pick an intent (`quick_lookup` for a fact, `deep_research` for depth); they bundle cost-appropriate defaults
+- Keep `depth` small (0 or 1) when you pass it explicitly — deep crawls inside an agent loop consume many tokens
 - Use `search_cached` before `web_search` — it's instant and free
 - Use a `CrawlerDB` with a long TTL (`ttl_hours=72` or more) — agents often ask similar questions
-- Set `max_pages=5` in `CrawlerConfig` to bound each `web_crawl` call
 - Set `topic=` in `CrawlerTools` to improve link selection relevance across all tool calls
+- Don't call `close()` — cleanup is automatic (per-call HTTP release + GC/exit backstop)

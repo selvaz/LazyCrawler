@@ -19,6 +19,7 @@ CrawlerTools(
     content: Literal["pure", "smart"] = "smart",
     links: Literal["pure", "smart"] = "pure",
     topic: str = "",
+    presets: dict[str, CrawlPreset] | None = None,
     verbose: bool = False,
 )
 ```
@@ -32,7 +33,14 @@ CrawlerTools(
 | `content` | `"pure"` or `"smart"` | `"smart"` | Content extraction mode for `web_crawl` and `get_page` |
 | `links` | `"pure"` or `"smart"` | `"pure"` | Link selection mode for `web_crawl` |
 | `topic` | `str` | `""` | Topic passed to the crawler for context |
+| `presets` | `dict[str, CrawlPreset] \| None` | `None` | Extra/override named presets merged on top of the built-in catalog (same key = override). See the [Presets guide](../guides/presets.md) |
 | `verbose` | `bool` | `False` | Print tool call details to stdout |
+
+!!! note "Cleanup is automatic"
+    Each `web_search` / `web_crawl` releases its HTTP sockets at the end of the
+    call, and resources are freed on GC / interpreter exit as a backstop. You
+    don't call `close()` in the agent path, and `close` is never exposed as a
+    tool. `close()` / `with` remain for deterministic teardown.
 
 ---
 
@@ -42,7 +50,10 @@ CrawlerTools(
 def as_tools() -> list
 ```
 
-Returns a list of LazyBridge `Tool` objects that can be passed to an `Agent`:
+Returns the crawler operations as LazyBridge `Tool` objects for an `Agent`.
+Exposed tools: `list_presets`, `web_search`, `web_crawl`, `get_page`, and — when
+a `db` is set — `search_cached`, `get_session_pages`, `get_artifacts`. Lifecycle
+methods (`close`) are **not** exposed.
 
 ```python
 tools = CrawlerTools(db=db).as_tools()
