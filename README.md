@@ -196,6 +196,28 @@ crawler_tools = CrawlerTools(
 
 ---
 
+## ML mode (smart, without the LLM)
+
+`ml` is a **third value** for the knobs, next to `pure` and `smart` — intelligent
+crawling with **local machine learning, zero LLM tokens**:
+
+```python
+crawler = WebCrawler(CrawlerConfig(max_depth=2, max_pages=30),
+                     ml_cfg=MLConfig(model="minishlab/potion-retrieval-32M"))
+results = crawler.crawl("https://example.com/", links="ml", topic="solid-state batteries")
+```
+
+`links="ml"` scores every candidate link against the topic (semantic via
+[Model2Vec](https://github.com/MinishLab/model2vec) static embeddings + lexical +
+structural) and crawls **best-first** — a score-ordered frontier that works
+sequential **and** parallel. Needs `pip install lazycrawler[ml]`; without it,
+scoring degrades to lexical+structural (still topic-aware). The killer pattern:
+`links="ml"` for breadth + `content="smart"` only on the winners. See the
+[ML mode guide](https://github.com/selvaz/lazycrawler/blob/main/docs/guides/ml-mode.md).
+
+> Phase 1 ships the link side; `content="ml"` (local summary/entities/topics/
+> sentiment, no LLM) lands in a later phase.
+
 ## Switching LLM provider/model
 
 Every LLM call goes through LazyBridge. To switch provider just change the

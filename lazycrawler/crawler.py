@@ -34,6 +34,8 @@ Output:
 
 from __future__ import annotations
 
+import heapq
+import itertools
 import json
 import re
 import threading
@@ -54,7 +56,7 @@ from .artifacts import (
     extract_html_artifacts_anchored,
     sniff_image,
 )
-from .config import CrawlerConfig, HTTPConfig, LLMConfig
+from .config import CrawlerConfig, HTTPConfig, LLMConfig, MLConfig
 from .db import CrawlerDB
 from .http import (
     HTTPClient,
@@ -82,7 +84,7 @@ from .text import (
     preprocess_text,
 )
 
-Mode = Literal["pure", "smart"]
+Mode = Literal["pure", "ml", "smart"]
 Status = Literal["done", "fetch_error", "no_text", "llm_error", "blacklisted", "robots_blocked"]
 
 
@@ -142,8 +144,9 @@ class _Res:
     """Resources used to process a page (shared in sequential, per-thread in parallel)."""
 
     http: HTTPClient
-    llm: Any = None
-    link_selector: Any = None
+    llm: Any = None  # CrawlerLLM when content/links use "smart"
+    ml: Any = None  # MLEngine when content/links use "ml"
+    link_selector: Any = None  # LLM agent ("smart") or _LinkScorer ("ml")
 
 
 # =============================================================================
@@ -163,10 +166,12 @@ class WebCrawler:
         http_cfg: Optional[HTTPConfig] = None,
         llm_cfg: Optional[LLMConfig] = None,
         db: Optional[CrawlerDB] = None,
+        ml_cfg: Optional[MLConfig] = None,
     ):
         self.cfg = crawler_cfg or CrawlerConfig()
         self.http_cfg = http_cfg or HTTPConfig()
         self.llm_cfg = llm_cfg
+        self.ml_cfg = ml_cfg
         self.db = db
 
         self.blacklist = list(self.cfg.blacklist)
@@ -179,6 +184,7 @@ class WebCrawler:
 
         self._http = HTTPClient(self.http_cfg)  # shared client for sequential mode
         self._llm = None  # lazy CrawlerLLM for sequential mode
+        self._ml = None  # lazy MLEngine for sequential mode
         self._tls = threading.local()  # per-thread resources (parallel)
         self._created_res: List[_Res] = []  # thread-local resources to close
         # robots.txt gate (shared, thread-safe, own HTTP client honoring verify)
@@ -293,7 +299,10 @@ class WebCrawler:
 
         log.debug("seeds: %d URL(s), start_domain(s): %s", len(seeds), [d for _, d in seeds])
 
-        if self.cfg.max_workers > 1:
+        if link_mode == "ml" and (self.ml_cfg or MLConfig()).best_first:
+            # best-first frontier (score-ordered); works sequential and parallel
+            self._crawl_ordered(st, seeds)
+        elif self.cfg.max_workers > 1:
             self._crawl_parallel(st, seeds)
         else:
             res = self._sequential_res(st)
@@ -315,31 +324,41 @@ class WebCrawler:
     # -- resource construction ------------------------------------------------
 
     def _sequential_res(self, st: _State) -> _Res:
-        """Shared resources for sequential mode (reuses self._http / self._llm)."""
-        selector = None
+        """Shared resources for sequential mode (reuses self._http / engines)."""
         if st.content_mode == "smart" or st.link_mode == "smart":
             self._ensure_llm()
-            if st.link_mode == "smart":
-                selector = self._llm.build_link_selector(
-                    st.topic or "general relevant content", st.cfg.max_links_per_level
-                )
+        if st.content_mode == "ml" or st.link_mode == "ml":
+            self._ensure_ml()
+        selector = self._build_link_selector(st, self._llm, self._ml)
         st.link_selector = selector
-        return _Res(self._http, self._llm, selector)
+        return _Res(self._http, llm=self._llm, ml=self._ml, link_selector=selector)
 
     def _build_res(self, st: _State) -> _Res:
-        """Fresh resources for a parallel worker (own HTTP client + LLM agents)."""
+        """Fresh resources for a parallel/best-first worker (own HTTP client +
+        per-worker engines). The ML embedder is process-shared, so a per-worker
+        MLEngine is cheap."""
         http = HTTPClient(self.http_cfg)
-        llm = None
-        selector = None
+        llm = ml = None
         if st.content_mode == "smart" or st.link_mode == "smart":
             from .llm import CrawlerLLM
 
             llm = CrawlerLLM(self.llm_cfg or LLMConfig())
-            if st.link_mode == "smart":
-                selector = llm.build_link_selector(
-                    st.topic or "general relevant content", st.cfg.max_links_per_level
-                )
-        return _Res(http, llm, selector)
+        if st.content_mode == "ml" or st.link_mode == "ml":
+            from .ml import MLEngine
+
+            ml = MLEngine(self.ml_cfg or MLConfig())
+        selector = self._build_link_selector(st, llm, ml)
+        return _Res(http, llm=llm, ml=ml, link_selector=selector)
+
+    def _build_link_selector(self, st: _State, llm, ml):
+        """Build the link selector for the link knob: an LLM agent ("smart"), a
+        static-embedding scorer ("ml"), or None ("pure")."""
+        topic = st.topic or "general relevant content"
+        if st.link_mode == "smart" and llm is not None:
+            return llm.build_link_selector(topic, st.cfg.max_links_per_level)
+        if st.link_mode == "ml" and ml is not None:
+            return ml.build_link_selector(topic, st.cfg.max_links_per_level)
+        return None
 
     def _worker_res(self, st: _State) -> _Res:
         r = getattr(self._tls, "res", None)
@@ -357,7 +376,7 @@ class WebCrawler:
         links = self._process_one(st, url, depth, source_url, start_domain, res)
         if depth >= st.max_depth:
             return
-        for _, link_url in links:
+        for _score, _anchor, link_url in links:
             if self._reached_cap(st):
                 break
             if self.http_cfg.link_delay:
@@ -393,7 +412,7 @@ class WebCrawler:
                                 raise
                             log.exception("parallel worker error on %s", parent_url[:70])
                             links = []
-                        for _, link_url in links:
+                        for _score, _anchor, link_url in links:
                             nu = normalize_url(link_url)
                             if nu in seen_next:
                                 continue
@@ -410,15 +429,76 @@ class WebCrawler:
                 except Exception:
                     log.debug("failed closing a worker HTTP client", exc_info=True)
 
+    def _crawl_ordered(self, st, seeds) -> None:
+        """Best-first driver (links="ml"): a score-ordered global frontier
+        processed in waves of ``max_workers`` — the W globally highest-scoring
+        links at a time, then re-prioritized. Workers are pure functions
+        (URL -> scored children); the driver alone owns the heap, so it is
+        thread-safe by construction (W=1 -> pure best-first; W>1 -> parallel)."""
+        self._tls = threading.local()
+        self._created_res = []
+        counter = itertools.count()  # heap tiebreaker (avoids comparing url/None)
+        heap: List[Tuple[float, int, int, str, Optional[str], str]] = []
+        for url, dom in seeds:
+            heapq.heappush(heap, (-1e9, 0, next(counter), url, None, dom))  # seeds first
+        min_score = (self.ml_cfg or MLConfig()).min_link_score
+        workers = max(1, self.cfg.max_workers)
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                while heap and not self._reached_cap(st):
+                    wave = [heapq.heappop(heap) for _ in range(min(workers, len(heap)))]
+                    fut_map = {
+                        pool.submit(self._worker_process, st, url, depth, src, dom): (
+                            url,
+                            depth,
+                            dom,
+                        )
+                        for (_neg, depth, _cnt, url, src, dom) in wave
+                    }
+                    for fut in as_completed(fut_map):
+                        parent_url, parent_depth, parent_dom = fut_map[fut]
+                        try:
+                            links = fut.result() or []
+                        except Exception:
+                            if self.cfg.strict:
+                                raise
+                            log.exception("best-first worker error on %s", parent_url[:70])
+                            links = []
+                        if parent_depth >= st.max_depth:
+                            continue
+                        for score, _anchor, link_url in links:
+                            if score < min_score:
+                                continue
+                            heapq.heappush(
+                                heap,
+                                (
+                                    -score,
+                                    parent_depth + 1,
+                                    next(counter),
+                                    link_url,
+                                    parent_url,
+                                    parent_dom,
+                                ),
+                            )
+        finally:
+            for r in self._created_res:
+                try:
+                    r.http.close()
+                except Exception:
+                    log.debug("failed closing a worker HTTP client", exc_info=True)
+
     def _worker_process(self, st, url, depth, source_url, start_domain):
         return self._process_one(st, url, depth, source_url, start_domain, self._worker_res(st))
 
     # -- unified per-page processing ------------------------------------------
 
-    def _process_one(self, st, url, depth, source_url, start_domain, res) -> List[Tuple[str, str]]:
+    def _process_one(
+        self, st, url, depth, source_url, start_domain, res
+    ) -> List[Tuple[float, str, str]]:
         """
         Process one URL: cache/fetch/extract/emit. Returns the (already selected)
-        links to follow next — the driver handles traversal. [] = nothing to follow.
+        links to follow next as ``[(score, anchor, url)]`` — the driver handles
+        traversal (score drives the best-first frontier). [] = nothing to follow.
         """
         cfg = st.cfg
         if self._reached_cap(st):
@@ -601,6 +681,11 @@ class WebCrawler:
                 depth=depth,
                 source_url=source_url,
             )
+        elif st.content_mode == "ml":
+            log.debug("  content [ml]: local extraction (preclean=%d chars)...", len(preclean))
+            result = self._ml_extract(
+                st, url, uh, preclean, title, published_iso, is_pdf, depth, source_url, res
+            )
         else:
             log.debug("  content [smart]: LLM extraction (preclean=%d chars)...", len(preclean))
             result = self._smart_extract(
@@ -710,12 +795,13 @@ class WebCrawler:
                     return self._select_next(st, cands, row.get("clean_text") or "", res)
             return []
 
-        if st.content_mode == "smart":
+        if st.content_mode in ("smart", "ml"):
             base = row.get("raw_text") or row.get("clean_text") or ""
             if base.strip():
-                log.debug("  cache enrich (pure->smart) - no fetch, LLM only")
+                log.debug("  cache enrich (pure->%s) - no fetch", st.content_mode)
                 preclean = preprocess_text(base)
-                result = self._smart_extract(
+                enrich = self._ml_extract if st.content_mode == "ml" else self._smart_extract
+                result = enrich(
                     st,
                     url,
                     uh,
@@ -739,8 +825,12 @@ class WebCrawler:
 
     @staticmethod
     def _satisfies(row: dict, content_mode: str) -> bool:
+        # richness order: pure < ml < smart (a richer cached page satisfies a
+        # lighter request).
         if content_mode == "pure":
             return bool(row.get("clean_text"))
+        if content_mode == "ml":
+            return row.get("mode") in ("ml", "smart")
         return row.get("mode") == "smart"
 
     @staticmethod
@@ -749,9 +839,36 @@ class WebCrawler:
             return False
         if content_mode == "pure":
             return True
+        if content_mode == "ml":
+            return existing.get("mode") in ("ml", "smart")
         return existing.get("mode") == "smart"
 
     # -- smart content extraction ---------------------------------------------
+
+    def _ml_extract(
+        self, st, url, uh, preclean, title, published_iso, is_pdf, depth, source_url, res
+    ) -> PageResult:
+        """No-LLM structured extraction via the ML engine (zero tokens). Phase 1
+        fills clean text; later phases fill summary/entities/topics/sentiment."""
+        cfg = st.cfg
+        extract = res.ml.extract_content(url, preclean[: cfg.max_chars_content], schema=None)
+        text = (getattr(extract, "clean_text", None) or preclean[: cfg.max_chars_pure]) or None
+        return PageResult(
+            url=url,
+            url_hash=uh,
+            status="done",
+            mode="ml",
+            title=title,
+            text=text,
+            summary=getattr(extract, "summary", None) or None,
+            entities=list(getattr(extract, "entities", None) or []),
+            topics=list(getattr(extract, "topics", None) or []),
+            sentiment=getattr(extract, "sentiment", None),
+            published_iso=published_iso,
+            is_pdf=is_pdf,
+            depth=depth,
+            source_url=source_url,
+        )
 
     def _smart_extract(
         self, st, url, uh, preclean, title, published_iso, is_pdf, depth, source_url, res
@@ -910,42 +1027,50 @@ class WebCrawler:
 
     # -- link selection -------------------------------------------------------
 
-    def _select_next(self, st, candidates, excerpt, res) -> List[Tuple[str, str]]:
+    def _select_next(self, st, candidates, excerpt, res) -> List[Tuple[float, str, str]]:
+        """Select the links to follow next as ``[(score, anchor, url)]``.
+
+        - links="ml":    static-embedding scorer ranks all candidates (score used
+                         by the best-first frontier).
+        - links="smart": LLM relevance ranking (score 0.0 — order is the signal).
+        - links="pure":  heuristic first-N (score 0.0).
+        """
         cfg = st.cfg
         if not candidates:
             log.debug("  next: no candidates -> nothing queued")
             return []
-        if st.link_mode == "smart" and res.link_selector is not None:
-            log.debug(
-                "  next: LLM link selection from %d candidates (topic=%r)...",
-                len(candidates),
-                (st.topic or "")[:50],
+        if st.link_mode == "ml" and res.link_selector is not None:
+            scored = res.ml.select_links(
+                res.link_selector, excerpt, candidates, cfg.max_links_per_level
             )
+            log.debug(
+                "  next: ML scored %d candidate(s) -> %d queued", len(candidates), len(scored)
+            )
+            for i, (score, anchor, link_url) in enumerate(scored[:5]):
+                log.debug(
+                    "    [%d] %.3f %s -> %s", i + 1, score, (anchor or "")[:40], link_url[:80]
+                )
+        elif st.link_mode == "smart" and res.link_selector is not None:
             selected = res.llm.select_links(
                 res.link_selector, excerpt, candidates, cfg.max_links_per_level
             )
-            log.debug("  next: LLM selected %d link(s):", len(selected))
-            for i, (anchor, link_url) in enumerate(selected[:5]):
-                log.debug("    [%d] %s -> %s", i + 1, (anchor or "")[:50], link_url[:80])
-            if len(selected) > 5:
-                log.debug("    ... and %d more", len(selected) - 5)
+            log.debug("  next: LLM selected %d link(s)", len(selected))
+            scored = [(0.0, a, u) for (a, u) in selected]
         else:
             selected = candidates[: cfg.max_links_per_level]
             log.debug(
-                "  next: heuristic (first %d of %d candidates) -> %d queued",
+                "  next: heuristic (first %d of %d) -> %d queued",
                 cfg.max_links_per_level,
                 len(candidates),
                 len(selected),
             )
-            if log.isEnabledFor(10):  # DEBUG = 10
-                for i, (anchor, link_url) in enumerate(selected[:5]):
-                    log.debug("    [%d] %s -> %s", i + 1, (anchor or "")[:50], link_url[:80])
-                if len(selected) > 5:
-                    log.debug("    ... and %d more", len(selected) - 5)
-        after_bl = [(a, u) for (a, u) in selected if not is_blacklisted_domain(u, self.blacklist)]
-        if len(after_bl) < len(selected):
+            scored = [(0.0, a, u) for (a, u) in selected]
+        after_bl = [
+            (s, a, u) for (s, a, u) in scored if not is_blacklisted_domain(u, self.blacklist)
+        ]
+        if len(after_bl) < len(scored):
             log.debug(
-                "  next: -%d blacklisted -> %d final", len(selected) - len(after_bl), len(after_bl)
+                "  next: -%d blacklisted -> %d final", len(scored) - len(after_bl), len(after_bl)
             )
         return after_bl
 
@@ -1070,6 +1195,12 @@ class WebCrawler:
         )
 
     # -- helpers --------------------------------------------------------------
+
+    def _ensure_ml(self) -> None:
+        if self._ml is None:
+            from .ml import MLEngine
+
+            self._ml = MLEngine(self.ml_cfg or MLConfig())
 
     def _ensure_llm(self) -> None:
         if self._llm is None:
