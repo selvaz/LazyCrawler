@@ -162,6 +162,7 @@ still overrides the preset.
 | `news_scan` | smart (sentiment+date) · depth 0 · last week · more results | medium |
 | `extract_data` | pure · tables/images as artifacts · depth 0 | low |
 | `rag_ingest` | pure · Markdown + artifact anchors · depth 0 | low |
+| `research_ml` | **ml** content+links · best-first · depth 1 · zero tokens | minimal |
 
 A preset can also tune the **branching factor** (`max_links_per_level`: links
 followed *per page*) — `deep_research` widens it; `quick_lookup`/`news_scan`
@@ -211,12 +212,11 @@ results = crawler.crawl("https://example.com/", links="ml", topic="solid-state b
 [Model2Vec](https://github.com/MinishLab/model2vec) static embeddings + lexical +
 structural) and crawls **best-first** — a score-ordered frontier that works
 sequential **and** parallel. Needs `pip install lazycrawler[ml]`; without it,
-scoring degrades to lexical+structural (still topic-aware). The killer pattern:
-`links="ml"` for breadth + `content="smart"` only on the winners. See the
+scoring degrades to lexical+structural (still topic-aware). `content="ml"` fills
+`summary` (TextRank) / `topics` (YAKE) / `entities` (spaCy) / `sentiment` (VADER)
+with **local ML, zero tokens** (`pip install lazycrawler[nlp]`). The killer
+pattern: `links="ml"` for breadth + `content="smart"` only on the winners. See the
 [ML mode guide](https://github.com/selvaz/lazycrawler/blob/main/docs/guides/ml-mode.md).
-
-> Phase 1 ships the link side; `content="ml"` (local summary/entities/topics/
-> sentiment, no LLM) lands in a later phase.
 
 ## Switching LLM provider/model
 

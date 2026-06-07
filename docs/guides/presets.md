@@ -28,6 +28,7 @@ agent = Agent(engine=engine, tools=tools.as_tools())
 | `news_scan` | Current events / monitoring | smart / pure | 0 | — | 15 | sentiment + date | last week | medium |
 | `extract_data` | Pull tables/images off a page | pure / pure | 0 | — | 5 | artifacts (table/image/figure/chart) | — | low |
 | `rag_ingest` | Load pages into a RAG pipeline | pure / pure | 0 | — | 8 | Markdown + artifact anchors | — | low |
+| `research_ml` | Zero-token research (local ML) | ml / ml | 1 | 25 | 20 | best-first frontier | — | minimal |
 
 Notes:
 

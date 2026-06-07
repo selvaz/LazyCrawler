@@ -189,6 +189,21 @@ DEFAULT_PRESETS: Dict[str, CrawlPreset] = {
         extract_artifacts=True,
         artifact_types=("table", "image", "figure", "chart"),
     ),
+    "research_ml": CrawlPreset(
+        name="research_ml",
+        description=(
+            "Smart-but-zero-token research: local ML extraction (summary, "
+            "keyphrases, entities, sentiment) and a best-first semantic frontier "
+            "that follows the most relevant links — no LLM, no API cost. Use for "
+            "broad research/monitoring when token budget matters."
+        ),
+        cost="minimal",
+        content="ml",
+        links="ml",
+        max_depth=1,
+        max_pages=20,
+        max_links_per_level=25,
+    ),
     "rag_ingest": CrawlPreset(
         name="rag_ingest",
         description=(

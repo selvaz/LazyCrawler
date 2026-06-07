@@ -14,11 +14,9 @@ It sits in the same two-knob design as `smart`, so you can mix tiers — e.g. us
 `links="ml"` for the breadth of the crawl and `content="smart"` only on the few
 winners.
 
-!!! info "Phase 1"
-    This release ships the **link side** (`links="ml"`: relevance scoring +
-    best-first frontier). `content="ml"` currently returns clean text; local
-    structured extraction (summary / entities / topics / sentiment) lands in a
-    later phase.
+Both knobs are implemented: `links="ml"` (relevance scoring + best-first
+frontier) and `content="ml"` (structured extraction with local ML / statistics).
+Near-duplicate detection and relevance-gated early-stop are the remaining phase.
 
 ---
 
@@ -60,10 +58,35 @@ applied to the per-page top-N.
 
 ---
 
+## Local content extraction (`content="ml"`)
+
+`content="ml"` fills the same structured fields as `smart` — but with local ML
+and statistics instead of an LLM, so it costs **no tokens**:
+
+| Field | Technique | Dependency |
+|-------|-----------|------------|
+| `summary` | extractive **TextRank** over static sentence embeddings (reuses the Model2Vec embedder) | `[ml]` (else lead sentences) |
+| `topics` | **YAKE** statistical keyphrases | `[nlp]` (else frequency fallback) |
+| `entities` | **spaCy** NER | `[nlp]` + a model (else regex fallback) |
+| `sentiment` | **VADER** (lexicon + rules) | `[nlp]` (else `"neutral"`) |
+
+```python
+r = WebCrawler(ml_cfg=MLConfig(summary_sentences=4, keyphrase_topk=8)).crawl(
+    "https://example.com/article", content="ml"
+)[0]
+print(r.summary, r.topics, r.entities, r.sentiment)   # filled, zero tokens
+```
+
+Tune via `MLConfig(summary_sentences=…, keyphrase_topk=…, sentiment=…, use_spacy_ner=…)`.
+Everything degrades gracefully — a missing optional dep drops that field to its
+pure-python fallback, never an error.
+
 ## Install
 
 ```bash
-pip install lazycrawler[ml]     # model2vec + numpy
+pip install lazycrawler[ml]      # link scoring + TextRank summary (model2vec + numpy)
+pip install lazycrawler[nlp]     # content: YAKE keyphrases, VADER sentiment, spaCy NER
+python -m spacy download en_core_web_sm   # optional: spaCy entity model
 ```
 
 Without the extra, ML mode still runs — semantic scoring is simply skipped and
@@ -91,7 +114,7 @@ and is cached; the embedder is loaded once and shared across all workers.
 |---|---|---|---|
 | Token cost | none | **none** | per-page LLM |
 | Link selection | first-N | **semantic best-first** | LLM ranking |
-| Content fields | text | text *(+ structured: later phase)* | summary/entities/topics/sentiment |
+| Content fields | text | **summary/entities/topics/sentiment** (local ML) | summary/entities/topics/sentiment (LLM) |
 | Best for | bulk crawl | **targeted research at zero token cost** | deep extraction on key pages |
 
 The killer pattern the two knobs enable: **`links="ml"` for breadth + `content="smart"`
