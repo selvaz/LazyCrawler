@@ -1,25 +1,32 @@
 # Core Concepts
 
-## Pure vs Smart mode
+## Pure / ML / Smart mode
 
-LazyCrawler has two independent knobs: **content extraction** and **link selection**. Each can be set to `"pure"` or `"smart"` independently, or you can set both at once with `mode=`.
+LazyCrawler has two independent knobs: **content extraction** and **link
+selection**. Each takes one of **three values** — `"pure"`, `"ml"`, or `"smart"` —
+independently, or set both at once with `mode=`.
 
 ```
-mode="pure"   ≡  content="pure",  links="pure"
-mode="smart"  ≡  content="smart", links="smart"
+mode="pure"   ≡  content="pure",  links="pure"    # no LLM
+mode="ml"     ≡  content="ml",    links="ml"      # local ML, no LLM, zero tokens
+mode="smart"  ≡  content="smart", links="smart"   # LLM (via LazyBridge)
 ```
 
-| | `content="pure"` | `content="smart"` |
-|---|---|---|
-| How it works | trafilatura + HTML strip | LLM structured extraction |
-| Output | `text` only | `text`, `summary`, `entities`, `topics`, `sentiment` |
-| LLM cost | 0 | ~300–1000 tokens/page |
+| | `content="pure"` | `content="ml"` | `content="smart"` |
+|---|---|---|---|
+| How it works | trafilatura + HTML strip | TextRank + YAKE + spaCy + VADER | LLM structured extraction |
+| Output | `text` only | `text`, `summary`, `entities`, `topics`, `sentiment` | same + reasoned/abstractive |
+| Token cost | 0 | **0** | ~300–1000 tokens/page |
 
-| | `links="pure"` | `links="smart"` |
-|---|---|---|
-| How it works | Score-ranked heuristic | LLM picks from candidate list |
-| Topic-aware | No | Yes — uses `topic=` parameter |
-| LLM cost | 0 | ~200–500 tokens/page |
+| | `links="pure"` | `links="ml"` | `links="smart"` |
+|---|---|---|---|
+| How it works | first-N heuristic | best-first **semantic** (Model2Vec) | LLM picks from candidate list |
+| Topic-aware | No | **Yes** (`topic=`) | Yes (`topic=`) |
+| Token cost | 0 | **0** | ~200–500 tokens/page |
+
+`ml` is a *smart-but-zero-token* tier: best for breadth/triage and topic-guided
+crawling at no API cost; reserve `smart` for the few pages that deserve an LLM's
+abstractive summary and reasoned topics. See the [ML Mode guide](guides/ml-mode.md).
 
 **Mixed mode** is the most common real-world pattern:
 

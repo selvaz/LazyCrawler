@@ -18,10 +18,12 @@ WebSearch(
     http_cfg: HTTPConfig = HTTPConfig(),
     llm_cfg: LLMConfig | None = None,
     db: CrawlerDB | None = None,
+    ml_cfg: MLConfig | None = None,
 )
 ```
 
-All parameters are optional. `WebSearch` creates an internal `WebCrawler` with the provided configs.
+All parameters are optional. `WebSearch` creates an internal `WebCrawler` with the
+provided configs (`ml_cfg` enables `mode="ml"` for the crawl of the results).
 
 ---
 
@@ -31,11 +33,13 @@ All parameters are optional. `WebSearch` creates an internal `WebCrawler` with t
 def run(
     query: str,
     *,
-    mode: Literal["pure", "smart"] = "pure",
-    content: Literal["pure", "smart"] | None = None,
-    links: Literal["pure", "smart"] | None = None,
+    mode: Literal["pure", "ml", "smart"] = "pure",
+    content: Literal["pure", "ml", "smart"] | None = None,
+    links: Literal["pure", "ml", "smart"] | None = None,
     session_id: str | None = None,
     max_results: int | None = None,
+    overrides: dict | None = None,
+    timelimit: str | None = None,
 ) -> dict
 ```
 
@@ -44,11 +48,13 @@ Run a web search and optionally crawl the result pages.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `query` | `str` | required | Search query |
-| `mode` | `"pure"` or `"smart"` | `"pure"` | Extraction mode for crawled pages |
-| `content` | `"pure"` or `"smart"` or `None` | `None` | Override content mode |
-| `links` | `"pure"` or `"smart"` or `None` | `None` | Override link mode |
+| `mode` | `"pure"` / `"ml"` / `"smart"` | `"pure"` | Extraction mode for crawled pages |
+| `content` | `"pure"` / `"ml"` / `"smart"` / `None` | `None` | Override content mode |
+| `links` | `"pure"` / `"ml"` / `"smart"` / `None` | `None` | Override link mode |
 | `session_id` | `str \| None` | `None` | DB session ID |
 | `max_results` | `int \| None` | `None` | Override `SearchConfig.n_results` |
+| `overrides` | `dict \| None` | `None` | Per-call `CrawlerConfig` overrides applied to the crawl (the preset mechanism) |
+| `timelimit` | `str \| None` | `None` | Per-call recency override: `"d"`/`"w"`/`"m"`/`"y"` |
 
 ### Return value
 

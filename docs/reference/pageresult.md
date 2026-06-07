@@ -17,17 +17,19 @@ results: list[PageResult] = crawler.crawl("https://example.com")
 | `url` | `str` | always | Final URL of the page (after redirects) |
 | `url_hash` | `str` | always | SHA-256 of `url` — used as DB primary key |
 | `status` | `str` | always | Result status (see [Status values](#status-values)) |
-| `mode` | `"pure"` or `"smart"` | always | Extraction mode that was used |
+| `mode` | `"pure"` / `"ml"` / `"smart"` | always | Content extraction mode that produced this result |
 | `title` | `str \| None` | always | Page title (from `<title>` tag or LLM) |
 | `text` | `str \| None` | always | Cleaned main text content |
-| `summary` | `str \| None` | smart only | 1–3 sentence LLM summary |
-| `entities` | `list[str]` | smart only | People, orgs, places, products |
-| `topics` | `list[str]` | smart only | Main topics/themes of the page |
-| `sentiment` | `str \| None` | smart only | `"negative"`, `"neutral"`, or `"positive"` |
+| `summary` | `str \| None` | smart / **ml** | 1–3 sentence summary (LLM in smart; TextRank in ml) |
+| `entities` | `list[str]` | smart / **ml** | People, orgs, places, products (LLM / spaCy-or-regex) |
+| `topics` | `list[str]` | smart / **ml** | Main topics/themes (LLM / YAKE keyphrases) |
+| `sentiment` | `str \| None` | smart / **ml** | `"negative"`, `"neutral"`, `"positive"` (LLM / VADER) |
 | `notes` | `str \| None` | smart only | Reserved for research tags; usually empty |
 | `data` | `dict \| None` | smart + schema | Structured data from a custom Pydantic schema |
 | `published_iso` | `str \| None` | always | Publication date (ISO 8601) if found in metadata |
 | `is_pdf` | `bool` | always | `True` if the page was a PDF file |
+| `markdown` | `str \| None` | `emit_markdown` | HTML→Markdown render (RAG); `[[artifact:<hash>]]` anchors if enabled |
+| `artifacts` | `list[Artifact]` | `extract_artifacts` | Tables/images/charts extracted from the page ([guide](../guides/artifacts.md)) |
 | `depth` | `int` | always | Crawl depth from the seed URL (0 = seed) |
 | `source_url` | `str \| None` | always | URL of the page that linked to this one |
 | `error` | `str \| None` | always | Error message if `status != "done"` |

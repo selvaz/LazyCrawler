@@ -38,7 +38,9 @@ pip install -e .
 pip install -e ".[all]"
 
 # Or selectively:
-pip install -e ".[smart]"     # LazyBridge (LLM)
+pip install -e ".[smart]"     # LazyBridge (LLM smart mode; Python >=3.11)
+pip install -e ".[ml]"        # model2vec + numpy (no-LLM ml mode: scoring + summary)
+pip install -e ".[nlp]"       # yake + vaderSentiment + spacy (ml content extraction)
 pip install -e ".[pdf]"       # pymupdf, pypdf, pdfplumber
 pip install -e ".[search]"    # ddgs (DuckDuckGo)
 pip install -e ".[js]"        # playwright (JS rendering)

@@ -4,7 +4,7 @@ The main crawling engine. Fetches pages recursively, extracts text, and optional
 
 ```python
 from lazycrawler import WebCrawler
-from lazycrawler.config import CrawlerConfig, HTTPConfig, LLMConfig, DBConfig
+from lazycrawler.config import CrawlerConfig, HTTPConfig, LLMConfig, MLConfig, DBConfig
 from lazycrawler import CrawlerDB
 ```
 
@@ -18,17 +18,28 @@ WebCrawler(
     http_cfg: HTTPConfig = HTTPConfig(),
     llm_cfg: LLMConfig | None = None,
     db: CrawlerDB | None = None,
+    ml_cfg: MLConfig | None = None,
 )
 ```
 
 | Parameter | Type | Description |
 |---|---|---|
 | `crawler_cfg` | `CrawlerConfig` | Depth, page limits, link limits, domain filtering, blacklist |
-| `http_cfg` | `HTTPConfig` | Timeouts, retries, SSL, delay, JS rendering |
-| `llm_cfg` | `LLMConfig \| None` | Model config for smart mode. `None` = pure mode only |
+| `http_cfg` | `HTTPConfig` | Timeouts, retries, SSL, delay, JS rendering, SSRF guard, byte caps |
+| `llm_cfg` | `LLMConfig \| None` | Model config for **smart** mode. `None` = pure/ml only |
 | `db` | `CrawlerDB \| None` | Persistent cache/dedup. `None` = no persistence |
+| `ml_cfg` | `MLConfig \| None` | Config for **ml** mode (no-LLM scoring + local extraction). See [ML Mode](../guides/ml-mode.md) |
 
 All parameters are optional — defaults work out of the box for basic pure-mode crawling.
+
+### Modes
+
+`mode` / `content` / `links` each take **`"pure"` | `"ml"` | `"smart"`**:
+
+- **pure** — trafilatura text + heuristic links (no LLM).
+- **ml** — local ML, **zero tokens**: best-first semantic link scoring +
+  TextRank/YAKE/spaCy/VADER content extraction.
+- **smart** — LLM extraction + LLM link ranking (via LazyBridge).
 
 ---
 
@@ -38,9 +49,9 @@ All parameters are optional — defaults work out of the box for basic pure-mode
 def crawl(
     url: str,
     *,
-    mode: Literal["pure", "smart"] = "pure",
-    content: Literal["pure", "smart"] | None = None,
-    links: Literal["pure", "smart"] | None = None,
+    mode: Literal["pure", "ml", "smart"] = "pure",
+    content: Literal["pure", "ml", "smart"] | None = None,
+    links: Literal["pure", "ml", "smart"] | None = None,
     topic: str = "",
     schema: type | None = None,
     session_id: str | None = None,
@@ -54,9 +65,9 @@ Crawl a single seed URL recursively.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `url` | `str` | required | Seed URL to start from |
-| `mode` | `"pure"` or `"smart"` | `"pure"` | Sets both content and links mode at once |
-| `content` | `"pure"` or `"smart"` or `None` | `None` | Override content extraction mode only |
-| `links` | `"pure"` or `"smart"` or `None` | `None` | Override link selection mode only |
+| `mode` | `"pure"` / `"ml"` / `"smart"` | `"pure"` | Sets both content and links mode at once |
+| `content` | `"pure"` / `"ml"` / `"smart"` / `None` | `None` | Override content extraction mode only |
+| `links` | `"pure"` / `"ml"` / `"smart"` / `None` | `None` | Override link selection mode only |
 | `topic` | `str` | `""` | Topic description for smart link selection and LLM context |
 | `schema` | Pydantic `BaseModel` subclass or `None` | `None` | Custom output schema (smart mode only). Result goes into `PageResult.data` |
 | `session_id` | `str \| None` | `None` | DB session identifier. Auto-generated if `None` and `db` is set |
@@ -75,9 +86,9 @@ Crawl a single seed URL recursively.
 def crawl_many(
     urls: list[str],
     *,
-    mode: Literal["pure", "smart"] = "pure",
-    content: Literal["pure", "smart"] | None = None,
-    links: Literal["pure", "smart"] | None = None,
+    mode: Literal["pure", "ml", "smart"] = "pure",
+    content: Literal["pure", "ml", "smart"] | None = None,
+    links: Literal["pure", "ml", "smart"] | None = None,
     topic: str = "",
     schema: type | None = None,
     session_id: str | None = None,
@@ -122,10 +133,12 @@ at interpreter exit. Use `close()` / `with` for deterministic teardown; a second
 | `mode=` | `content=` | `links=` | Behavior |
 |---|---|---|---|
 | `"pure"` | — | — | Trafilatura text, heuristic links |
+| `"ml"` | — | — | **No-LLM**: local extraction + best-first semantic links (zero tokens) |
 | `"smart"` | — | — | LLM extraction, LLM link selection |
 | any | `"smart"` | `"pure"` | LLM extraction, heuristic links (cheaper) |
 | any | `"pure"` | `"smart"` | Plain text, LLM picks next links |
-| `"pure"` | `"smart"` | — | LLM extraction, heuristic links |
+| any | `"ml"` | `"ml"` | Local extraction + semantic frontier, no tokens |
+| any | `"smart"` | `"ml"` | LLM extraction on the few; **semantic frontier for free** |
 
 ---
 

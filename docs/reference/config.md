@@ -3,7 +3,7 @@
 All config classes are dataclasses with sensible defaults — only override what you need.
 
 ```python
-from lazycrawler.config import CrawlerConfig, HTTPConfig, LLMConfig, SearchConfig, DBConfig
+from lazycrawler.config import CrawlerConfig, HTTPConfig, LLMConfig, MLConfig, SearchConfig, DBConfig
 ```
 
 Full example combining all configs:
@@ -46,7 +46,7 @@ Controls traversal depth, page limits, domain filtering, and blacklists.
 | `large_doc_chunk_chars` | `int` | `12_000` | Chunk size for map-reduce summarization |
 | `large_doc_max_chunks` | `int` | `12` | Max chunks processed in map-reduce |
 | `emit_markdown` | `bool` | `False` | Render each crawled HTML page to Markdown (`PageResult.markdown`). Requires `pip install lazycrawler[markdown]` |
-| `extract_artifacts` | `bool` | `False` | Extract tables, images, charts, figures, SVG as structured `Artifact` records (HTML + PDF). See the [Artifacts guide](../guides/artifacts.md) |
+| `extract_artifacts` | `bool` | `False` | Extract tables, images, charts, SVG as structured `Artifact` records (HTML + PDF). See the [Artifacts guide](../guides/artifacts.md) |
 | `artifact_types` | `tuple` | `("table","image","chart","svg")` | Which artifact types to collect |
 | `download_artifact_bytes` | `bool` | `False` | Download image/chart bytes through the crawler (honors SSL + SSRF guard) → `sha256` + blob in DB |
 | `max_artifact_bytes` | `int` | `5_000_000` | Max image size stored as a blob (larger → keep hash/metadata only) |
@@ -136,6 +136,36 @@ LLMConfig(
     large_doc_model="claude-haiku-4-5",  # cheaper for long docs
 )
 ```
+
+---
+
+## MLConfig
+
+Configuration for **`ml` mode** — the no-LLM, zero-token engine (semantic link
+scoring + local structured extraction). See the [ML Mode guide](../guides/ml-mode.md).
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `model` | `str` | `"minishlab/potion-retrieval-32M"` | Model2Vec static-embedding model (semantic scoring + TextRank summary). Shared across workers; needs `pip install lazycrawler[ml]` |
+| `w_sem` | `float` | `0.55` | Weight of the **semantic** signal in the link score |
+| `w_lex` | `float` | `0.20` | Weight of the **lexical** (token overlap) signal |
+| `w_struct` | `float` | `0.25` | Weight of the **structural** (URL/anchor) signal |
+| `best_first` | `bool` | `True` | `links="ml"` crawls best-first (score-ordered frontier; sequential & parallel). `False` = DFS/BFS with per-page top-N |
+| `min_link_score` | `float` | `0.0` | Drop frontier links scoring below this (0 = keep all) |
+| `max_candidates_to_embed` | `int` | `400` | Cap on links semantically embedded per page (rest use lexical+structural) |
+| `summary_sentences` | `int` | `4` | `content="ml"`: sentences kept in the TextRank summary |
+| `keyphrase_topk` | `int` | `8` | `content="ml"`: number of YAKE keyphrases → `topics` |
+| `sentiment` | `bool` | `True` | `content="ml"`: compute VADER sentiment (else `"neutral"`) |
+| `use_spacy_ner` | `bool` | `True` | `content="ml"`: use spaCy NER for `entities` (else regex fallback) |
+
+```python
+from lazycrawler import WebCrawler, MLConfig
+crawler = WebCrawler(ml_cfg=MLConfig(model="minishlab/potion-base-8M", w_sem=0.6))
+crawler.crawl("https://example.com/", mode="ml", topic="solid-state batteries")
+```
+
+Needs `pip install lazycrawler[ml]` (scoring + summary) and `lazycrawler[nlp]`
+(YAKE/VADER/spaCy for content). Every layer degrades gracefully if its dep is absent.
 
 ---
 
