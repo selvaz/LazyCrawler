@@ -19,7 +19,7 @@ and are not mixed into the pipeline logic.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from ._log import log
 from .artifacts import (
@@ -30,12 +30,12 @@ from .artifacts import (
     sniff_image,
 )
 from .http import (
+    content_hash as _content_hash,
     get_base_domain,
     is_blacklisted_domain,
     normalize_url,
+    url_hash as _url_hash,
 )
-from .http import content_hash as _content_hash
-from .http import url_hash as _url_hash
 from .models import PageResult
 from .pdf import looks_like_pdf, title_from_pdf_text, title_from_url
 from .text import (
