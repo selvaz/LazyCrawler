@@ -4,6 +4,10 @@
 `smart`. It does intelligent crawling with **local machine-learning and
 statistics — zero LLM tokens, zero API calls**:
 
+> For the theory behind the models (Model2Vec, TextRank, YAKE, spaCy, VADER) —
+> how they work, their efficacy and limits, with paper links — see
+> **[ML Models & Theory](ml-models.md)**.
+
 ```python
 crawl(url, links="ml",  topic="...")   # best-first frontier scored by relevance
 crawl(url, content="ml")               # structured extraction without an LLM
