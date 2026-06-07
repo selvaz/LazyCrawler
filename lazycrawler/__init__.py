@@ -43,6 +43,7 @@ Quick start
 from __future__ import annotations
 
 from ._log import log, set_log_level
+from .async_crawler import AsyncWebCrawler
 from .artifacts import Artifact, extract_html_artifacts, extract_html_artifacts_anchored
 from .config import (
     CrawlerConfig,
@@ -52,7 +53,8 @@ from .config import (
     MLConfig,
     SearchConfig,
 )
-from .crawler import PageResult, WebCrawler
+from .crawler import WebCrawler
+from .models import PageResult  # canonical location; crawler.py re-exports for compat
 from .db import CrawlerDB
 from .markdown import html_to_markdown, render_for_rag
 from .presets import DEFAULT_PRESETS, CrawlPreset, resolve_presets
@@ -63,6 +65,7 @@ __version__ = "0.14.0"
 
 __all__ = [
     "WebCrawler",
+    "AsyncWebCrawler",
     "WebSearch",
     "CrawlerDB",
     "CrawlerTools",
