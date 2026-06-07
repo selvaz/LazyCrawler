@@ -129,7 +129,7 @@ TOPIC_EXPANSION_SYSTEM = (
     "Given a search query, produce a concise topic description (max 40 words)\n"
     "that will be used to judge whether crawled pages are relevant.\n"
     "Include key synonyms, related terms, and relevant entities.\n"
-    "Output plain text only: no JSON, no markdown, no bullet points."
+    "Output plain text only: no JSON, no markdown, no bullet points." + _UNTRUSTED
 )
 
 
@@ -149,13 +149,13 @@ ARTIFACT_VISION_SYSTEM = (
     "- data_points: for a chart, the key series/values you can read (label/value\n"
     "  pairs); otherwise an empty list. Do not invent values you cannot read.\n"
     "\n"
-    "Be faithful to the image; never fabricate detail that is not visible."
+    "Be faithful to the image; never fabricate detail that is not visible." + _UNTRUSTED
 )
 
 ARTIFACT_TABLE_SYSTEM = (
     "You summarize a single data table from a web page in 1-2 sentences: what the\n"
     "table is about and its most salient figures or comparison. Do not restate\n"
-    "every cell; do not invent data not present."
+    "every cell; do not invent data not present." + _UNTRUSTED
 )
 
 
@@ -177,5 +177,5 @@ LARGE_DOC_SUMMARY_SYSTEM = (
     "\n"
     "Rules: do not invent anything; ignore legal boilerplate and navigation;\n"
     "keep numbers and dates; use short bullets and compact sections; be\n"
-    "information-dense, not verbose."
+    "information-dense, not verbose." + _UNTRUSTED
 )

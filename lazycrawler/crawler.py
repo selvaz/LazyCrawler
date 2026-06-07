@@ -580,6 +580,29 @@ class WebCrawler:
             )
             return []
 
+        # robots on the FINAL host: a fetch may redirect to a *different* public
+        # host where robots.txt disallows the path. The body was already fetched
+        # (redirects are followed inside the HTTP client), but we re-check robots
+        # on the final URL and drop the content rather than store/process it.
+        final_url = fr.final_url or url
+        if self._robots is not None and normalize_url(final_url) != url:
+            if not self._robots.allowed(final_url):
+                log.info("robots.txt disallows redirect target %s - skipping", final_url[:90])
+                self._emit(
+                    st,
+                    PageResult(
+                        url=url,
+                        url_hash=uh,
+                        status="robots_blocked",
+                        mode=st.content_mode,
+                        depth=depth,
+                        source_url=source_url,
+                        error="Disallowed by robots.txt (redirect target)",
+                    ),
+                    count=False,
+                )
+                return []
+
         # PDF vs HTML
         is_pdf = bool(pdf_bytes) or looks_like_pdf(url, html or "", raw_text or "")
         if is_pdf:
@@ -610,7 +633,12 @@ class WebCrawler:
                 cnorm = normalize_url(canonical)
                 if is_blacklisted_domain(cnorm, self.blacklist):
                     return []
-                if cnorm != url and self._mark_visited(st, cnorm):
+                # Don't let a public page poison the cache/provenance with a
+                # private/internal canonical (e.g. <link rel=canonical> pointing to
+                # http://127.0.0.1/admin) — that URL was never fetched.
+                if self.http_cfg.block_private_addresses and is_blocked_address(cnorm):
+                    log.info("canonical points to a blocked address - ignoring: %s", cnorm[:90])
+                elif cnorm != url and self._mark_visited(st, cnorm):
                     url = cnorm
                     uh = _url_hash(url)
             published_iso = extract_published_datetime(html, url)

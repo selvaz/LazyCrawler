@@ -59,7 +59,7 @@ from .presets import DEFAULT_PRESETS, CrawlPreset, resolve_presets
 from .search import WebSearch, search_ddg_urls
 from .tools import CrawlerTools
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 
 __all__ = [
     "WebCrawler",

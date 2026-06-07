@@ -46,6 +46,7 @@ def test_render_js_falls_back_to_requests(monkeypatch):
         content = b"<html><body><p>" + b"plain requests body " * 4 + b"</p></body></html>"
         text = "<html><body><p>" + "plain requests body " * 4 + "</p></body></html>"
         is_redirect = False
+        url = "https://spa.example/app"
 
         def iter_content(self, chunk_size=0):
             yield self.content

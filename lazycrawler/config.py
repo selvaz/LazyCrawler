@@ -251,12 +251,12 @@ class HTTPConfig:
         addresses, plus ``localhost`` / ``*.local`` / cloud metadata endpoints
         (e.g. 169.254.169.254). Default False for library use (so localhost
         crawling and the offline tests keep working); ``CrawlerTools`` turns it
-        ON by default because an agent may pass arbitrary URLs. Note: a public
-        host that redirects to a private one is not caught (requests follows
-        redirects internally).
+        ON by default because an agent may pass arbitrary URLs. Redirects are
+        re-validated per hop (a public host redirecting to a private one IS
+        blocked), bounded by ``max_redirects``.
     """
 
-    user_agent: str = "LazyCrawler/0.12 (+https://github.com/selvaz/lazycrawler)"
+    user_agent: str = "LazyCrawler/0.13 (+https://github.com/selvaz/lazycrawler)"
     timeout_connect: int = 5
     timeout_read: int = 25
     max_retries: int = 4

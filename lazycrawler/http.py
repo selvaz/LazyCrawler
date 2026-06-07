@@ -387,6 +387,7 @@ class FetchResult:
     status: Optional[int] = None
     content: Optional[bytes] = None
     content_type: str = ""
+    final_url: Optional[str] = None  # last hop after manual redirect following
 
     def __iter__(self):
         # Backward-compatible unpacking: html, text, status = client.fetch(url)
@@ -401,6 +402,18 @@ class HTTPClient:
 
     def __init__(self, cfg: Optional[HTTPConfig] = None):
         self.cfg = cfg or HTTPConfig()
+        # SSRF + JS-rendering are mutually exclusive: the per-hop SSRF guard only
+        # covers the requests path; a headless browser follows redirects and loads
+        # subresources (iframes, images, scripts, XHR) that bypass it entirely.
+        # Fail fast rather than offer a guard that is silently bypassed.
+        if self.cfg.render_js and self.cfg.block_private_addresses:
+            raise ValueError(
+                "HTTPConfig(render_js=True) cannot be combined with "
+                "block_private_addresses=True: the headless browser's redirects and "
+                "subresource requests bypass the SSRF guard. Disable one — e.g. "
+                "CrawlerTools(enforce_ssrf_guard=False) for trusted internal crawling, "
+                "or render_js=False to keep the guard."
+            )
         # verify=: path to the CA bundle if provided, otherwise the verify_ssl bool
         self._verify = self.cfg.ca_bundle or self.cfg.verify_ssl
         if self._verify is False:
@@ -590,6 +603,7 @@ class HTTPClient:
                     return FetchResult(status=status)
 
                 ctype = (resp.headers.get("Content-Type") or "").lower()
+                final_url = resp.url  # last hop after redirects (for robots/provenance)
                 looks_pdf = "application/pdf" in ctype or url.lower().split("?")[0].endswith(".pdf")
                 body = self._read_capped(
                     resp, cfg.max_pdf_bytes if looks_pdf else cfg.max_html_bytes
@@ -597,11 +611,17 @@ class HTTPClient:
                 resp.close()
                 if looks_pdf or body[:5] == b"%PDF-":
                     # PDF: hand the bytes straight to the PDF pipeline (no re-download).
-                    return FetchResult(status=status, content=body, content_type=ctype)
+                    return FetchResult(
+                        status=status, content=body, content_type=ctype, final_url=final_url
+                    )
 
                 html = self._decode(body, ctype)
                 return FetchResult(
-                    html=html, text=self._extract_text(html), status=status, content_type=ctype
+                    html=html,
+                    text=self._extract_text(html),
+                    status=status,
+                    content_type=ctype,
+                    final_url=final_url,
                 )
 
             except Exception as e:
