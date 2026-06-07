@@ -164,6 +164,9 @@ get_artifacts(url, artifact_type="")   # "table" | "image" | "figure" | "chart" 
 
 ## Multimodal RAG: anchors + `render_for_rag()`
 
+> This is summarized here; the full pipeline (Markdown output → anchors →
+> reconstructed document) has its own page: **[Markdown & RAG](markdown-rag.md)**.
+
 By default the Markdown (`emit_markdown`) and the artifacts are **two independent
 representations** — tables/images stay inline in the Markdown *and* are copied into
 the `artifacts` table. The best-practice RAG layout is instead **inline anchors +

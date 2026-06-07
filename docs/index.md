@@ -10,10 +10,13 @@ LazyCrawler fetches pages, extracts text, follows links, and — in smart mode �
 - **Pure mode**: fast, free, no API key — trafilatura text extraction + heuristic link selection
 - **Smart mode**: LLM-powered structured extraction via [LazyBridge](https://core.lazybridge.com) — switch provider/model with one string (`gpt-4o-mini`, `claude-haiku-4-5`, `gemini-flash`, `deepseek-chat`)
 - **3-level dedup**: URL+TTL cache → content hash → pure→smart upgrade (requires `CrawlerDB`)
-- **PDF support**: auto-detected, extracted with PyMuPDF / pypdf / pdfplumber
+- **Markdown + RAG assembly**: render pages to Markdown and **reconstruct one chunk-ready document** that recomposes the narrative with its extracted artifacts ([`render_for_rag`](guides/markdown-rag.md))
+- **Artifacts**: extract tables, images, charts and SVG as structured records — text, bytes, and optional vision-LLM enrichment ([guide](guides/artifacts.md))
+- **Crawl presets**: intent-level configs (`quick_lookup`, `deep_research`, `rag_ingest`, …) the agent picks by name ([guide](guides/presets.md))
+- **PDF support**: auto-detected, extracted with PyMuPDF / pypdf / pdfplumber (tables + images as artifacts too)
 - **JS/SPA rendering**: optional Playwright headless browser
 - **Agent integration**: expose crawler as LazyBridge tools for AI agents
-- **SQLite persistence**: sessions, pages, FTS5 full-text search
+- **SQLite persistence**: sessions, pages, artifacts, FTS5 full-text search
 
 ---
 
@@ -89,3 +92,6 @@ You can mix: `content="smart", links="pure"` runs LLM extraction but uses heuris
 - [WebCrawler reference](reference/webcrawler.md) — full API with examples
 - [Pure mode guide](guides/pure-mode.md) — bulk crawl cookbook
 - [Smart mode guide](guides/smart-mode.md) — LLM extraction cookbook
+- [Markdown & RAG](guides/markdown-rag.md) — render to Markdown and reconstruct one RAG-ready document from text + artifacts
+- [Artifacts](guides/artifacts.md) — tables, images and charts as structured records
+- [Crawl presets](guides/presets.md) — pick a crawl config by intent
