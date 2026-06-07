@@ -33,7 +33,8 @@ Controls traversal depth, page limits, domain filtering, and blacklists.
 | `max_pages` | `int` | `20` | Hard upper limit on total pages collected |
 | `max_links_per_level` | `int` | `15` | Branching factor: links to follow **per page** (despite the name, it is enforced once per page, not per depth level) |
 | `max_candidate_links` | `int` | `300` | Max raw link candidates extracted per page before selection (the pool `max_links_per_level` is chosen from) |
-| `same_domain_only` | `bool` | `True` | Restrict crawl to the same domain as the seed |
+| `same_domain_only` | `bool` | `True` | Restrict to the seed's registrable *site* (parent/sibling subdomains allowed) |
+| `same_host_only` | `bool` | `False` | With `same_domain_only`, restrict to the exact same hostname |
 | `max_workers` | `int` | `1` | Thread pool size. `1` = sequential DFS, `N>1` = parallel BFS |
 | `respect_robots` | `bool` | `True` | Honour `robots.txt` (including `Crawl-delay`) |
 | `strict` | `bool` | `False` | Raise exceptions on errors instead of recording them |
@@ -46,7 +47,7 @@ Controls traversal depth, page limits, domain filtering, and blacklists.
 | `large_doc_max_chunks` | `int` | `12` | Max chunks processed in map-reduce |
 | `emit_markdown` | `bool` | `False` | Render each crawled HTML page to Markdown (`PageResult.markdown`). Requires `pip install lazycrawler[markdown]` |
 | `extract_artifacts` | `bool` | `False` | Extract tables, images, charts, figures, SVG as structured `Artifact` records (HTML + PDF). See the [Artifacts guide](../guides/artifacts.md) |
-| `artifact_types` | `tuple` | `("table","image","figure","svg","chart")` | Which artifact types to collect |
+| `artifact_types` | `tuple` | `("table","image","chart","svg")` | Which artifact types to collect |
 | `download_artifact_bytes` | `bool` | `False` | Download image/chart bytes through the crawler (honors SSL + SSRF guard) → `sha256` + blob in DB |
 | `max_artifact_bytes` | `int` | `5_000_000` | Max image size stored as a blob (larger → keep hash/metadata only) |
 | `min_image_dim` | `int` | `48` | Drop images whose declared width/height is below this (filters icons/spacers) |
@@ -75,7 +76,7 @@ Controls HTTP client behaviour, timeouts, SSL, polite delays, and JavaScript ren
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `user_agent` | `str` | `"LazyCrawler/0.9 (+...)"` | HTTP User-Agent header (dedicated, not a spoofed browser) |
+| `user_agent` | `str` | `"LazyCrawler/0.12 (+...)"` | HTTP User-Agent header (dedicated, not a spoofed browser) |
 | `timeout_connect` | `int` | `5` | TCP connection timeout (seconds) |
 | `timeout_read` | `int` | `25` | Read timeout (seconds) |
 | `max_retries` | `int` | `4` | Max retry attempts on transient failures |
@@ -84,6 +85,8 @@ Controls HTTP client behaviour, timeouts, SSL, polite delays, and JavaScript ren
 | `per_host_delay` | `float` | `0.0` | Min seconds between fetches to the **same host**, in both sequential and parallel mode. robots `Crawl-delay` is honored on top (effective = larger of the two). `0` disables |
 | `min_text_chars` | `int` | `50` | Minimum extracted-text length to accept (shorter pages no longer become `no_text`; was a hardcoded 200) |
 | `pdf_timeout` | `int` | `60` | Timeout for PDF downloads (seconds) |
+| `max_redirects` | `int` | `5` | Max redirect hops; each hop is re-validated by the SSRF guard |
+| `max_html_bytes` / `max_pdf_bytes` / `max_asset_bytes` | `int` | 5MB / 50MB / 5MB | Streamed download caps (memory safety) |
 | `verify_ssl` | `bool` | `True` | Verify SSL certificates. Set `False` for Avast/Zscaler MITM |
 | `ca_bundle` | `str` | `""` | Path to custom CA certificate bundle (PEM) |
 | `render_js` | `bool` | `False` | Use Playwright for JS/SPA rendering |

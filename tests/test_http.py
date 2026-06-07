@@ -123,6 +123,13 @@ def test_fetch_retries_then_succeeds(monkeypatch):
         headers = {"Content-Type": "text/html"}
         content = b"<html><body><p>" + b"ok " * 50 + b"</p></body></html>"
         text = "<html><body><p>" + "ok " * 50 + "</p></body></html>"
+        is_redirect = False
+
+        def iter_content(self, chunk_size=0):
+            yield self.content
+
+        def close(self):
+            pass
 
         def raise_for_status(self):
             pass
@@ -160,6 +167,13 @@ def test_fetch_permanent_4xx_not_retried(monkeypatch):
         headers = {"Content-Type": "text/html"}
         content = b"not found"
         text = "not found"
+        is_redirect = False
+
+        def iter_content(self, chunk_size=0):
+            yield self.content
+
+        def close(self):
+            pass
 
         def raise_for_status(self):  # should never be reached for 4xx now
             raise requests.HTTPError("404")
@@ -184,6 +198,13 @@ def test_fetch_429_is_retried(monkeypatch):
         headers = {"Content-Type": "text/html"}
         content = b"slow down"
         text = "slow down"
+        is_redirect = False
+
+        def iter_content(self, chunk_size=0):
+            yield self.content
+
+        def close(self):
+            pass
 
         def raise_for_status(self):
             pass
@@ -249,6 +270,54 @@ def test_fetch_blocks_private_when_guard_on(monkeypatch):
     assert fr.html is None and fr.text is None and fr.status is None
 
 
+def test_fetch_blocks_redirect_to_private(monkeypatch):
+    # A public host that 30x-redirects to a private address must NOT be followed.
+    from lazycrawler import http as http_mod
+
+    client = HTTPClient(HTTPConfig(block_private_addresses=True, verify_ssl=False))
+
+    def fake_blocked(u):
+        return any(p in u for p in ("127.0.0.1", "169.254", "10.0.0"))
+
+    monkeypatch.setattr(http_mod, "is_blocked_address", fake_blocked)
+
+    class _Redir:
+        status_code = 302
+        is_redirect = True
+        headers = {"Location": "http://127.0.0.1/admin", "Content-Type": "text/html"}
+        url = "https://public.example/redirect"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(client._session, "get", lambda url, **kw: _Redir())
+    fr = client.fetch("https://public.example/redirect")
+    assert fr.html is None and fr.status is None  # redirect to private not followed
+
+
+def test_fetch_caps_html_bytes(monkeypatch):
+    client = HTTPClient(HTTPConfig(verify_ssl=False, max_html_bytes=100))
+    big = b"<html><body>" + b"a" * 10000 + b"</body></html>"
+
+    class _Resp:
+        status_code = 200
+        is_redirect = False
+        headers = {"Content-Type": "text/html"}
+        url = "https://e.org/big"
+
+        def iter_content(self, chunk_size=0):
+            for i in range(0, len(big), 32):
+                yield big[i : i + 32]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(client._session, "get", lambda url, **kw: _Resp())
+    fr = client.fetch("https://e.org/big")
+    assert fr.html is not None
+    assert len(fr.html.encode("utf-8", "replace")) <= 100  # body hard-capped
+
+
 def test_fetch_returns_pdf_bytes_by_content_type(monkeypatch):
     client = HTTPClient(HTTPConfig(verify_ssl=False))
 
@@ -257,6 +326,13 @@ def test_fetch_returns_pdf_bytes_by_content_type(monkeypatch):
         headers = {"Content-Type": "application/pdf"}
         content = b"%PDF-1.7 minimal"
         text = "garbage"
+        is_redirect = False
+
+        def iter_content(self, chunk_size=0):
+            yield self.content
+
+        def close(self):
+            pass
 
         def raise_for_status(self):
             pass

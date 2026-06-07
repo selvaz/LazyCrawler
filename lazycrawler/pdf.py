@@ -105,9 +105,11 @@ def fetch_pdf_bytes(
     timeout: int = 60,
     user_agent: str = "Mozilla/5.0",
     verify: Union[bool, str] = True,
+    max_bytes: int = 50_000_000,
 ) -> bytes:
     """
-    Download the raw bytes of a PDF.
+    Download the raw bytes of a PDF, capped at ``max_bytes`` (a huge/hostile PDF
+    cannot exhaust memory).
 
     ``verify`` mirrors HTTPConfig (verify_ssl / ca_bundle) so PDF downloads work
     in SSL-inspection environments (Avast / corporate proxies) just like HTML.
@@ -118,7 +120,11 @@ def fetch_pdf_bytes(
         method="GET",
     )
     with urlopen(req, timeout=timeout, context=_ssl_context(verify)) as resp:
-        return resp.read()
+        data = resp.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            log.warning("PDF exceeded the %d-byte cap for %s - truncating", max_bytes, url)
+            data = data[:max_bytes]
+        return data
 
 
 # =============================================================================
@@ -253,9 +259,10 @@ def extract_pdf(
     timeout: int = 60,
     user_agent: str = "Mozilla/5.0",
     verify: Union[bool, str] = True,
+    max_bytes: int = 50_000_000,
 ) -> Tuple[str, str, Optional[str]]:
     """
-    Download and extract a remote PDF.
+    Download and extract a remote PDF (download capped at ``max_bytes``).
 
     ``verify`` mirrors HTTPConfig (verify_ssl / ca_bundle).
 
@@ -265,7 +272,9 @@ def extract_pdf(
         Empty text if the download fails or no parser is available.
     """
     try:
-        data = fetch_pdf_bytes(url, timeout=timeout, user_agent=user_agent, verify=verify)
+        data = fetch_pdf_bytes(
+            url, timeout=timeout, user_agent=user_agent, verify=verify, max_bytes=max_bytes
+        )
     except Exception as e:
         log.warning("PDF download failed for %s: %s: %s", url, type(e).__name__, e)
         return "", "", None

@@ -255,3 +255,27 @@ def test_pdf_downloaded_once(stub_fetch, make_crawler, monkeypatch):
     assert "Extracted PDF text" in (r.text or "")
     assert extract_calls["bytes"] == 1  # extracted from already-fetched bytes
     assert extract_calls["url"] == 0  # no second download via extract_pdf(url)
+
+
+# -- audit fixes: same_host_only + hard max_pages cap in parallel ----------
+
+
+def test_same_host_only_blocks_parent_domain(stub_fetch, make_crawler):
+    links = (
+        '<a href="https://example.com/parent">parent site</a>'
+        '<a href="https://news.example.com/sibling">sibling page</a>'
+    )
+    stub_fetch(links_map={"https://news.example.com/seed": links})
+    c = make_crawler(max_depth=1, same_domain_only=True, same_host_only=True)
+    res = c.crawl("https://news.example.com/seed", mode="pure")
+    urls = {r.url for r in res}
+    assert not any(u.startswith("https://example.com/") for u in urls)  # parent blocked
+
+
+def test_max_pages_hard_cap_parallel(stub_fetch, make_crawler):
+    fanout = "".join(f'<a href="https://e.org/p{i}">p{i}</a>' for i in range(20))
+    stub_fetch(links_map={"https://e.org/seed": fanout})
+    c = make_crawler(max_depth=1, max_pages=3, max_workers=4)
+    res = c.crawl("https://e.org/seed", mode="pure")
+    done = [r for r in res if r.status == "done"]
+    assert len(done) <= 3  # atomic slot reservation -> hard cap even in parallel

@@ -201,12 +201,7 @@ class CrawlerDB:
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA foreign_keys=ON;")
         self.conn.executescript(_SCHEMA_SQL)
-        # Migrations for DBs created before these columns existed.
-        for _col in ("extract_json", "sentiment", "notes", "links_json", "markdown"):
-            try:
-                self.conn.execute(f"ALTER TABLE pages ADD COLUMN {_col} TEXT")
-            except sqlite3.OperationalError:
-                log.debug("pages.%s column already present (no migration needed)", _col)
+        self._migrate()
         if self.cfg.enable_fts:
             try:
                 self.conn.executescript(_FTS_SQL)
@@ -221,6 +216,26 @@ class CrawlerDB:
         # callers never strictly need db.close() (it stays available for
         # deterministic release / WAL checkpoint).
         self._finalizer = weakref.finalize(self, _quiet_close, self.conn)
+
+    # -- Schema versioning / migrations ---------------------------------------
+
+    SCHEMA_VERSION = 1
+
+    def _migrate(self) -> None:
+        """Apply forward migrations gated by ``PRAGMA user_version`` so each step
+        runs once. Legacy column adds stay idempotent (older DBs created before
+        versioning had these applied via ``ADD COLUMN`` already)."""
+        version = int(self.conn.execute("PRAGMA user_version").fetchone()[0])
+        if version < 1:
+            for col in ("extract_json", "sentiment", "notes", "links_json", "markdown"):
+                try:
+                    self.conn.execute(f"ALTER TABLE pages ADD COLUMN {col} TEXT")
+                except sqlite3.OperationalError:
+                    log.debug("pages.%s already present (no migration needed)", col)
+        if version < self.SCHEMA_VERSION:
+            self.conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
+            self.conn.commit()
+            log.debug("db schema migrated %d -> %d", version, self.SCHEMA_VERSION)
 
     # -- Sessions -------------------------------------------------------------
 
