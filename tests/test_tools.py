@@ -83,3 +83,5 @@ def test_as_tools_exposes_expected_tools(tools):
     pytest.importorskip("lazybridge")
     names = {getattr(t, "name", None) for t in tools.as_tools()}
     assert {"web_search", "web_crawl", "get_page", "search_cached", "get_session_pages"} <= names
+    # lifecycle methods must NEVER be exposed to the agent.
+    assert "close" not in names

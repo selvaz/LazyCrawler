@@ -40,7 +40,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, List, Literal, Optional, Set, Tuple
 
@@ -129,6 +129,7 @@ class _State:
     session_id: Optional[str]
     schema: Optional[type] = None
     max_depth: int = 0  # effective depth for this run (cfg or override)
+    cfg: Any = None  # effective CrawlerConfig for this run (base or preset-overridden)
     link_selector: Any = None  # sequential link-selection agent
     visited: Set[str] = field(default_factory=set)
     results: List[PageResult] = field(default_factory=list)
@@ -189,6 +190,10 @@ class WebCrawler:
         # compiled link-exclusion regex (configurable) and per-host rate limiter
         self._exclude_re = compile_exclude(self.cfg.exclude_patterns)
         self._rate = HostRateLimiter(self.http_cfg.per_host_delay, self._robots)
+        # In-flight call counter so a per-call release() never frees a session
+        # another concurrent call is still using (tool calls may overlap).
+        self._call_depth = 0
+        self._call_lock = threading.Lock()
 
     # -- public API -----------------------------------------------------------
 
@@ -203,11 +208,15 @@ class WebCrawler:
         schema: Optional[type] = None,
         session_id: Optional[str] = None,
         max_depth: Optional[int] = None,
+        overrides: Optional[dict] = None,
     ) -> List[PageResult]:
         """Crawl a single URL (and its links up to max_depth).
 
         ``max_depth`` overrides ``CrawlerConfig.max_depth`` for this call only,
-        without mutating shared config (safe for concurrent calls).
+        without mutating shared config (safe for concurrent calls). ``overrides``
+        is an optional dict of ``CrawlerConfig`` fields (e.g. ``max_pages``,
+        ``extract_artifacts``, ``emit_markdown``) applied for this call only — the
+        mechanism behind named presets (see ``lazycrawler.presets``).
         """
         return self.crawl_many(
             [url],
@@ -218,6 +227,7 @@ class WebCrawler:
             schema=schema,
             session_id=session_id,
             max_depth=max_depth,
+            overrides=overrides,
         )
 
     def crawl_many(
@@ -232,14 +242,20 @@ class WebCrawler:
         session_id: Optional[str] = None,
         source: str = "crawl",
         max_depth: Optional[int] = None,
+        overrides: Optional[dict] = None,
     ) -> List[PageResult]:
         """Crawl a list of URLs sharing state (visited set, page counter).
 
         ``max_depth`` overrides ``CrawlerConfig.max_depth`` for this call only.
+        ``overrides`` applies a dict of ``CrawlerConfig`` fields for this call
+        only (per-run effective config), without mutating ``self.cfg`` — used by
+        the named presets. Resource pools (HTTP/LLM/robots/rate limiter) and
+        ``max_workers`` are built at construction and are NOT overridable here.
         """
         content_mode: Mode = content or mode
         link_mode: Mode = links or mode
-        eff_depth = self.cfg.max_depth if max_depth is None else max(0, int(max_depth))
+        eff_cfg = replace(self.cfg, **overrides) if overrides else self.cfg
+        eff_depth = eff_cfg.max_depth if max_depth is None else max(0, int(max_depth))
         st = _State(
             content_mode=content_mode,
             link_mode=link_mode,
@@ -247,6 +263,7 @@ class WebCrawler:
             session_id=session_id,
             schema=schema,
             max_depth=eff_depth,
+            cfg=eff_cfg,
         )
 
         if self.db is not None:
@@ -269,7 +286,7 @@ class WebCrawler:
             link_mode,
             self.cfg.max_workers,
             eff_depth,
-            self.cfg.max_pages,
+            eff_cfg.max_pages,
             self.cfg.respect_robots,
             self.cfg.strict,
         )
@@ -304,7 +321,7 @@ class WebCrawler:
             self._ensure_llm()
             if st.link_mode == "smart":
                 selector = self._llm.build_link_selector(
-                    st.topic or "general relevant content", self.cfg.max_links_per_level
+                    st.topic or "general relevant content", st.cfg.max_links_per_level
                 )
         st.link_selector = selector
         return _Res(self._http, self._llm, selector)
@@ -320,7 +337,7 @@ class WebCrawler:
             llm = CrawlerLLM(self.llm_cfg or LLMConfig())
             if st.link_mode == "smart":
                 selector = llm.build_link_selector(
-                    st.topic or "general relevant content", self.cfg.max_links_per_level
+                    st.topic or "general relevant content", st.cfg.max_links_per_level
                 )
         return _Res(http, llm, selector)
 
@@ -403,7 +420,7 @@ class WebCrawler:
         Process one URL: cache/fetch/extract/emit. Returns the (already selected)
         links to follow next — the driver handles traversal. [] = nothing to follow.
         """
-        cfg = self.cfg
+        cfg = st.cfg
         if self._reached_cap(st):
             return []
         url = normalize_url(url)
@@ -430,7 +447,7 @@ class WebCrawler:
         uh = _url_hash(url)
         with st.lock:
             _page_num = st.pages_done + 1
-        log.info("[d%d | p%d/%d] %s", depth, _page_num, self.cfg.max_pages, url[:90])
+        log.info("[d%d | p%d/%d] %s", depth, _page_num, cfg.max_pages, url[:90])
 
         # robots.txt gate (enabled by default; CrawlerConfig.respect_robots=False to disable)
         if self._robots is not None and not self._robots.allowed(url):
@@ -559,7 +576,7 @@ class WebCrawler:
                     self._copy_content(existing, url, uh, candidates)
                 self.db.add_edge(st.session_id, uh, source_url=source_url, depth=depth)
                 reused = self.db.get_page(uh) or existing
-                result = self._result_from_row(reused, depth, source_url, from_cache=True)
+                result = self._result_from_row(st, reused, depth, source_url, from_cache=True)
                 self._add_counted(st, result)
                 log.debug("  content-hash dedup - reused stored content, skipped extraction")
                 return self._select_next(st, candidates, reused.get("clean_text") or "", res)
@@ -621,7 +638,7 @@ class WebCrawler:
         self, st, html, url, start_domain, depth, is_pdf
     ) -> List[Tuple[str, str]]:
         """Extract page links and filter out visited/blacklisted ones."""
-        cfg = self.cfg
+        cfg = st.cfg
         if depth >= st.max_depth:
             log.debug("  links: skipped (at max_depth=%d)", st.max_depth)
             return []
@@ -675,13 +692,13 @@ class WebCrawler:
 
         if self._satisfies(row, st.content_mode):
             log.debug("  cache hit (fresh, content=%s) - skipping fetch", st.content_mode)
-            result = self._result_from_row(row, depth, source_url, from_cache=True)
+            result = self._result_from_row(st, row, depth, source_url, from_cache=True)
             self._add_counted(st, result)
             if self.db:
                 self.db.add_edge(st.session_id, uh, source_url=source_url, depth=depth)
             # Optionally keep recursing from the links stored at crawl time, so a
             # warm cache yields the same frontier as a cold one (no re-fetch).
-            if self.cfg.recurse_from_cache and depth < st.max_depth:
+            if st.cfg.recurse_from_cache and depth < st.max_depth:
                 stored = [(a, u) for a, u in (row.get("links") or []) if u]
                 if stored:
                     cands = self._filter_candidates(st, stored)
@@ -739,7 +756,7 @@ class WebCrawler:
     def _smart_extract(
         self, st, url, uh, preclean, title, published_iso, is_pdf, depth, source_url, res
     ) -> PageResult:
-        cfg = self.cfg
+        cfg = st.cfg
         content_text = preclean[: cfg.max_chars_content]
         if len(preclean) > cfg.large_doc_threshold:
             _n_chunks = min(
@@ -825,7 +842,7 @@ class WebCrawler:
         each artifact replaced by a ``[[artifact:<hash>]]`` placeholder when Markdown
         anchoring is enabled, else None.
         """
-        cfg = self.cfg
+        cfg = st.cfg
         want = set(cfg.artifact_types or ())
         if not want:
             return [], None
@@ -863,7 +880,7 @@ class WebCrawler:
         return self._post_process_artifacts(st, arts, res), anchored_html
 
     def _post_process_artifacts(self, st, arts: List[Artifact], res) -> List[Artifact]:
-        cfg = self.cfg
+        cfg = st.cfg
         # download image/chart bytes (HTML images only have a src_url at this point)
         if cfg.download_artifact_bytes:
             for a in arts:
@@ -894,7 +911,7 @@ class WebCrawler:
     # -- link selection -------------------------------------------------------
 
     def _select_next(self, st, candidates, excerpt, res) -> List[Tuple[str, str]]:
-        cfg = self.cfg
+        cfg = st.cfg
         if not candidates:
             log.debug("  next: no candidates -> nothing queued")
             return []
@@ -943,7 +960,7 @@ class WebCrawler:
 
     def _reached_cap(self, st) -> bool:
         with st.lock:
-            return st.pages_done >= self.cfg.max_pages
+            return st.pages_done >= st.cfg.max_pages
 
     def _add_counted(self, st, result: PageResult) -> None:
         with st.lock:
@@ -1016,9 +1033,9 @@ class WebCrawler:
         )
         self.db.upsert_page(page)
 
-    def _load_artifacts(self, url_hash: str) -> List[Artifact]:
+    def _load_artifacts(self, st, url_hash: str) -> List[Artifact]:
         """Reconstruct a cached page's artifacts from the DB (blob omitted)."""
-        if self.db is None or not self.cfg.extract_artifacts or not url_hash:
+        if self.db is None or not st.cfg.extract_artifacts or not url_hash:
             return []
         try:
             return [Artifact(**a) for a in self.db.get_artifacts(url_hash=url_hash)]
@@ -1027,10 +1044,10 @@ class WebCrawler:
             return []
 
     def _result_from_row(
-        self, row: dict, depth: int, source_url: Optional[str], from_cache: bool
+        self, st, row: dict, depth: int, source_url: Optional[str], from_cache: bool
     ) -> PageResult:
         return PageResult(
-            artifacts=self._load_artifacts(row.get("url_hash", "")),
+            artifacts=self._load_artifacts(st, row.get("url_hash", "")),
             url=row.get("url", ""),
             url_hash=row.get("url_hash", ""),
             status=row.get("status", "done"),
@@ -1069,18 +1086,43 @@ class WebCrawler:
         slug = re.sub(r"[^a-z0-9]+", "-", (topic or "crawl").lower()).strip("-")[:32] or "crawl"
         return f"{slug}_{content_mode}_{ts}_{rand}"
 
-    def close(self) -> None:
-        self._http.close()
+    def release(self) -> None:
+        """Release transient HTTP resources (sockets/browser) of this crawler, its
+        robots client and any parallel-worker clients — **at the end of a call** —
+        while keeping the crawler reusable (its robots/rate caches live on and the
+        sessions are rebuilt lazily on the next call).
+        """
+        self._http.release()
         if self._robots is not None:
             try:
-                self._robots._http.close()
+                self._robots._http.release()
             except Exception:
-                log.debug("failed closing robots HTTP client", exc_info=True)
+                log.debug("failed releasing robots HTTP client", exc_info=True)
         for r in self._created_res:
             try:
-                r.http.close()
+                r.http.release()
             except Exception:
-                log.debug("failed closing a worker HTTP client", exc_info=True)
+                log.debug("failed releasing a worker HTTP client", exc_info=True)
+        self._created_res = []
+
+    # Full teardown is the same as a per-call release (sessions are lazy, so the
+    # client is simply reusable afterwards).
+    def close(self) -> None:
+        self.release()
+
+    def _begin_call(self) -> None:
+        """Mark a tool call as in flight (pairs with _end_call_release)."""
+        with self._call_lock:
+            self._call_depth += 1
+
+    def _end_call_release(self) -> None:
+        """End one in-flight call; release HTTP only when the LAST concurrent call
+        finishes, so a release never closes a session another call still uses."""
+        with self._call_lock:
+            self._call_depth = max(0, self._call_depth - 1)
+            if self._call_depth > 0:
+                return
+        self.release()
 
     def __enter__(self) -> "WebCrawler":
         return self

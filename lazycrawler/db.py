@@ -31,12 +31,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import weakref
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from ._log import log
 from .config import DBConfig
-from .http import get_base_domain, url_hash
+from .http import _quiet_close, get_base_domain, url_hash
 
 
 def utc_now_iso() -> str:
@@ -216,6 +217,10 @@ class CrawlerDB:
                 )
                 self.cfg.enable_fts = False
         self.conn.commit()
+        # Close the SQLite connection automatically on GC / interpreter exit, so
+        # callers never strictly need db.close() (it stays available for
+        # deterministic release / WAL checkpoint).
+        self._finalizer = weakref.finalize(self, _quiet_close, self.conn)
 
     # -- Sessions -------------------------------------------------------------
 
@@ -567,6 +572,7 @@ class CrawlerDB:
 
     def close(self) -> None:
         self.conn.close()
+        self._finalizer.detach()
 
     def __enter__(self) -> "CrawlerDB":
         return self

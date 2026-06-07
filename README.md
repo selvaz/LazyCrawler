@@ -132,19 +132,64 @@ agent = Agent(engine=LLMEngine("claude-haiku-4-5"), tools=crawler_tools.as_tools
 print(agent("Research solid-state batteries and summarize the 3 best sources.").text())
 ```
 
-The four tools the agent gets (rich docstrings = the schema the model reads):
+The tools the agent gets (rich docstrings = the schema the model reads):
 
 | Tool | What the agent does with it |
 |------|------------------------------|
+| `list_presets()` | discover the named presets (intent + cost) to pass as `preset=` |
 | `search_cached(query)` | search already-crawled pages — **free, no network**; try this first |
-| `web_search(query, max_results)` | search the web + crawl results into clean pages |
-| `web_crawl(url, depth)` | crawl a specific URL (and optionally its links) |
+| `web_search(query, max_results, preset)` | search the web + crawl results into clean pages |
+| `web_crawl(url, depth, preset)` | crawl a specific URL (and optionally its links) |
 | `get_page(url)` | full stored text of one page (after the snippets above) |
 
 Tools return compact JSON (truncated snippets + a `get_page` hint), so the agent
 pulls full text only when it decides to — keeping token usage low. pure/smart
 modes are fixed at construction, so the LLM never reasons about cost knobs.
 LazyBridge is imported lazily, so pure-mode use never requires it.
+
+### Presets (intent-level configs the agent picks)
+
+Instead of exposing raw knobs (depth, artifacts, markdown, recency…), the agent
+selects a **named preset** — an *intent* that bundles a ready-made configuration
+with a coarse cost hint. It calls `list_presets()` to discover them, then passes
+`preset="…"` to `web_search` / `web_crawl`. An explicit `depth` / `max_results`
+still overrides the preset.
+
+| Preset | Bundle | Cost |
+|--------|--------|------|
+| `quick_lookup` | pure · depth 0 · ~5 pages · no artifacts | minimal |
+| `deep_research` | smart content+links · depth 1 · ~20 pages · wide branching (25 links/page) · topic-driven | high |
+| `news_scan` | smart (sentiment+date) · depth 0 · last week · more results | medium |
+| `extract_data` | pure · tables/images as artifacts · depth 0 | low |
+| `rag_ingest` | pure · Markdown + artifact anchors · depth 0 | low |
+
+A preset can also tune the **branching factor** (`max_links_per_level`: links
+followed *per page*) — `deep_research` widens it; `quick_lookup`/`news_scan`
+follow no links at all (depth 0). Custom presets set it via
+`CrawlPreset(max_links_per_level=...)`.
+
+```python
+agent("...")   # the model: list_presets() -> web_search(q, preset="deep_research")
+```
+
+Presets apply **per call** (the shared `CrawlerConfig` is never mutated, so
+concurrent tool calls stay isolated). Add or override presets at construction:
+
+```python
+from lazycrawler import CrawlPreset
+from lazycrawler.tools import CrawlerTools
+
+crawler_tools = CrawlerTools(
+    db=db,
+    presets={  # merged on top of the built-in catalog (same key = override)
+        "headlines": CrawlPreset(
+            name="headlines", description="Front-page scan, last 24h",
+            content="smart", links="pure", max_depth=0, max_results=20,
+            timelimit="d", cost="medium",
+        ),
+    },
+)
+```
 
 > Don't want the `ToolProvider`? Bound methods work directly too:
 > `Agent(tools=[crawler_tools.web_search, crawler_tools.get_page])`.
@@ -335,15 +380,35 @@ It is **on by default in `CrawlerTools`** (the agent path); pass an explicit
 host that *redirects* to a private one is not caught (requests follows redirects
 internally).
 
-## Resource cleanup (context managers)
+## Resource cleanup (automatic — no `close()` in the agent path)
 
-`WebCrawler`, `WebSearch`, `CrawlerDB`, `CrawlerTools` and `HTTPClient` are context
-managers — prefer `with` so HTTP sessions / Playwright browsers are always released:
+You never call `close()` in the agent/tool path, and nothing lingers between calls:
+
+- **Per tool call**: each `web_search` / `web_crawl` **releases its HTTP sockets
+  (and browser) at the end of the call** — the call is a self-contained
+  transaction. The shared **DB cache stays open** (it's the persistent store),
+  and the HTTP session is rebuilt lazily on the next call. Release is
+  reference-counted, so a release never closes a session a concurrent call is
+  still using.
+- **As a backstop**: `HTTPClient` and `CrawlerDB` also arm a `weakref.finalize`,
+  so any remaining session / browser / SQLite connection is freed on
+  garbage-collection or at interpreter exit.
+
+Lifecycle methods are **not exposed as tools**, so the LLM can only call
+`web_search` / `web_crawl` / `get_page` / …:
 
 ```python
-with WebCrawler(CrawlerConfig(max_depth=1)) as crawler:
+crawler_tools = CrawlerTools(db=db, llm_cfg=LLMConfig(model="claude-haiku-4-5"))
+agent = Agent(engine=engine, tools=crawler_tools.as_tools())
+agent("Research solid-state batteries.")   # no close() anywhere; sockets freed per call
+```
+
+`close()` / `with` remain available for **deterministic** full teardown (they
+release immediately and are idempotent — a second `close()` is a safe no-op):
+
+```python
+with WebCrawler(CrawlerConfig(max_depth=1)) as crawler:   # optional, deterministic
     results = crawler.crawl("https://example.com/", mode="pure")
-# resources closed automatically on exit
 ```
 
 ## robots.txt & politeness
