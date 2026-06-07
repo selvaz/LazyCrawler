@@ -36,7 +36,7 @@ artifacts.py     Tables/images/charts/SVG extraction (Artifact model)
 db.py            SQLite: sessions/pages/crawl_edges/artifacts, TTL cache, FTS5
 _pipeline.py     Per-page pipeline (fetch → extract → artifact → enrich → emit)
 crawler.py       WebCrawler (pure + ml + smart, sequential + parallel BFS)
-async_crawler.py AsyncWebCrawler (aiohttp, pure mode, high-throughput)
+async_crawler.py AsyncWebCrawler (aiohttp, pure + ml, high-throughput; reuses _pipeline)
 search.py        WebSearch seeded by DuckDuckGo, Brave, Tavily, or Gemini
 presets.py       Named preset catalog (CrawlPreset, DEFAULT_PRESETS)
 tools.py         LazyBridge ToolProvider (CrawlerTools)

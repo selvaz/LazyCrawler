@@ -177,14 +177,44 @@ class PagePipeline:
         # FETCH
         self.rate.wait(url)
         fr = res.http.fetch(url)
-        html, raw_text, status_code, pdf_bytes = fr.html, fr.text, fr.status, fr.content
         log.debug(
             "  fetch: HTTP %s | html=%d chars | text=%d chars | pdf_bytes=%d",
-            status_code or "ERR",
-            len(html or ""),
-            len(raw_text or "") if raw_text else 0,
-            len(pdf_bytes or b""),
+            fr.status or "ERR",
+            len(fr.html or ""),
+            len(fr.text or "") if fr.text else 0,
+            len(fr.content or b""),
         )
+        # Post-fetch processing (extract/artifacts/persist/select) is shared with
+        # the async crawler, which performs its own (non-blocking) fetch and then
+        # delegates the tail here. Keeping it in one method guarantees the sync and
+        # async engines stay feature-identical (PDF, canonical, dedup, ml/smart,
+        # artifacts, markdown, persistence) with no divergence.
+        return self.process_fetched(st, url, uh, depth, source_url, start_domain, res, fr)
+
+    def process_fetched(
+        self,
+        st: Any,
+        url: str,
+        uh: str,
+        depth: int,
+        source_url: Optional[str],
+        start_domain: str,
+        res: Any,
+        fr: Any,
+    ) -> List[Tuple[float, str, str]]:
+        """Process an already-fetched page: redirect adoption, PDF/canonical
+        resolution, content extraction (pure/ml/smart), artifact collection,
+        Markdown rendering, persistence, and link selection.
+
+        Split out of :meth:`process_one` so both the synchronous crawler (which
+        fetches inline) and :class:`~lazycrawler.async_crawler.AsyncWebCrawler`
+        (which fetches via aiohttp, then calls this in a thread executor) share
+        the exact same post-fetch behavior. ``fr`` is any object exposing the
+        :class:`~lazycrawler.http.FetchResult` interface
+        (``html``/``text``/``status``/``content``/``final_url``).
+        """
+        cfg = st.cfg
+        html, raw_text, status_code, pdf_bytes = fr.html, fr.text, fr.status, fr.content
         if not html and not (raw_text or "").strip() and not pdf_bytes:
             log.debug("  -> fetch_error: no HTML/text/bytes returned")
             self._emit(

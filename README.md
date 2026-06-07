@@ -57,7 +57,7 @@ provider (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
 `DEEPSEEK_API_KEY`). In the ecosystem, `spyder_startup.py` adds LazyBridge to the
 path and loads `.env`.
 
-**Async mode** (high-throughput, pure mode):
+**Async mode** (high-throughput; `pure` **and** `ml`):
 
 ```bash
 pip install -e ".[async]"   # aiohttp
@@ -309,6 +309,34 @@ In a deterministic test (1 seed + 12 leaves, simulated latency) parallel is ~3×
 faster than sequential. Note: `link_delay` is not applied in parallel mode, but
 the per-host rate limiter (`HTTPConfig.per_host_delay`) and robots `Crawl-delay`
 **are** — they keep both sequential and parallel crawls polite per host.
+
+### Async mode (`pure` + `ml`)
+
+`AsyncWebCrawler` fetches over aiohttp (non-blocking I/O, `max_workers`-bounded
+concurrency) and now supports `ml` mode with full feature parity to the sync
+crawler — semantic best-first link selection (`links="ml"`), local content
+extraction (`content="ml"`), artifacts, and DB persistence/reporting. It reuses
+the **exact** synchronous post-fetch pipeline in a thread executor, so the
+CPU-bound ML work never blocks the event loop. `smart` (LLM) mode stays on the
+sync `WebCrawler`.
+
+```python
+import asyncio
+from lazycrawler import CrawlerConfig, HTTPConfig, MLConfig
+from lazycrawler.async_crawler import AsyncWebCrawler
+
+async def main():
+    cfg = CrawlerConfig(max_depth=2, max_pages=50, max_workers=8)
+    async with AsyncWebCrawler(cfg, HTTPConfig(), ml_cfg=MLConfig()) as crawler:
+        # zero-token ML: best-first links + local extraction, in parallel
+        results = await crawler.crawl(
+            "https://example.com/", mode="ml", topic="solid-state batteries"
+        )
+    for r in results:
+        print(r.status, r.mode, r.url, (r.summary or "")[:80])
+
+asyncio.run(main())
+```
 
 ## Custom output schema (smart content)
 
@@ -579,9 +607,9 @@ lazycrawler/
 ├── markdown.py      optional HTML→Markdown renderer (RAG ingestion)
 ├── artifacts.py     tables/images/charts/svg extraction (Artifact model)
 ├── db.py            SQLite: sessions + pages + crawl_edges + artifacts, dedup, TTL, FTS5
-├── _pipeline.py     per-page pipeline (fetch → extract → enrich → emit)
+├── _pipeline.py     per-page pipeline (fetch → extract → enrich → emit); shared sync/async
 ├── crawler.py       WebCrawler (pure + ml + smart, sequential + parallel)
-├── async_crawler.py AsyncWebCrawler (aiohttp, pure mode, high-throughput)
+├── async_crawler.py AsyncWebCrawler (aiohttp, pure + ml, high-throughput; reuses _pipeline)
 ├── search.py        WebSearch (DDG / Brave / Tavily / Gemini)
 ├── presets.py       named preset catalog (CrawlPreset, DEFAULT_PRESETS)
 └── tools.py         LazyBridge ToolProvider (CrawlerTools)

@@ -10,9 +10,21 @@ of the sync crawler and does not share state with it.
 
 Modes
 -----
-Only ``content="pure"`` is currently supported (no LLM / ML in the async path).
-Smart/ML extraction can be layered on top by post-processing ``PageResult``
-objects with ``CrawlerLLM`` or ``MLEngine`` after the crawl completes.
+``content`` / ``links`` accept ``"pure"`` or ``"ml"`` (set both via ``mode=``):
+
+  - ``pure`` — clean text only (the original async behavior).
+  - ``ml``   — zero-token local ML: semantic best-first link selection
+    (``links="ml"``) and/or local content extraction (``content="ml"``:
+    TextRank summary, YAKE topics, spaCy entities, VADER sentiment).
+
+The async engine fetches over aiohttp (non-blocking I/O) but reuses the *exact*
+synchronous post-fetch pipeline (``PagePipeline.process_fetched``) for redirect
+adoption, PDF/canonical handling, content extraction, artifact collection,
+Markdown rendering and DB persistence — run in a thread executor so the CPU-bound
+ML work never blocks the event loop. This guarantees full feature parity with the
+synchronous ``WebCrawler`` (artifacts, persistence/reporting, dedup) across both
+``pure`` and ``ml`` modes. ``smart`` (LLM) extraction is intentionally *not*
+available on the async path — use the synchronous ``WebCrawler`` for that.
 
 Requirements
 ------------
@@ -45,19 +57,27 @@ Usage
 from __future__ import annotations
 
 import asyncio
+import heapq
 import ipaddress
+import itertools
 import re
 import socket
+import threading
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import List, Optional, Set, Tuple
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
+from typing import Any, List, Literal, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 from ._log import log
-from .config import CrawlerConfig, HTTPConfig
+from ._pipeline import PagePipeline
+from .config import CrawlerConfig, HTTPConfig, MLConfig
+from .crawler import WebCrawler, _Res, _State
 from .http import (
+    FetchResult,
+    HTTPClient,
     compile_exclude,
     get_hostname,
     is_blacklisted_domain,
@@ -65,6 +85,9 @@ from .http import (
 )
 from .http import url_hash as _url_hash
 from .models import PageResult
+from .ratelimit import HostRateLimiter
+
+Mode = Literal["pure", "ml"]
 
 try:
     import aiohttp
@@ -166,7 +189,21 @@ class _AsyncFetchResult:
     html: Optional[str] = None
     text: Optional[str] = None
     status: Optional[int] = None
+    content: Optional[bytes] = None  # raw bytes for PDFs (downloaded once)
+    content_type: str = ""
     final_url: Optional[str] = None  # last hop after manual redirect following
+
+    def to_fetch_result(self) -> FetchResult:
+        """Adapt to the synchronous :class:`~lazycrawler.http.FetchResult` shape
+        consumed by ``PagePipeline.process_fetched``."""
+        return FetchResult(
+            html=self.html,
+            text=self.text,
+            status=self.status,
+            content=self.content,
+            content_type=self.content_type,
+            final_url=self.final_url,
+        )
 
 
 class _AsyncHTTPClient:
@@ -234,10 +271,11 @@ class _AsyncHTTPClient:
                 if 400 <= status < 600:
                     return _AsyncFetchResult(status=status, final_url=current)
                 content_type = resp.headers.get("Content-Type", "").lower()
-                if "application/pdf" in content_type or current.lower().endswith(".pdf"):
-                    return _AsyncFetchResult(status=status, final_url=current)  # skip PDFs
-                # Stream the body, stopping at the byte cap (avoids buffering a
-                # hostile/huge response fully into memory).
+                is_pdf = "application/pdf" in content_type or current.lower().endswith(".pdf")
+                # PDFs are downloaded once as raw bytes (capped); text extraction
+                # is deferred to the shared pipeline (extract_pdf_bytes), matching
+                # the synchronous client. HTML is streamed to max_html_bytes.
+                cap = cfg.max_pdf_bytes if is_pdf else cfg.max_html_bytes
                 total = 0
                 chunks: List[bytes] = []
                 async for chunk in resp.content.iter_chunked(65536):
@@ -245,9 +283,16 @@ class _AsyncHTTPClient:
                         continue
                     chunks.append(chunk)
                     total += len(chunk)
-                    if total >= cfg.max_html_bytes:
+                    if total >= cap:
                         break
-                body = b"".join(chunks)[: cfg.max_html_bytes]
+                body = b"".join(chunks)[:cap]
+                if is_pdf:
+                    return _AsyncFetchResult(
+                        status=status,
+                        content=body,
+                        content_type=content_type,
+                        final_url=current,
+                    )
                 enc = None
                 if "charset=" in content_type:
                     enc = content_type.split("charset=")[-1].split(";")[0].strip() or None
@@ -340,43 +385,52 @@ class _AsyncRobotsChecker:
 
 
 # =============================================================================
-# PER-RUN STATE
-# =============================================================================
-
-
-@dataclass
-class _AsyncState:
-    topic: str
-    max_depth: int
-    cfg: CrawlerConfig
-    visited: Set[str] = field(default_factory=set)
-    visited_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    results: List[PageResult] = field(default_factory=list)
-    results_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    pages_done: int = 0
-
-
-# =============================================================================
 # ASYNC WEB CRAWLER
 # =============================================================================
+#
+# Shared per-run state (``_State``) and per-worker resources (``_Res``) come from
+# the synchronous crawler so the async engine reuses the exact same post-fetch
+# pipeline. The async layer owns only the non-blocking I/O (robots, rate, fetch)
+# and the traversal orchestration; everything after the fetch is delegated to
+# ``PagePipeline.process_fetched`` in a thread executor.
 
 
 class AsyncWebCrawler:
     """
-    High-throughput async web crawler (pure mode).
+    High-throughput async web crawler with full ``pure`` / ``ml`` parity.
+
+    Fetches over aiohttp (non-blocking) and reuses the synchronous
+    :class:`~lazycrawler._pipeline.PagePipeline` for all post-fetch processing
+    (content extraction, artifacts, persistence) in a thread executor, so the
+    CPU-bound ML work never blocks the event loop and behavior matches the
+    synchronous :class:`~lazycrawler.crawler.WebCrawler`.
+
+    Parameters
+    ----------
+    crawler_cfg, http_cfg :
+        As in :class:`~lazycrawler.crawler.WebCrawler`.
+    db : CrawlerDB | None
+        Optional persistence layer (sessions, pages, edges, artifacts). The
+        async engine writes through it from executor threads (it is thread-safe).
+    ml_cfg : MLConfig | None
+        Configuration for ``ml`` mode (semantic link scoring / local extraction).
 
     .. note::
        ``block_private_addresses`` defaults to ``True`` in the async crawler
        (unlike the sync ``WebCrawler``). Pass ``HTTPConfig(block_private_addresses=False)``
        explicitly for internal/intranet use.
 
-    Requirements: ``pip install aiohttp`` (or ``pip install lazycrawler[async]``).
+    Requirements: ``pip install aiohttp`` (or ``pip install lazycrawler[async]``);
+    ``ml`` mode additionally needs ``pip install lazycrawler[ml]`` (and ``[nlp]``
+    for ``content="ml"`` entities/sentiment).
     """
 
     def __init__(
         self,
         crawler_cfg: Optional[CrawlerConfig] = None,
         http_cfg: Optional[HTTPConfig] = None,
+        db: Any = None,
+        ml_cfg: Optional[MLConfig] = None,
     ):
         if not _AIOHTTP_OK:
             raise RuntimeError(
@@ -388,12 +442,12 @@ class AsyncWebCrawler:
         # SSRF guard is ON by default in the async crawler (external URL use case).
         raw_http = http_cfg or HTTPConfig()
         if not raw_http.block_private_addresses:
-            from dataclasses import replace
-
             self.http_cfg = replace(raw_http, block_private_addresses=True)
             log.debug("AsyncWebCrawler: block_private_addresses enabled by default")
         else:
             self.http_cfg = raw_http
+        self.ml_cfg = ml_cfg
+        self.db = db
         self.blacklist = list(self.cfg.blacklist)
         self._exclude_re = compile_exclude(self.cfg.exclude_patterns)
         self._http = _AsyncHTTPClient(self.http_cfg)
@@ -403,195 +457,331 @@ class AsyncWebCrawler:
             else None
         )
         self._rate = _AsyncRateLimiter(self.http_cfg.per_host_delay)
+        # Shared synchronous post-fetch pipeline. robots=None: the async path does
+        # robots/rate/SSRF before the fetch, so the pipeline must not redo blocking
+        # robots calls. The (synchronous) rate limiter is used only for artifact
+        # byte downloads that the pipeline performs inside executor threads.
+        self._pipeline = PagePipeline(
+            blacklist=self.blacklist,
+            http_cfg=self.http_cfg,
+            db=self.db,
+            robots=None,
+            rate=HostRateLimiter(self.http_cfg.per_host_delay),
+            exclude_re=self._exclude_re,
+        )
+        # Per-worker (thread-local) resources built lazily in executor threads.
+        self._tls = threading.local()
+        self._created_res: List[_Res] = []
+        self._res_lock = threading.Lock()
+
+    # -- public API -----------------------------------------------------------
 
     async def crawl(
         self,
         url: str,
         *,
+        mode: Mode = "pure",
+        content: Optional[Mode] = None,
+        links: Optional[Mode] = None,
         topic: str = "",
-        max_depth: Optional[int] = None,
+        schema: Optional[type] = None,
         session_id: Optional[str] = None,
+        max_depth: Optional[int] = None,
+        overrides: Optional[dict] = None,
+        ml_overrides: Optional[dict] = None,
     ) -> List[PageResult]:
-        """Crawl a URL and its links (pure mode, no LLM)."""
-        return await self.crawl_many([url], topic=topic, max_depth=max_depth, session_id=session_id)
+        """Crawl a URL and its links. ``mode``/``content``/``links`` accept
+        ``"pure"`` or ``"ml"`` (see the module docstring)."""
+        return await self.crawl_many(
+            [url],
+            mode=mode,
+            content=content,
+            links=links,
+            topic=topic,
+            schema=schema,
+            session_id=session_id,
+            max_depth=max_depth,
+            overrides=overrides,
+            ml_overrides=ml_overrides,
+        )
 
     async def crawl_many(
         self,
         urls: List[str],
         *,
+        mode: Mode = "pure",
+        content: Optional[Mode] = None,
+        links: Optional[Mode] = None,
         topic: str = "",
-        max_depth: Optional[int] = None,
+        schema: Optional[type] = None,
         session_id: Optional[str] = None,
+        source: str = "crawl",
+        max_depth: Optional[int] = None,
+        overrides: Optional[dict] = None,
+        ml_overrides: Optional[dict] = None,
     ) -> List[PageResult]:
-        """Crawl multiple seed URLs sharing state (pure mode, no LLM)."""
-        eff_depth = self.cfg.max_depth if max_depth is None else max(0, int(max_depth))
-        st = _AsyncState(topic=topic, max_depth=eff_depth, cfg=self.cfg)
-        seeds = [u for u in urls if not is_blacklisted_domain(u, self.blacklist)]
+        """Crawl multiple seed URLs sharing state (visited set, page counter)."""
+        content_mode: Mode = content or mode
+        link_mode: Mode = links or mode
+        for which, m in (("content", content_mode), ("links", link_mode)):
+            if m not in ("pure", "ml"):
+                raise ValueError(
+                    f"AsyncWebCrawler {which}={m!r} is not supported; use 'pure' or 'ml'. "
+                    "For 'smart' (LLM) extraction use the synchronous WebCrawler."
+                )
+        eff_cfg = replace(self.cfg, **overrides) if overrides else self.cfg
+        base_ml = self.ml_cfg or MLConfig()
+        eff_ml_cfg = replace(base_ml, **ml_overrides) if ml_overrides else base_ml
+        eff_depth = eff_cfg.max_depth if max_depth is None else max(0, int(max_depth))
+        st = _State(
+            content_mode=content_mode,
+            link_mode=link_mode,
+            topic=topic,
+            session_id=session_id,
+            schema=schema,
+            max_depth=eff_depth,
+            cfg=eff_cfg,
+            ml_cfg=eff_ml_cfg,
+        )
+        # Fresh per-run worker pool / resources.
+        self._tls = threading.local()
+        self._created_res = []
+
+        if self.db is not None:
+            st.session_id = session_id or WebCrawler._default_session_id(topic, content_mode)
+            self.db.create_session(
+                st.session_id,
+                topic=topic,
+                seed=urls[0] if urls else "",
+                mode=content_mode,
+                source=source,
+            )
+
+        seeds = [
+            (normalize_url(u), get_hostname(u))
+            for u in urls
+            if not is_blacklisted_domain(u, self.blacklist)
+        ]
+        workers = max(1, eff_cfg.max_workers)
         log.info(
-            "async crawl: seeds=%d depth=%d max_pages=%d workers=%d",
+            "async crawl: content=%s links=%s seeds=%d depth=%d max_pages=%d workers=%d",
+            content_mode,
+            link_mode,
             len(seeds),
             eff_depth,
-            self.cfg.max_pages,
-            self.cfg.max_workers,
+            eff_cfg.max_pages,
+            workers,
         )
-        # BFS level-by-level with concurrency limited by max_workers
-        frontier = [(normalize_url(u), get_hostname(u), None) for u in seeds]
-        depth = 0
-        sem = asyncio.Semaphore(max(1, self.cfg.max_workers))
-        while frontier and not await self._cap(st):
-            tasks = [self._process(st, url, depth, src, dom, sem) for (url, dom, src) in frontier]
-            next_lists = await asyncio.gather(*tasks, return_exceptions=False)
-            seen_next: Set[str] = set()
-            next_frontier = []
-            if depth < eff_depth:
-                # zip preserves order, so each child carries its true parent URL.
-                for (parent_url, _pdom, _psrc), links in zip(frontier, next_lists, strict=False):
-                    for link_url, link_dom in links or []:
-                        nu = normalize_url(link_url)
-                        if nu not in seen_next:
-                            seen_next.add(nu)
-                            next_frontier.append((link_url, link_dom, parent_url))
-            frontier = next_frontier
-            depth += 1
-            if depth > eff_depth:
-                break
+
+        executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="lc-async")
+        try:
+            if link_mode == "ml" and eff_ml_cfg.best_first:
+                await self._crawl_best_first(st, seeds, executor, workers)
+            else:
+                await self._crawl_bfs(st, seeds, executor, workers)
+        finally:
+            executor.shutdown(wait=True)
+            self._close_worker_res()
+
         log.info("async crawl done: %d pages collected", len(st.results))
         return st.results
 
-    async def _cap(self, st: _AsyncState) -> bool:
-        async with st.results_lock:
-            return st.pages_done >= st.cfg.max_pages
+    # -- traversal strategies -------------------------------------------------
 
-    async def _mark_visited(self, st: _AsyncState, url: str) -> bool:
-        async with st.visited_lock:
-            if url in st.visited:
-                return False
-            st.visited.add(url)
-            return True
+    async def _crawl_bfs(self, st, seeds, executor, workers: int) -> None:
+        """Level-by-level BFS (links="pure", or ml with best_first disabled)."""
+        frontier: List[Tuple[str, str, Optional[str]]] = [(u, dom, None) for (u, dom) in seeds]
+        depth = 0
+        sem = asyncio.Semaphore(workers)
+        while frontier and not self._cap(st):
+            tasks = [
+                self._process(st, executor, url, depth, src, dom, sem)
+                for (url, dom, src) in frontier
+            ]
+            results = await asyncio.gather(*tasks)
+            if depth >= st.max_depth:
+                break
+            next_frontier: List[Tuple[str, str, Optional[str]]] = []
+            seen_next: Set[str] = set()
+            # zip preserves order, so each child carries its true parent URL/domain.
+            for (parent_url, parent_dom, _src), links in zip(frontier, results, strict=False):
+                for _score, _anchor, link_url in links or []:
+                    nu = normalize_url(link_url)
+                    if nu in seen_next:
+                        continue
+                    seen_next.add(nu)
+                    next_frontier.append((link_url, parent_dom, parent_url))
+            frontier = next_frontier
+            depth += 1
+
+    async def _crawl_best_first(self, st, seeds, executor, workers: int) -> None:
+        """Best-first BFS (links="ml"): a globally score-ordered frontier, expanded
+        ``workers`` pages at a time (async analogue of ``WebCrawler._crawl_ordered``)."""
+        counter = itertools.count()
+        heap: List[Tuple[float, int, int, str, Optional[str], str]] = []
+        for url, dom in seeds:
+            heapq.heappush(heap, (-1e9, 0, next(counter), url, None, dom))
+        min_score = st.ml_cfg.min_link_score
+        sem = asyncio.Semaphore(workers)
+        while heap and not self._cap(st):
+            wave = [heapq.heappop(heap) for _ in range(min(workers, len(heap)))]
+            tasks = [
+                self._process(st, executor, url, depth, src, dom, sem)
+                for (_neg, depth, _cnt, url, src, dom) in wave
+            ]
+            results = await asyncio.gather(*tasks)
+            for (_neg, parent_depth, _cnt, parent_url, _src, parent_dom), links in zip(
+                wave, results, strict=False
+            ):
+                if parent_depth >= st.max_depth:
+                    continue
+                for score, _anchor, link_url in links or []:
+                    if score < min_score:
+                        continue
+                    heapq.heappush(
+                        heap,
+                        (-score, parent_depth + 1, next(counter), link_url, parent_url, parent_dom),
+                    )
+
+    # -- per-URL processing ---------------------------------------------------
 
     async def _process(
         self,
-        st: _AsyncState,
+        st,
+        executor: ThreadPoolExecutor,
         url: str,
         depth: int,
         source_url: Optional[str],
         start_domain: str,
         sem: asyncio.Semaphore,
-    ) -> List[Tuple[str, str]]:
-        """Process one URL; return (url, domain) pairs for the next frontier."""
+    ) -> List[Tuple[float, str, str]]:
+        """Async pre-checks + non-blocking fetch, then delegate post-fetch work to
+        the shared synchronous pipeline in a thread executor. Returns the selected
+        links ``[(score, anchor, url)]`` for the next frontier."""
         async with sem:
-            return await self._do_process(st, url, depth, source_url, start_domain)
-
-    async def _do_process(
-        self, st: _AsyncState, url: str, depth: int, source_url: Optional[str], start_domain: str
-    ) -> List[Tuple[str, str]]:
-        if await self._cap(st):
-            return []
-        url = normalize_url(url)
-        if is_blacklisted_domain(url, self.blacklist):
-            return []
-        if self.http_cfg.block_private_addresses and await _is_blocked_async(url):
-            log.info("async SSRF guard: blocking %s", url)
-            return []
-        if not await self._mark_visited(st, url):
-            return []
-
-        # robots.txt
-        if self._robots is not None and not await self._robots.allowed(url):
-            log.info("async: robots.txt disallows %s", url)
-            async with st.results_lock:
-                st.results.append(
-                    PageResult(
-                        url=url,
-                        url_hash=_url_hash(url),
-                        status="robots_blocked",
-                        mode="pure",
-                        depth=depth,
-                        source_url=source_url,
-                        error="Disallowed by robots.txt",
-                    )
-                )
-            return []
-
-        await self._rate.wait(url)
-        fr = await self._http.fetch(url)
-        if not fr.html and not fr.text:
-            async with st.results_lock:
-                st.results.append(
-                    PageResult(
-                        url=url,
-                        url_hash=_url_hash(url),
-                        status="fetch_error",
-                        mode="pure",
-                        depth=depth,
-                        source_url=source_url,
-                        error=f"Fetch failed (status={fr.status})",
-                    )
-                )
-            return []
-
-        # Adopt the post-redirect URL as the page identity (re-validate first) so
-        # link/cache/provenance reflect the real origin (async analogue of the sync
-        # pipeline's redirect adoption).
-        requested_url: Optional[str] = None
-        final = normalize_url(fr.final_url or url)
-        if final != url:
-            if is_blacklisted_domain(final, self.blacklist):
+            if self._cap(st):
                 return []
-            if self.http_cfg.block_private_addresses and await _is_blocked_async(final):
-                log.info("async SSRF guard: blocking redirect target %s", final)
+            url = normalize_url(url)
+            if is_blacklisted_domain(url, self.blacklist):
                 return []
-            if self._robots is not None and not await self._robots.allowed(final):
+            if self.http_cfg.block_private_addresses and await _is_blocked_async(url):
+                log.info("async SSRF guard: blocking %s", url)
+                self._emit_status(
+                    st,
+                    url,
+                    depth,
+                    source_url,
+                    "fetch_error",
+                    "Blocked private/loopback address (SSRF guard)",
+                )
+                return []
+            if not self._mark_visited(st, url):
+                return []
+            if self._robots is not None and not await self._robots.allowed(url):
+                log.info("async: robots.txt disallows %s", url)
+                self._emit_status(
+                    st, url, depth, source_url, "robots_blocked", "Disallowed by robots.txt"
+                )
+                return []
+
+            await self._rate.wait(url)
+            afr = await self._http.fetch(url)
+
+            # Robots gate on the post-redirect target (the sync pipeline does this
+            # too; we run it on the async path because the pipeline has robots=None).
+            final = normalize_url(afr.final_url or url)
+            if final != url and self._robots is not None and not await self._robots.allowed(final):
                 log.info("async: robots.txt disallows redirect target %s", final)
-                return []
-            requested_url, url = url, final
-            if not await self._mark_visited(st, url):
+                self._emit_status(
+                    st,
+                    url,
+                    depth,
+                    source_url,
+                    "robots_blocked",
+                    "Disallowed by robots.txt (redirect target)",
+                )
                 return []
 
-        cfg = st.cfg
-        page = PageResult(
-            url=url,
-            url_hash=_url_hash(url),
-            status="done",
-            mode="pure",
-            text=(fr.text or "")[: cfg.max_chars_pure] or None,
-            depth=depth,
-            source_url=source_url,
-            requested_url=requested_url,
+            fr = afr.to_fetch_result()
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                executor, self._run_pipeline, st, url, depth, source_url, start_domain, fr
+            )
+
+    def _run_pipeline(self, st, url, depth, source_url, start_domain, fr):
+        """Executed in a worker thread: build/reuse per-thread resources and run
+        the shared post-fetch pipeline."""
+        res = self._worker_res(st)
+        return self._pipeline.process_fetched(
+            st, url, _url_hash(url), depth, source_url, start_domain, res, fr
         )
-        async with st.results_lock:
-            if st.pages_done >= cfg.max_pages:
-                return []
-            st.results.append(page)
-            st.pages_done += 1
-        log.info("[d%d | p%d] %s", depth, st.pages_done, url[:90])
 
-        if depth >= st.max_depth or not fr.html:
-            return []
+    # -- resources ------------------------------------------------------------
 
-        # link extraction
-        from .text import extract_candidate_links
+    def _build_res(self, st) -> _Res:
+        http = HTTPClient(self.http_cfg)  # sync client: artifact byte downloads / PDFs
+        ml = None
+        if st.content_mode == "ml" or st.link_mode == "ml":
+            from .ml import MLEngine
 
-        candidates = extract_candidate_links(
-            fr.html,
-            url,
-            start_domain,
-            same_domain_only=cfg.same_domain_only,
-            max_links=cfg.max_candidate_links,
-            exclude_pattern=self._exclude_re,
-            same_host_only=cfg.same_host_only,
+            ml = MLEngine(st.ml_cfg)
+        selector = None
+        if st.link_mode == "ml" and ml is not None:
+            selector = ml.build_link_selector(
+                st.topic or "general relevant content", st.cfg.max_links_per_level
+            )
+        return _Res(http, llm=None, ml=ml, link_selector=selector)
+
+    def _worker_res(self, st) -> _Res:
+        r = getattr(self._tls, "res", None)
+        if r is None:
+            r = self._build_res(st)
+            self._tls.res = r
+            with self._res_lock:
+                self._created_res.append(r)
+        return r
+
+    def _close_worker_res(self) -> None:
+        for r in self._created_res:
+            try:
+                r.http.close()
+            except Exception:
+                log.debug("failed closing a worker HTTP client", exc_info=True)
+        self._created_res = []
+
+    # -- state helpers (synchronous: shared _State uses a threading lock) ------
+
+    @staticmethod
+    def _cap(st) -> bool:
+        with st.lock:
+            return st.pages_done >= st.cfg.max_pages
+
+    @staticmethod
+    def _mark_visited(st, url: str) -> bool:
+        with st.lock:
+            if url in st.visited:
+                return False
+            st.visited.add(url)
+            return True
+
+    def _emit_status(self, st, url, depth, source_url, status, error) -> None:
+        self._pipeline._emit(
+            st,
+            PageResult(
+                url=url,
+                url_hash=_url_hash(url),
+                status=status,
+                mode=st.content_mode,
+                depth=depth,
+                source_url=source_url,
+                error=error,
+            ),
+            count=False,
         )
-        async with st.visited_lock:
-            visited_snap = set(st.visited)
-        links = [
-            (u, get_hostname(u))
-            for (_a, u) in candidates[: cfg.max_links_per_level]
-            if normalize_url(u) not in visited_snap and not is_blacklisted_domain(u, self.blacklist)
-        ]
-        return links
 
     async def close(self) -> None:
         await self._http.close()
+        self._close_worker_res()
 
     async def __aenter__(self) -> "AsyncWebCrawler":
         return self
