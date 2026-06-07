@@ -1,23 +1,25 @@
 # LazyCrawler
 
-A **generic** web crawler + search with **two modes** and SQLite persistence,
+A **generic** web crawler + search with **three modes** and SQLite persistence,
 built for the [LazyBridge](https://github.com/selvaz/LazyBridge) ecosystem.
 Works on any kind of web content — not tied to any domain.
 
-There are **two independent LLM knobs**, toggled separately:
+There are **two independent knobs** (content / links), each taking one of
+**three values** — `pure`, `ml`, or `smart`:
 
-| Knob | `pure` | `smart` |
-|------|--------|----------|
-| **content** (page text) | trafilatura/regex, raw clean text | LLM structured extraction (title, summary, entities, topics, **sentiment**, notes) |
-| **links** (which to follow) | heuristic (first N, filtered) | LLM relevance ranking against the topic |
+| Knob | `pure` | `ml` (no-LLM, zero tokens) | `smart` |
+|------|--------|----------------------------|---------|
+| **content** (page text) | trafilatura/regex clean text | TextRank summary + YAKE topics + spaCy entities + VADER sentiment | LLM structured extraction (title, summary, entities, topics, **sentiment**, notes) |
+| **links** (which to follow) | heuristic (first N) | best-first **semantic** scoring (Model2Vec) | LLM relevance ranking against the topic |
 
 `mode` is a shortcut that sets both; `content=` / `links=` override either one:
 
 ```python
-crawl(url, mode="smart")                     # content=smart, links=smart
-crawl(url, mode="pure")                       # content=pure,  links=pure   (no LLM)
-crawl(url, content="smart", links="pure")     # LLM summary, heuristic links
-crawl(url, content="pure",  links="smart")    # no summary, LLM picks the links
+crawl(url, mode="pure")                       # no LLM
+crawl(url, mode="ml",    topic="...")         # local ML, no LLM, zero tokens
+crawl(url, mode="smart")                       # LLM (content + links)
+crawl(url, content="smart", links="ml")        # LLM extraction, semantic frontier for free
+crawl(url, content="pure",  links="smart")     # no summary, LLM picks the links
 ```
 
 **WebSearch is a derivation of WebCrawler**: it seeds itself from a search

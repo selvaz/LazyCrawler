@@ -67,7 +67,11 @@ The crawler stops as soon as either limit is hit.
 
 ## Domain filtering
 
-By default, `same_domain_only=True` restricts the crawler to the **same domain** as the seed URL. Domain matching uses the full `netloc` (host), so `www.example.com` and `example.com` are treated as different domains.
+By default, `same_domain_only=True` restricts the crawler to the seed's
+**registrable site** ("same site-ish"): from `news.example.com` a link to
+`example.com` (parent) or `blog.example.com` (sibling) is allowed. Set
+`same_host_only=True` for a strict same-hostname rule, or `same_domain_only=False`
+to follow any link.
 
 ```python
 # Only follows links within docs.example.com
@@ -106,7 +110,7 @@ Visited filter — remove already-crawled or blacklisted URLs
 Candidate pool
     │
     ▼
-Link selection (pure: score-ranked top N  |  smart: LLM picks from list)
+Link selection (pure: first-N  |  ml: best-first semantic score  |  smart: LLM picks)
     │
     ▼
 Next URLs to visit
@@ -138,15 +142,15 @@ Before fetching, check if the URL was crawled within `ttl_hours` (default: 24h).
 
 After fetching, hash the raw text. If the same hash exists in the DB (e.g., a redirect to a page already crawled under a different URL), skip LLM processing.
 
-**Level 3 — Pure → Smart upgrade**
+**Level 3 — Pure → ML/Smart upgrade**
 
-If a page was previously crawled in pure mode and is now requested in smart mode, LazyCrawler can re-process the cached text through the LLM without re-fetching.
+If a page was previously crawled in pure mode and is now requested in `ml` or `smart` mode, LazyCrawler re-processes the cached text (local ML or LLM) without re-fetching. Cache richness order is `pure < ml < smart` (a richer cached page satisfies a lighter request).
 
 ```
 DB hit (URL + TTL)  →  return cached result  (no HTTP, no LLM)
 DB miss             →  fetch page
   content_hash hit  →  skip LLM, reuse existing extraction
-  content_hash miss →  extract (pure or smart)
+  content_hash miss →  extract (pure/ml/smart)
 ```
 
 ---
