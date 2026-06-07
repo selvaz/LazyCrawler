@@ -187,7 +187,7 @@ DEFAULT_PRESETS: Dict[str, CrawlPreset] = {
         max_pages=5,
         max_results=6,
         extract_artifacts=True,
-        artifact_types=("table", "image", "figure", "chart"),
+        artifact_types=("table", "image", "chart"),
     ),
     "research_ml": CrawlPreset(
         name="research_ml",
@@ -199,6 +199,67 @@ DEFAULT_PRESETS: Dict[str, CrawlPreset] = {
         ),
         cost="minimal",
         content="ml",
+        links="ml",
+        max_depth=1,
+        max_pages=20,
+        max_links_per_level=25,
+    ),
+    "news_scan_ml": CrawlPreset(
+        name="news_scan_ml",
+        description=(
+            "Zero-token news/monitoring sweep: local ML extraction (sentiment, "
+            "entities, topics) on the last week's results, no link-following, more "
+            "results — no LLM, no API cost. Use for current-events monitoring at scale."
+        ),
+        cost="minimal",
+        content="ml",
+        links="pure",
+        max_depth=0,
+        max_pages=15,
+        max_results=15,
+        timelimit="w",
+    ),
+    "topic_explore_ml": CrawlPreset(
+        name="topic_explore_ml",
+        description=(
+            "Map a topic's link neighborhood: a best-first SEMANTIC frontier follows "
+            "the most relevant links deep (depth 2), with cheap clean-text content "
+            "and no LLM. Use to discover sources around a topic at zero token cost."
+        ),
+        cost="low",
+        content="pure",
+        links="ml",
+        max_depth=2,
+        max_pages=30,
+        max_links_per_level=20,
+    ),
+    "rag_ingest_ml": CrawlPreset(
+        name="rag_ingest_ml",
+        description=(
+            "RAG ingestion with local enrichment, zero tokens: Markdown with artifact "
+            "anchors PLUS local summary/topics/entities/sentiment (ML), no LLM. Use to "
+            "load enriched pages into a vector store / RAG pipeline for free."
+        ),
+        cost="low",
+        content="ml",
+        links="pure",
+        max_depth=0,
+        max_pages=8,
+        max_results=8,
+        extract_artifacts=True,
+        emit_markdown=True,
+        markdown_artifact_anchors=True,
+    ),
+    "hybrid_research": CrawlPreset(
+        name="hybrid_research",
+        description=(
+            "Deep research at reduced cost: a best-first SEMANTIC frontier (links=ml, "
+            "free) chooses the most relevant links, and the LLM (content=smart) extracts "
+            "structure only on the pages reached. Use when you want LLM-quality content "
+            "but a token-free, topic-guided crawl."
+        ),
+        cost="medium",
+        content="smart",
         links="ml",
         max_depth=1,
         max_pages=20,

@@ -167,6 +167,14 @@ still overrides the preset.
 | `extract_data` | pure · tables/images as artifacts · depth 0 | low |
 | `rag_ingest` | pure · Markdown + artifact anchors · depth 0 | low |
 | `research_ml` | **ml** content+links · best-first · depth 1 · zero tokens | minimal |
+| `news_scan_ml` | **ml** content · last-week monitoring (sentiment+entities) · zero tokens | minimal |
+| `topic_explore_ml` | **ml** links · semantic best-first · depth 2 · maps a topic | low |
+| `rag_ingest_ml` | **ml** content · Markdown anchors + local summary/topics · zero tokens | low |
+| `hybrid_research` | **ml** links (free frontier) + **smart** content (LLM on winners) | medium |
+
+The `*_ml` / `hybrid_*` presets are the **zero-token** (or reduced-token) tier — a
+semantic best-first frontier and/or local structured extraction, no LLM. See the
+[ML Mode guide](https://github.com/selvaz/lazycrawler/blob/main/docs/guides/ml-mode.md).
 
 A preset can also tune the **branching factor** (`max_links_per_level`: links
 followed *per page*) — `deep_research` widens it; `quick_lookup`/`news_scan`

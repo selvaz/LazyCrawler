@@ -29,6 +29,10 @@ agent = Agent(engine=engine, tools=tools.as_tools())
 | `extract_data` | Pull tables/images off a page | pure / pure | 0 | — | 5 | artifacts (table/image/figure/chart) | — | low |
 | `rag_ingest` | Load pages into a RAG pipeline | pure / pure | 0 | — | 8 | Markdown + artifact anchors | — | low |
 | `research_ml` | Zero-token research (local ML) | ml / ml | 1 | 25 | 20 | best-first frontier | — | minimal |
+| `news_scan_ml` | Zero-token news monitoring | ml / pure | 0 | — | 15 | sentiment+entities (local) | last week | minimal |
+| `topic_explore_ml` | Map a topic via semantic frontier | pure / ml | 2 | 20 | 30 | best-first, deep | — | low |
+| `rag_ingest_ml` | RAG ingestion + local enrichment | ml / pure | 0 | — | 8 | Markdown anchors + ML summary/topics | — | low |
+| `hybrid_research` | Semantic frontier (free) + LLM content | smart / ml | 1 | 25 | 20 | LLM only on reached pages | — | medium |
 
 Notes:
 
