@@ -189,8 +189,15 @@ class WebCrawler:
         the shared instance (the preset mechanism).
         """
         return self.crawl_many(
-            [url], mode=mode, content=content, links=links, topic=topic, schema=schema,
-            session_id=session_id, max_depth=max_depth, overrides=overrides,
+            [url],
+            mode=mode,
+            content=content,
+            links=links,
+            topic=topic,
+            schema=schema,
+            session_id=session_id,
+            max_depth=max_depth,
+            overrides=overrides,
             ml_overrides=ml_overrides,
         )
 
@@ -217,27 +224,39 @@ class WebCrawler:
         eff_ml_cfg = replace(base_ml, **ml_overrides) if ml_overrides else base_ml
         eff_depth = eff_cfg.max_depth if max_depth is None else max(0, int(max_depth))
         st = _State(
-            content_mode=content_mode, link_mode=link_mode, topic=topic,
-            session_id=session_id, schema=schema, max_depth=eff_depth,
-            cfg=eff_cfg, ml_cfg=eff_ml_cfg,
+            content_mode=content_mode,
+            link_mode=link_mode,
+            topic=topic,
+            session_id=session_id,
+            schema=schema,
+            max_depth=eff_depth,
+            cfg=eff_cfg,
+            ml_cfg=eff_ml_cfg,
         )
 
         if self.db is not None:
             st.session_id = session_id or self._default_session_id(topic, content_mode)
             self.db.create_session(
-                st.session_id, topic=topic, seed=urls[0] if urls else "",
-                mode=content_mode, source=source,
+                st.session_id,
+                topic=topic,
+                seed=urls[0] if urls else "",
+                mode=content_mode,
+                source=source,
             )
 
         seeds = [
-            (u, get_base_domain(u)) for u in urls
-            if not is_blacklisted_domain(u, self.blacklist)
+            (u, get_base_domain(u)) for u in urls if not is_blacklisted_domain(u, self.blacklist)
         ]
 
         log.info(
             "crawl: content=%s links=%s workers=%d depth=%d max_pages=%d robots=%s strict=%s",
-            content_mode, link_mode, self.cfg.max_workers, eff_depth,
-            eff_cfg.max_pages, self.cfg.respect_robots, self.cfg.strict,
+            content_mode,
+            link_mode,
+            self.cfg.max_workers,
+            eff_depth,
+            eff_cfg.max_pages,
+            self.cfg.respect_robots,
+            self.cfg.strict,
         )
         log.debug("seeds: %d URL(s), start_domain(s): %s", len(seeds), [d for _, d in seeds])
 
@@ -270,6 +289,7 @@ class WebCrawler:
         ml = None
         if st.content_mode == "ml" or st.link_mode == "ml":
             from .ml import MLEngine
+
             ml = MLEngine(st.ml_cfg)
         selector = self._build_link_selector(st, self._llm, ml)
         st.link_selector = selector
@@ -280,9 +300,11 @@ class WebCrawler:
         llm = ml = None
         if st.content_mode == "smart" or st.link_mode == "smart":
             from .llm import CrawlerLLM
+
             llm = CrawlerLLM(self.llm_cfg or LLMConfig())
         if st.content_mode == "ml" or st.link_mode == "ml":
             from .ml import MLEngine
+
             ml = MLEngine(st.ml_cfg)
         selector = self._build_link_selector(st, llm, ml)
         return _Res(http, llm=llm, ml=ml, link_selector=selector)
@@ -375,7 +397,11 @@ class WebCrawler:
                 while heap and not self._cap_reached(st):
                     wave = [heapq.heappop(heap) for _ in range(min(workers, len(heap)))]
                     fut_map = {
-                        pool.submit(self._worker_process, st, url, depth, src, dom): (url, depth, dom)
+                        pool.submit(self._worker_process, st, url, depth, src, dom): (
+                            url,
+                            depth,
+                            dom,
+                        )
                         for (_neg, depth, _cnt, url, src, dom) in wave
                     }
                     for fut in as_completed(fut_map):
@@ -394,8 +420,14 @@ class WebCrawler:
                                 continue
                             heapq.heappush(
                                 heap,
-                                (-score, parent_depth + 1, next(counter),
-                                 link_url, parent_url, parent_dom),
+                                (
+                                    -score,
+                                    parent_depth + 1,
+                                    next(counter),
+                                    link_url,
+                                    parent_url,
+                                    parent_dom,
+                                ),
                             )
         finally:
             self._close_worker_res()
@@ -422,6 +454,7 @@ class WebCrawler:
     def _ensure_llm(self) -> None:
         if self._llm is None:
             from .llm import CrawlerLLM
+
             self._llm = CrawlerLLM(self.llm_cfg or LLMConfig())
 
     @staticmethod

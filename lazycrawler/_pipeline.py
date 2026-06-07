@@ -56,6 +56,7 @@ def _crawler_fn(name):
     this is always called at function execution time, never at module load time.
     """
     import lazycrawler.crawler as _cm  # lazy: avoids circular import at module level
+
     return getattr(_cm, name)
 
 
@@ -156,8 +157,13 @@ class PagePipeline:
             self._emit(
                 st,
                 PageResult(
-                    url=url, url_hash=uh, status="robots_blocked", mode=st.content_mode,
-                    depth=depth, source_url=source_url, error="Disallowed by robots.txt",
+                    url=url,
+                    url_hash=uh,
+                    status="robots_blocked",
+                    mode=st.content_mode,
+                    depth=depth,
+                    source_url=source_url,
+                    error="Disallowed by robots.txt",
                 ),
                 count=False,
             )
@@ -184,8 +190,13 @@ class PagePipeline:
             self._emit(
                 st,
                 PageResult(
-                    url=url, url_hash=uh, status="fetch_error", mode=st.content_mode,
-                    depth=depth, source_url=source_url, error=f"Fetch failed (status={status_code})",
+                    url=url,
+                    url_hash=uh,
+                    status="fetch_error",
+                    mode=st.content_mode,
+                    depth=depth,
+                    source_url=source_url,
+                    error=f"Fetch failed (status={status_code})",
                 ),
                 count=False,
             )
@@ -199,8 +210,12 @@ class PagePipeline:
                 self._emit(
                     st,
                     PageResult(
-                        url=url, url_hash=uh, status="robots_blocked", mode=st.content_mode,
-                        depth=depth, source_url=source_url,
+                        url=url,
+                        url_hash=uh,
+                        status="robots_blocked",
+                        mode=st.content_mode,
+                        depth=depth,
+                        source_url=source_url,
                         error="Disallowed by robots.txt (redirect target)",
                     ),
                     count=False,
@@ -235,7 +250,9 @@ class PagePipeline:
                 cnorm = normalize_url(canonical)
                 if is_blacklisted_domain(cnorm, self.blacklist):
                     return []
-                if self.http_cfg.block_private_addresses and _crawler_fn("is_blocked_address")(cnorm):
+                if self.http_cfg.block_private_addresses and _crawler_fn("is_blocked_address")(
+                    cnorm
+                ):
                     log.info("canonical points to a blocked address - ignoring: %s", cnorm[:90])
                 elif cnorm != url and self._mark_visited(st, cnorm):
                     url = cnorm
@@ -250,9 +267,15 @@ class PagePipeline:
         if not (raw_text or "").strip():
             log.debug("  -> no_text: trafilatura/fallback returned nothing")
             nt = PageResult(
-                url=url, url_hash=uh, status="no_text", mode=st.content_mode,
-                depth=depth, source_url=source_url, published_iso=published_iso,
-                is_pdf=is_pdf, error="No extractable text",
+                url=url,
+                url_hash=uh,
+                status="no_text",
+                mode=st.content_mode,
+                depth=depth,
+                source_url=source_url,
+                published_iso=published_iso,
+                is_pdf=is_pdf,
+                error="No extractable text",
             )
             if cfg.extract_artifacts:
                 nt.artifacts, _ = self._collect_artifacts(st, html, url, pdf_bytes, is_pdf, res)
@@ -287,12 +310,21 @@ class PagePipeline:
         if st.content_mode == "pure":
             log.debug(
                 "  content [pure]: %d chars (preclean=%d, limit=%d)",
-                min(len(preclean), cfg.max_chars_pure), len(preclean), cfg.max_chars_pure,
+                min(len(preclean), cfg.max_chars_pure),
+                len(preclean),
+                cfg.max_chars_pure,
             )
             result = PageResult(
-                url=url, url_hash=uh, status="done", mode="pure", title=title,
-                text=preclean[: cfg.max_chars_pure], published_iso=published_iso,
-                is_pdf=is_pdf, depth=depth, source_url=source_url,
+                url=url,
+                url_hash=uh,
+                status="done",
+                mode="pure",
+                title=title,
+                text=preclean[: cfg.max_chars_pure],
+                published_iso=published_iso,
+                is_pdf=is_pdf,
+                depth=depth,
+                source_url=source_url,
             )
         elif st.content_mode == "ml":
             log.debug("  content [ml]: local extraction (preclean=%d chars)...", len(preclean))
@@ -315,11 +347,13 @@ class PagePipeline:
         # optional Markdown render for RAG ingestion (HTML only)
         if cfg.emit_markdown and html and not is_pdf:
             from .markdown import html_to_markdown
+
             md = html_to_markdown(anchored_html or html, url)
             result.markdown = (md[: cfg.max_chars_pure] if md else None) or None
 
         self._emit(
-            st, result,
+            st,
+            result,
             count=(result.status == "done"),
             raw_text=raw_text,
             content_hash=chash,
@@ -337,6 +371,7 @@ class PagePipeline:
         self, st: Any, html: Optional[str], url: str, start_domain: str, depth: int, is_pdf: bool
     ) -> List[Tuple[str, str]]:
         from .text import extract_candidate_links
+
         cfg = st.cfg
         if depth >= st.max_depth:
             log.debug("  links: skipped (at max_depth=%d)", st.max_depth)
@@ -346,7 +381,9 @@ class PagePipeline:
                 log.debug("  links: skipped (PDF)")
             return []
         candidates = extract_candidate_links(
-            html, url, start_domain,
+            html,
+            url,
+            start_domain,
             same_domain_only=cfg.same_domain_only,
             max_links=cfg.max_candidate_links,
             exclude_pattern=self.exclude_re,
@@ -354,19 +391,24 @@ class PagePipeline:
         )
         return self._filter_candidates(st, candidates)
 
-    def _filter_candidates(self, st: Any, candidates: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+    def _filter_candidates(
+        self, st: Any, candidates: List[Tuple[str, str]]
+    ) -> List[Tuple[str, str]]:
         before = len(candidates)
         with st.lock:
             visited_snapshot = set(st.visited)
         filtered = [
-            (t, u) for (t, u) in candidates
+            (t, u)
+            for (t, u) in candidates
             if normalize_url(u) not in visited_snapshot
             and not is_blacklisted_domain(u, self.blacklist)
         ]
         if before:
             log.debug(
                 "  candidates: %d -> -%d visited/blacklisted -> %d to explore",
-                before, before - len(filtered), len(filtered),
+                before,
+                before - len(filtered),
+                len(filtered),
             )
         return filtered
 
@@ -395,7 +437,8 @@ class PagePipeline:
                     cands = self._filter_candidates(st, stored)
                     log.debug(
                         "  cache recurse: %d stored link(s) -> %d to follow",
-                        len(stored), len(cands),
+                        len(stored),
+                        len(cands),
                     )
                     return self._select_next(st, cands, row.get("clean_text") or "", res)
             return []
@@ -407,11 +450,21 @@ class PagePipeline:
                 preclean = preprocess_text(base)
                 enrich = self._ml_extract if st.content_mode == "ml" else self._smart_extract
                 result = enrich(
-                    st, url, uh, preclean, row.get("title") or "",
-                    row.get("published_iso"), bool(row.get("is_pdf")), depth, source_url, res,
+                    st,
+                    url,
+                    uh,
+                    preclean,
+                    row.get("title") or "",
+                    row.get("published_iso"),
+                    bool(row.get("is_pdf")),
+                    depth,
+                    source_url,
+                    res,
                 )
                 self._emit(
-                    st, result, count=(result.status == "done"),
+                    st,
+                    result,
+                    count=(result.status == "done"),
                     raw_text=row.get("raw_text") or base,
                     content_hash=row.get("content_hash") or _content_hash(base),
                 )
@@ -447,12 +500,20 @@ class PagePipeline:
         extract = res.ml.extract_content(url, preclean[: cfg.max_chars_content], schema=None)
         text = (getattr(extract, "clean_text", None) or preclean[: cfg.max_chars_pure]) or None
         return PageResult(
-            url=url, url_hash=uh, status="done", mode="ml", title=title, text=text,
+            url=url,
+            url_hash=uh,
+            status="done",
+            mode="ml",
+            title=title,
+            text=text,
             summary=getattr(extract, "summary", None) or None,
             entities=list(getattr(extract, "entities", None) or []),
             topics=list(getattr(extract, "topics", None) or []),
             sentiment=getattr(extract, "sentiment", None),
-            published_iso=published_iso, is_pdf=is_pdf, depth=depth, source_url=source_url,
+            published_iso=published_iso,
+            is_pdf=is_pdf,
+            depth=depth,
+            source_url=source_url,
         )
 
     def _smart_extract(
@@ -466,11 +527,17 @@ class PagePipeline:
             )
             log.debug(
                 "  large-doc: %d chars > threshold=%d -> LLM map-reduce (%d chunks ~%d chars ea)",
-                len(preclean), cfg.large_doc_threshold, _n_chunks, cfg.large_doc_chunk_chars,
+                len(preclean),
+                cfg.large_doc_threshold,
+                _n_chunks,
+                cfg.large_doc_chunk_chars,
             )
             content_text = res.llm.summarize_large(
-                url, preclean, max_chars_out=cfg.max_chars_content,
-                threshold=cfg.large_doc_threshold, chunk_chars=cfg.large_doc_chunk_chars,
+                url,
+                preclean,
+                max_chars_out=cfg.max_chars_content,
+                threshold=cfg.large_doc_threshold,
+                chunk_chars=cfg.large_doc_chunk_chars,
                 max_chunks=cfg.large_doc_max_chunks,
             )
             log.debug("  large-doc: summarized to %d chars", len(content_text))
@@ -479,8 +546,15 @@ class PagePipeline:
         if extract is None:
             log.debug("  content [smart]: LLM returned None (llm_error)")
             return PageResult(
-                url=url, url_hash=uh, status="llm_error", mode="smart", title=title,
-                published_iso=published_iso, is_pdf=is_pdf, depth=depth, source_url=source_url,
+                url=url,
+                url_hash=uh,
+                status="llm_error",
+                mode="smart",
+                title=title,
+                published_iso=published_iso,
+                is_pdf=is_pdf,
+                depth=depth,
+                source_url=source_url,
                 error="LLM extraction failed",
             )
 
@@ -495,15 +569,29 @@ class PagePipeline:
         _sentiment_out = getattr(extract, "sentiment", None)
         log.debug(
             "  content [smart]: title=%r | summary=%d chars | %d entities | %d topics | sentiment=%s",
-            (_title_out or "")[:60], len(_summary_out), len(_entities_out),
-            len(_topics_out), _sentiment_out or "?",
+            (_title_out or "")[:60],
+            len(_summary_out),
+            len(_entities_out),
+            len(_topics_out),
+            _sentiment_out or "?",
         )
         return PageResult(
-            url=url, url_hash=uh, status="done", mode="smart", title=_title_out,
-            text=text, summary=_summary_out or None, entities=_entities_out,
-            topics=_topics_out, sentiment=_sentiment_out,
-            notes=getattr(extract, "notes", None) or None, data=data,
-            published_iso=published_iso, is_pdf=is_pdf, depth=depth, source_url=source_url,
+            url=url,
+            url_hash=uh,
+            status="done",
+            mode="smart",
+            title=_title_out,
+            text=text,
+            summary=_summary_out or None,
+            entities=_entities_out,
+            topics=_topics_out,
+            sentiment=_sentiment_out,
+            notes=getattr(extract, "notes", None) or None,
+            data=data,
+            published_iso=published_iso,
+            is_pdf=is_pdf,
+            depth=depth,
+            source_url=source_url,
         )
 
     # -------------------------------------------------------------------------
@@ -523,14 +611,18 @@ class PagePipeline:
         try:
             if is_pdf and pdf_bytes:
                 from .pdf import extract_pdf_artifacts
+
                 for d in extract_pdf_artifacts(
-                    pdf_bytes, want=want, max_artifacts=cfg.max_artifacts_per_page,
+                    pdf_bytes,
+                    want=want,
+                    max_artifacts=cfg.max_artifacts_per_page,
                     min_image_dim=cfg.min_image_dim,
                 ):
                     arts.append(Artifact(**d))
             elif html:
                 opts = dict(
-                    types=want, min_image_dim=cfg.min_image_dim,
+                    types=want,
+                    min_image_dim=cfg.min_image_dim,
                     context_chars=cfg.artifact_context_chars,
                     max_artifacts=cfg.max_artifacts_per_page,
                     same_domain_images=cfg.same_domain_images,
@@ -604,12 +696,13 @@ class PagePipeline:
             selected = candidates[: cfg.max_links_per_level]
             log.debug(
                 "  next: heuristic (first %d of %d) -> %d queued",
-                cfg.max_links_per_level, len(candidates), len(selected),
+                cfg.max_links_per_level,
+                len(candidates),
+                len(selected),
             )
             scored = [(0.0, a, u) for (a, u) in selected]
         after_bl = [
-            (s, a, u) for (s, a, u) in scored
-            if not is_blacklisted_domain(u, self.blacklist)
+            (s, a, u) for (s, a, u) in scored if not is_blacklisted_domain(u, self.blacklist)
         ]
         if len(after_bl) < len(scored):
             log.debug(
@@ -643,8 +736,13 @@ class PagePipeline:
             st.pages_done += 1
 
     def _emit(
-        self, st, result: PageResult, *, count: bool,
-        raw_text: Optional[str] = None, content_hash: Optional[str] = None,
+        self,
+        st,
+        result: PageResult,
+        *,
+        count: bool,
+        raw_text: Optional[str] = None,
+        content_hash: Optional[str] = None,
         candidate_links: Optional[List[Tuple[str, str]]] = None,
     ) -> None:
         with st.lock:
@@ -657,26 +755,41 @@ class PagePipeline:
             return
         self.db.upsert_page(
             {
-                "url": result.url, "url_hash": result.url_hash,
+                "url": result.url,
+                "url_hash": result.url_hash,
                 "domain": get_base_domain(result.url),
-                "is_pdf": result.is_pdf, "status": result.status, "mode": result.mode,
-                "error": result.error, "raw_text": raw_text, "clean_text": result.text,
-                "title": result.title, "summary": result.summary,
-                "entities": result.entities, "topics": result.topics,
-                "sentiment": result.sentiment, "notes": result.notes,
-                "data": result.data, "markdown": result.markdown,
-                "published_iso": result.published_iso, "content_hash": content_hash,
+                "is_pdf": result.is_pdf,
+                "status": result.status,
+                "mode": result.mode,
+                "error": result.error,
+                "raw_text": raw_text,
+                "clean_text": result.text,
+                "title": result.title,
+                "summary": result.summary,
+                "entities": result.entities,
+                "topics": result.topics,
+                "sentiment": result.sentiment,
+                "notes": result.notes,
+                "data": result.data,
+                "markdown": result.markdown,
+                "published_iso": result.published_iso,
+                "content_hash": content_hash,
                 "links": [[a, u] for (a, u) in (candidate_links or [])] or None,
             }
         )
         if st.session_id:
             self.db.add_edge(
-                st.session_id, result.url_hash,
-                source_url=result.source_url, depth=result.depth,
+                st.session_id,
+                result.url_hash,
+                source_url=result.source_url,
+                depth=result.depth,
             )
 
     def _copy_content(
-        self, existing: dict, url: str, uh: str,
+        self,
+        existing: dict,
+        url: str,
+        uh: str,
         candidate_links: Optional[List[Tuple[str, str]]] = None,
     ) -> None:
         page = dict(existing)
@@ -687,7 +800,8 @@ class PagePipeline:
         page.pop("links", None)
         page["links_json"] = (
             json.dumps([[a, u] for (a, u) in candidate_links], ensure_ascii=False)
-            if candidate_links else None
+            if candidate_links
+            else None
         )
         self.db.upsert_page(page)
 
@@ -705,12 +819,23 @@ class PagePipeline:
     ) -> PageResult:
         return PageResult(
             artifacts=self._load_artifacts(st, row.get("url_hash", "")),
-            url=row.get("url", ""), url_hash=row.get("url_hash", ""),
-            status=row.get("status", "done"), mode=row.get("mode", "pure"),
-            title=row.get("title"), text=row.get("clean_text"), summary=row.get("summary"),
-            entities=row.get("entities") or [], topics=row.get("topics") or [],
-            sentiment=row.get("sentiment"), notes=row.get("notes"), data=row.get("data"),
-            published_iso=row.get("published_iso"), is_pdf=bool(row.get("is_pdf")),
-            depth=depth, source_url=source_url, error=row.get("error"),
-            from_cache=from_cache, markdown=row.get("markdown"),
+            url=row.get("url", ""),
+            url_hash=row.get("url_hash", ""),
+            status=row.get("status", "done"),
+            mode=row.get("mode", "pure"),
+            title=row.get("title"),
+            text=row.get("clean_text"),
+            summary=row.get("summary"),
+            entities=row.get("entities") or [],
+            topics=row.get("topics") or [],
+            sentiment=row.get("sentiment"),
+            notes=row.get("notes"),
+            data=row.get("data"),
+            published_iso=row.get("published_iso"),
+            is_pdf=bool(row.get("is_pdf")),
+            depth=depth,
+            source_url=source_url,
+            error=row.get("error"),
+            from_cache=from_cache,
+            markdown=row.get("markdown"),
         )

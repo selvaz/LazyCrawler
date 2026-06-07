@@ -69,12 +69,14 @@ from .models import PageResult
 
 try:
     import aiohttp
+
     _AIOHTTP_OK = True
 except ImportError:
     _AIOHTTP_OK = False
 
 try:
     import trafilatura  # type: ignore
+
     _TRAFILATURA_OK = True
 except ImportError:
     _TRAFILATURA_OK = False
@@ -90,7 +92,11 @@ async def _is_blocked_async(url: str) -> bool:
     host = get_hostname(url)
     if not host:
         return True
-    if host == "localhost" or host.endswith(".local") or host in {"metadata", "metadata.google.internal"}:
+    if (
+        host == "localhost"
+        or host.endswith(".local")
+        or host in {"metadata", "metadata.google.internal"}
+    ):
         return True
     loop = asyncio.get_event_loop()
     try:
@@ -106,7 +112,14 @@ async def _is_blocked_async(url: str) -> bool:
         mapped = getattr(ip, "ipv4_mapped", None)
         if mapped is not None:
             ip = mapped
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
             return True
     return False
 
@@ -205,7 +218,9 @@ class _AsyncHTTPClient:
                 if attempt < cfg.max_retries:
                     await asyncio.sleep(cfg.backoff_base_sec * (2 ** (attempt - 1)))
                 else:
-                    log.warning("async fetch failed for %s after %d attempts: %s", url, attempt, exc)
+                    log.warning(
+                        "async fetch failed for %s after %d attempts: %s", url, attempt, exc
+                    )
                     return _AsyncFetchResult()
         return _AsyncFetchResult()
 
@@ -341,6 +356,7 @@ class AsyncWebCrawler:
         raw_http = http_cfg or HTTPConfig()
         if not raw_http.block_private_addresses:
             from dataclasses import replace
+
             self.http_cfg = replace(raw_http, block_private_addresses=True)
             log.debug("AsyncWebCrawler: block_private_addresses enabled by default")
         else:
@@ -350,7 +366,8 @@ class AsyncWebCrawler:
         self._http = _AsyncHTTPClient(self.http_cfg)
         self._robots: Optional[_AsyncRobotsChecker] = (
             _AsyncRobotsChecker(self._http, self.http_cfg.user_agent)
-            if self.cfg.respect_robots else None
+            if self.cfg.respect_robots
+            else None
         )
         self._rate = _AsyncRateLimiter(self.http_cfg.per_host_delay)
 
@@ -363,9 +380,7 @@ class AsyncWebCrawler:
         session_id: Optional[str] = None,
     ) -> List[PageResult]:
         """Crawl a URL and its links (pure mode, no LLM)."""
-        return await self.crawl_many(
-            [url], topic=topic, max_depth=max_depth, session_id=session_id
-        )
+        return await self.crawl_many([url], topic=topic, max_depth=max_depth, session_id=session_id)
 
     async def crawl_many(
         self,
@@ -381,23 +396,23 @@ class AsyncWebCrawler:
         seeds = [u for u in urls if not is_blacklisted_domain(u, self.blacklist)]
         log.info(
             "async crawl: seeds=%d depth=%d max_pages=%d workers=%d",
-            len(seeds), eff_depth, self.cfg.max_pages, self.cfg.max_workers,
+            len(seeds),
+            eff_depth,
+            self.cfg.max_pages,
+            self.cfg.max_workers,
         )
         # BFS level-by-level with concurrency limited by max_workers
         frontier = [(normalize_url(u), get_base_domain(u), None) for u in seeds]
         depth = 0
         sem = asyncio.Semaphore(max(1, self.cfg.max_workers))
         while frontier and not await self._cap(st):
-            tasks = [
-                self._process(st, url, depth, src, dom, sem)
-                for (url, dom, src) in frontier
-            ]
+            tasks = [self._process(st, url, depth, src, dom, sem) for (url, dom, src) in frontier]
             next_lists = await asyncio.gather(*tasks, return_exceptions=False)
             seen_next: Set[str] = set()
             frontier = []
             if depth < eff_depth:
                 for links in next_lists:
-                    for link_url, link_dom in (links or []):
+                    for link_url, link_dom in links or []:
                         nu = normalize_url(link_url)
                         if nu not in seen_next:
                             seen_next.add(nu)
@@ -420,8 +435,13 @@ class AsyncWebCrawler:
             return True
 
     async def _process(
-        self, st: _AsyncState, url: str, depth: int, source_url: Optional[str],
-        start_domain: str, sem: asyncio.Semaphore,
+        self,
+        st: _AsyncState,
+        url: str,
+        depth: int,
+        source_url: Optional[str],
+        start_domain: str,
+        sem: asyncio.Semaphore,
     ) -> List[Tuple[str, str]]:
         """Process one URL; return (url, domain) pairs for the next frontier."""
         async with sem:
@@ -445,29 +465,45 @@ class AsyncWebCrawler:
         if self._robots is not None and not await self._robots.allowed(url):
             log.info("async: robots.txt disallows %s", url)
             async with st.results_lock:
-                st.results.append(PageResult(
-                    url=url, url_hash=_url_hash(url), status="robots_blocked",
-                    mode="pure", depth=depth, source_url=source_url,
-                    error="Disallowed by robots.txt",
-                ))
+                st.results.append(
+                    PageResult(
+                        url=url,
+                        url_hash=_url_hash(url),
+                        status="robots_blocked",
+                        mode="pure",
+                        depth=depth,
+                        source_url=source_url,
+                        error="Disallowed by robots.txt",
+                    )
+                )
             return []
 
         await self._rate.wait(url)
         fr = await self._http.fetch(url)
         if not fr.html and not fr.text:
             async with st.results_lock:
-                st.results.append(PageResult(
-                    url=url, url_hash=_url_hash(url), status="fetch_error",
-                    mode="pure", depth=depth, source_url=source_url,
-                    error=f"Fetch failed (status={fr.status})",
-                ))
+                st.results.append(
+                    PageResult(
+                        url=url,
+                        url_hash=_url_hash(url),
+                        status="fetch_error",
+                        mode="pure",
+                        depth=depth,
+                        source_url=source_url,
+                        error=f"Fetch failed (status={fr.status})",
+                    )
+                )
             return []
 
         cfg = st.cfg
         page = PageResult(
-            url=url, url_hash=_url_hash(url), status="done", mode="pure",
+            url=url,
+            url_hash=_url_hash(url),
+            status="done",
+            mode="pure",
             text=(fr.text or "")[: cfg.max_chars_pure] or None,
-            depth=depth, source_url=source_url,
+            depth=depth,
+            source_url=source_url,
         )
         async with st.results_lock:
             if st.pages_done >= cfg.max_pages:
@@ -481,8 +517,11 @@ class AsyncWebCrawler:
 
         # link extraction
         from .text import extract_candidate_links
+
         candidates = extract_candidate_links(
-            fr.html, url, start_domain,
+            fr.html,
+            url,
+            start_domain,
             same_domain_only=cfg.same_domain_only,
             max_links=cfg.max_candidate_links,
             exclude_pattern=self._exclude_re,
@@ -491,9 +530,9 @@ class AsyncWebCrawler:
         async with st.visited_lock:
             visited_snap = set(st.visited)
         links = [
-            (u, get_base_domain(u)) for (_a, u) in candidates[: cfg.max_links_per_level]
-            if normalize_url(u) not in visited_snap
-            and not is_blacklisted_domain(u, self.blacklist)
+            (u, get_base_domain(u))
+            for (_a, u) in candidates[: cfg.max_links_per_level]
+            if normalize_url(u) not in visited_snap and not is_blacklisted_domain(u, self.blacklist)
         ]
         return links
 
