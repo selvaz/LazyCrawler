@@ -133,3 +133,37 @@ print(f"Total: {len(results)} pages across {len(seeds)} seeds")
 
 !!! tip
     `crawl_many` with `max_workers=1` still processes seeds sequentially within a shared page budget. Use `max_workers > 1` to parallelize across seeds.
+
+---
+
+## Async parallel (`AsyncWebCrawler`) — `pure` + `ml`
+
+For I/O-bound crawls, `AsyncWebCrawler` fetches over aiohttp with
+`max_workers`-bounded concurrency. It supports both `pure` and `ml` modes
+(`smart`/LLM stays on the synchronous `WebCrawler`) and reuses the **exact** same
+post-fetch pipeline as the sync crawler, so you get the same content extraction,
+semantic best-first link selection, artifacts and DB persistence — the CPU-bound
+ML work runs in a thread executor so it never blocks the event loop.
+
+```python
+import asyncio
+from lazycrawler import CrawlerConfig, HTTPConfig, MLConfig
+from lazycrawler.async_crawler import AsyncWebCrawler
+
+async def main():
+    cfg = CrawlerConfig(max_depth=2, max_pages=50, max_workers=8)
+    async with AsyncWebCrawler(cfg, HTTPConfig(), ml_cfg=MLConfig()) as crawler:
+        results = await crawler.crawl(
+            "https://example.com/", mode="ml", topic="solid-state batteries"
+        )
+    return results
+
+asyncio.run(main())
+```
+
+- `links="ml"` (or `mode="ml"`) uses a globally score-ordered **best-first**
+  frontier, expanded `max_workers` pages at a time.
+- `content="ml"` fills `summary` / `topics` / `entities` / `sentiment` locally.
+- Pass a `db=CrawlerDB(...)` to persist sessions/pages/edges/artifacts.
+
+Install the extras you need: `pip install "lazycrawler[async,ml,nlp]"`.
