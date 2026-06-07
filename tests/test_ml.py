@@ -188,3 +188,21 @@ def test_research_ml_preset_present():
 
     p = DEFAULT_PRESETS["research_ml"]
     assert p.content == "ml" and p.links == "ml"
+
+
+def test_ml_min_link_score_override_prunes_frontier(stub_fetch, make_crawler):
+    # per-call ml_overrides (the MLConfig knob behind presets like topic_explore_ml)
+    links = '<a href="https://e.org/a">a</a><a href="https://e.org/b">b</a>'
+    stub_fetch(links_map={"https://e.org/seed": links})
+
+    # impossibly high gate -> every child is pruned, only the seed is crawled
+    gated = make_crawler(max_depth=1, max_pages=50).crawl(
+        "https://e.org/seed", links="ml", topic="x", ml_overrides={"min_link_score": 9.0}
+    )
+    assert len([r for r in gated if r.status == "done"]) == 1
+
+    # no gate (default 0) -> children are followed
+    free = make_crawler(max_depth=1, max_pages=50).crawl(
+        "https://e.org/seed", links="ml", topic="x"
+    )
+    assert len([r for r in free if r.status == "done"]) >= 2

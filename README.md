@@ -168,7 +168,8 @@ still overrides the preset.
 | `rag_ingest` | pure · Markdown + artifact anchors · depth 0 | low |
 | `research_ml` | **ml** content+links · best-first · depth 1 · zero tokens | minimal |
 | `news_scan_ml` | **ml** content · last-week monitoring (sentiment+entities) · zero tokens | minimal |
-| `topic_explore_ml` | **ml** links · semantic best-first · depth 2 · maps a topic | low |
+| `topic_explore_ml` | **ml** links · semantic best-first · depth 2 · gate 0.35 · maps a topic | low |
+| `triage_ml` | **ml** links · strong-only (gate 0.5) · depth 1 · zero-token source shortlist | minimal |
 | `rag_ingest_ml` | **ml** content · Markdown anchors + local summary/topics · zero tokens | low |
 | `hybrid_research` | **ml** links (free frontier) + **smart** content (LLM on winners) | medium |
 
@@ -312,7 +313,7 @@ The render is independent of pure/smart — it works in both.
 ## Artifacts (tables, images, charts)
 
 Beyond clean text, the crawler can extract a page's **non-textual content** as
-structured `Artifact` records — tables, images, figures, charts and inline SVG —
+structured `Artifact` records — tables, images, charts and inline SVG —
 each kept whole with its caption / surrounding context and provenance.
 
 ```python
@@ -526,7 +527,7 @@ lazycrawler/
 ├── prompts.py   LLM prompts (smart mode only, domain-agnostic)
 ├── llm.py       LazyBridge wrapper (structured output via output=PydanticModel)
 ├── markdown.py  optional HTML->Markdown renderer (RAG ingestion)
-├── artifacts.py tables/images/figures/charts/svg extraction (Artifact model)
+├── artifacts.py tables/images/charts/svg extraction (Artifact model)
 ├── db.py        SQLite: sessions + pages + crawl_edges + artifacts, dedup, TTL, FTS5
 ├── crawler.py   WebCrawler (pure + smart)
 └── search.py    WebSearch (DDG / Brave / Tavily / Gemini)

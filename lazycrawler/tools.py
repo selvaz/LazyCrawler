@@ -245,6 +245,7 @@ class CrawlerTools:
         n = int(max_results) if max_results is not None else (p.max_results if p else 15)
         n = max(1, n)
         overrides = p.crawl_overrides() if p else None
+        ml_overrides = p.ml_overrides() if p else None
         timelimit = p.timelimit if p else None
         sid = f"search_{uuid.uuid4().hex[:12]}"
         self._say(
@@ -260,6 +261,7 @@ class CrawlerTools:
                 max_results=n,
                 session_id=sid,
                 overrides=overrides,
+                ml_overrides=ml_overrides,
                 timelimit=timelimit,
             )
             pages = [_brief(r.model_dump()) for r in out["results"]]
@@ -305,6 +307,7 @@ class CrawlerTools:
         eff_depth = depth if depth is not None else (p.max_depth if p else 1)
         eff_depth = max(0, int(eff_depth))
         overrides = p.crawl_overrides() if p else None
+        ml_overrides = p.ml_overrides() if p else None
         sid = f"crawl_{uuid.uuid4().hex[:12]}"
         self._say(
             f"crawl url={url!r} preset={preset or '-'} depth={eff_depth} "
@@ -322,6 +325,7 @@ class CrawlerTools:
                 session_id=sid,
                 max_depth=eff_depth,
                 overrides=overrides,
+                ml_overrides=ml_overrides,
             )
             pages = [_brief(r.model_dump()) for r in results]
             found = sum(1 for r in results if r.status == "done")

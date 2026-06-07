@@ -60,7 +60,7 @@ class CrawlPreset:
     max_results : int
         Default number of search results (web_search only).
     extract_artifacts : bool
-        Extract tables/images/figures/charts as structured artifacts.
+        Extract tables/images/charts/svg as structured artifacts.
     artifact_types : tuple[str, ...]
         Which artifact types to collect when ``extract_artifacts`` is on.
     emit_markdown : bool
@@ -71,6 +71,10 @@ class CrawlPreset:
     timelimit : str | None
         Search recency filter: "d" (day), "w" (week), "m" (month), "y" (year),
         or None for no limit (web_search only).
+    min_link_score : float | None
+        `ml`-mode relevance gate (``MLConfig.min_link_score``): drop frontier links
+        scoring below this. None = keep the crawler's default. Only meaningful with
+        ``links="ml"`` and ``max_depth > 0``.
     """
 
     name: str
@@ -83,10 +87,12 @@ class CrawlPreset:
     max_links_per_level: Optional[int] = None
     max_results: int = 8
     extract_artifacts: bool = False
-    artifact_types: Tuple[str, ...] = ("table", "image", "figure", "svg", "chart")
+    artifact_types: Tuple[str, ...] = ("table", "image", "chart", "svg")
     emit_markdown: bool = False
     markdown_artifact_anchors: bool = False
     timelimit: Optional[str] = None
+    # -- ml-mode knob (MLConfig override) --
+    min_link_score: Optional[float] = None
 
     def crawl_overrides(self) -> Dict[str, object]:
         """The ``CrawlerConfig`` fields this preset overrides for a single run.
@@ -108,6 +114,15 @@ class CrawlPreset:
             overrides["max_links_per_level"] = self.max_links_per_level
         return overrides
 
+    def ml_overrides(self) -> Dict[str, object]:
+        """The ``MLConfig`` fields this preset overrides for a single run (the
+        `ml`-mode knobs, e.g. the relevance gate). Empty unless the preset sets
+        one — consumed by ``WebCrawler.crawl(..., ml_overrides=...)``."""
+        out: Dict[str, object] = {}
+        if self.min_link_score is not None:
+            out["min_link_score"] = self.min_link_score
+        return out
+
     def brief(self) -> Dict[str, object]:
         """Compact, LLM-friendly view of the preset (for ``list_presets``)."""
         return {
@@ -119,6 +134,7 @@ class CrawlPreset:
             "link_mode": self.links,
             "depth": self.max_depth,
             "links_per_page": self.max_links_per_level,
+            "min_link_score": self.min_link_score,
             "artifacts": self.extract_artifacts,
             "markdown": self.emit_markdown,
             "recency": self.timelimit,
@@ -223,8 +239,9 @@ DEFAULT_PRESETS: Dict[str, CrawlPreset] = {
         name="topic_explore_ml",
         description=(
             "Map a topic's link neighborhood: a best-first SEMANTIC frontier follows "
-            "the most relevant links deep (depth 2), with cheap clean-text content "
-            "and no LLM. Use to discover sources around a topic at zero token cost."
+            "the most relevant links deep (depth 2), pruning weak links, with cheap "
+            "clean-text content and no LLM. Use to discover sources around a topic at "
+            "zero token cost."
         ),
         cost="low",
         content="pure",
@@ -232,6 +249,22 @@ DEFAULT_PRESETS: Dict[str, CrawlPreset] = {
         max_depth=2,
         max_pages=30,
         max_links_per_level=20,
+        min_link_score=0.35,  # prune low-relevance links from the deep frontier
+    ),
+    "triage_ml": CrawlPreset(
+        name="triage_ml",
+        description=(
+            "Cheap relevance triage: from each source follow only the STRONGLY "
+            "relevant links (high semantic gate), plain-text content, depth 1 — a "
+            "fast, zero-token shortlist of sources to then hand to a smart/LLM pass."
+        ),
+        cost="minimal",
+        content="pure",
+        links="ml",
+        max_depth=1,
+        max_pages=10,
+        max_links_per_level=10,
+        min_link_score=0.5,  # only chase clearly on-topic links
     ),
     "rag_ingest_ml": CrawlPreset(
         name="rag_ingest_ml",
