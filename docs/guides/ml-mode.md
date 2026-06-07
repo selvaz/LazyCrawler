@@ -30,11 +30,22 @@ Instead of "first N" (pure) or an LLM ranking (smart), `links="ml"` scores every
 candidate link against the crawl `topic` and follows the best ones first. The
 score blends three signals:
 
-- **semantic** — cosine similarity between the topic and the anchor (+ URL
-  tokens), via **Model2Vec** static embeddings (numpy-only, ~500× faster than a
-  sentence-transformer on CPU, microseconds per link);
-- **lexical** — topic↔anchor/URL token overlap;
+- **semantic** — cosine similarity, via **Model2Vec** static embeddings
+  (numpy-only, ~500× faster than a sentence-transformer on CPU), between the
+  anchor (+ URL tokens) and *both* the topic **and the current page's content**.
+  The page-context term (weight `w_context`) is the focused-crawling intuition
+  that links resembling the page you're already on tend to stay on-topic;
+- **lexical** — topic↔anchor/URL token overlap (stopwords and 1–2 char fragments
+  stripped, so common words neither dilute the topic nor match spuriously);
 - **structural** — URL depth / query / anchor-quality priors (topic-independent).
+
+The score is normalized to `[0, 1]`. When the semantic signal is unavailable
+(no `ml` extra, or the embedding fails) its weight is redistributed across the
+lexical + structural signals, so the score stays on the same scale and a
+`min_link_score` gate keeps the same meaning with or without the model installed.
+The bounded per-page embedding budget (`max_candidates_to_embed`) is spent on the
+candidates a cheap lexical pre-rank already favors, not whichever links happen to
+appear first in the HTML.
 
 ```python
 from lazycrawler import WebCrawler, CrawlerConfig, MLConfig
@@ -74,6 +85,15 @@ and statistics instead of an LLM, so it costs **no tokens**:
 | `entities` | **spaCy** NER | `[nlp]` + a model (else regex fallback) |
 | `sentiment` | **VADER** (lexicon + rules) | `[nlp]` (else `"neutral"`) |
 
+> **On `sentiment`:** VADER is a lexicon/rule model originally tuned for short,
+> social-media-style text. It is a useful, free heuristic for opinionated content
+> (reviews, op-eds, headlines) but is far less meaningful on neutral expository
+> pages (docs, reference, specs). Treat it as a coarse hint, not a calibrated
+> measure — set `MLConfig(sentiment=False)` to skip it. For very long documents
+> the TextRank candidate pool is capped (`summary_max_sentences`) and **sampled at
+> an even stride across the whole document**, so the summary isn't biased toward
+> the introduction.
+
 ```python
 r = WebCrawler(ml_cfg=MLConfig(summary_sentences=4, keyphrase_topk=8)).crawl(
     "https://example.com/article", content="ml"
@@ -94,9 +114,13 @@ python -m spacy download en_core_web_sm   # optional: spaCy entity model
 ```
 
 Without the extra, ML mode still runs — semantic scoring is simply skipped and
-the **lexical + structural** signals are used (still topic-aware, still far
-better than "first N"). The Model2Vec model (~30 MB) downloads once on first use
-and is cached; the embedder is loaded once and shared across all workers.
+the **lexical + structural** signals are used (still topic-aware, and the score is
+renormalized so `min_link_score` gates stay meaningful). This degraded path is the
+one exercised in CI; the offline test suite includes a benchmark asserting that,
+under a fixed page budget, the best-first frontier collects the on-topic links a
+plain document-order "first N" pass would miss. The Model2Vec model (~30 MB)
+downloads once on first use and is cached; the embedder is loaded once and shared
+across all workers.
 
 ---
 
@@ -105,10 +129,12 @@ and is cached; the embedder is loaded once and shared across all workers.
 | Field | Default | Description |
 |---|---|---|
 | `model` | `"minishlab/potion-retrieval-32M"` | Model2Vec static-embedding model |
-| `w_sem` / `w_lex` / `w_struct` | `0.55` / `0.20` / `0.25` | score blend weights |
+| `w_sem` / `w_lex` / `w_struct` | `0.55` / `0.20` / `0.25` | score blend weights (renormalized when semantic is unavailable) |
+| `w_context` | `0.15` | within the semantic term, weight on current-page similarity vs the topic (0 = topic only) |
 | `best_first` | `True` | best-first frontier (else DFS/BFS) |
-| `min_link_score` | `0.0` | drop frontier links below this score |
-| `max_candidates_to_embed` | `400` | cap on links embedded per page |
+| `min_link_score` | `0.0` | drop frontier links below this normalized `[0,1]` score |
+| `max_candidates_to_embed` | `400` | cap on links embedded per page (spent on the best lexical pre-rank) |
+| `summary_sentences` / `summary_max_sentences` | `4` / `200` | TextRank output size / candidate-pool cap (even-stride sampled) |
 
 ---
 

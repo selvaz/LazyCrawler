@@ -343,7 +343,16 @@ class MLConfig:
         once and shared across workers (numpy read-only). Needs the ``ml`` extra
         (``pip install lazycrawler[ml]``); absent it, scoring is lexical+structural.
     w_sem, w_lex, w_struct : float
-        Blend weights for the link score = semantic + lexical + structural.
+        Blend weights for the link score = semantic + lexical + structural. When
+        the semantic signal is unavailable (no ``ml`` extra / embedding failed) the
+        remaining weights are renormalized so the score stays in [0, 1] and
+        ``min_link_score`` keeps the same meaning (a gate of 0.5 is still reachable).
+    w_context : float
+        Within the *semantic* term, how much weight to put on similarity to the
+        **current page's content** vs the topic (0 = topic only). A small positive
+        value makes link selection context-aware — the focused-crawling intuition
+        that links resembling the page you're already on tend to stay on-topic.
+        Only active when an embedder is available and page text is supplied.
     best_first : bool
         If True (default), ``links="ml"`` crawls **best-first**: expand the
         highest-scoring frontier links first (works sequential and parallel).
@@ -359,11 +368,13 @@ class MLConfig:
     w_sem: float = 0.55
     w_lex: float = 0.20
     w_struct: float = 0.25
+    w_context: float = 0.15
     best_first: bool = True
     min_link_score: float = 0.0
     max_candidates_to_embed: int = 400
-    # -- content="ml" knobs (reserved for the local-extraction phase) --
+    # -- content="ml" knobs --
     summary_sentences: int = 4
+    summary_max_sentences: int = 200  # cap on sentences scored by TextRank (O(n^2) guard)
     keyphrase_topk: int = 8
     sentiment: bool = True
     use_spacy_ner: bool = True
