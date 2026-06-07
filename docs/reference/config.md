@@ -31,8 +31,8 @@ Controls traversal depth, page limits, domain filtering, and blacklists.
 |---|---|---|---|
 | `max_depth` | `int` | `2` | Maximum link-hop depth from the seed URL |
 | `max_pages` | `int` | `20` | Hard upper limit on total pages collected |
-| `max_links_per_level` | `int` | `15` | Max links to follow per page per depth level |
-| `max_candidate_links` | `int` | `300` | Max raw link candidates extracted before selection |
+| `max_links_per_level` | `int` | `15` | Branching factor: links to follow **per page** (despite the name, it is enforced once per page, not per depth level) |
+| `max_candidate_links` | `int` | `300` | Max raw link candidates extracted per page before selection (the pool `max_links_per_level` is chosen from) |
 | `same_domain_only` | `bool` | `True` | Restrict crawl to the same domain as the seed |
 | `max_workers` | `int` | `1` | Thread pool size. `1` = sequential DFS, `N>1` = parallel BFS |
 | `respect_robots` | `bool` | `True` | Honour `robots.txt` (including `Crawl-delay`) |
@@ -45,12 +45,27 @@ Controls traversal depth, page limits, domain filtering, and blacklists.
 | `large_doc_chunk_chars` | `int` | `12_000` | Chunk size for map-reduce summarization |
 | `large_doc_max_chunks` | `int` | `12` | Max chunks processed in map-reduce |
 | `emit_markdown` | `bool` | `False` | Render each crawled HTML page to Markdown (`PageResult.markdown`). Requires `pip install lazycrawler[markdown]` |
-| `extract_artifacts` | `bool` | `False` | Extract tables, images, charts, SVG as structured `Artifact` records |
+| `extract_artifacts` | `bool` | `False` | Extract tables, images, charts, figures, SVG as structured `Artifact` records (HTML + PDF). See the [Artifacts guide](../guides/artifacts.md) |
+| `artifact_types` | `tuple` | `("table","image","figure","svg","chart")` | Which artifact types to collect |
+| `download_artifact_bytes` | `bool` | `False` | Download image/chart bytes through the crawler (honors SSL + SSRF guard) → `sha256` + blob in DB |
+| `max_artifact_bytes` | `int` | `5_000_000` | Max image size stored as a blob (larger → keep hash/metadata only) |
+| `min_image_dim` | `int` | `48` | Drop images whose declared width/height is below this (filters icons/spacers) |
+| `artifact_context_chars` | `int` | `200` | Chars of surrounding text captured for images lacking a caption |
+| `max_artifacts_per_page` | `int` | `100` | Hard cap on artifacts collected per page |
+| `same_domain_images` | `bool` | `False` | Keep only images hosted on the page's own domain |
+| `enrich_artifacts` | `bool` | `False` | Vision-LLM enrichment of artifacts (requires `content="smart"`) — captions, chart data, table summaries |
+| `max_artifacts_to_enrich` | `int` | `8` | Per-page cap on LLM-enriched artifacts (cost control) |
 | `markdown_artifact_anchors` | `bool` | `False` | With `emit_markdown + extract_artifacts`: replace each table/image in Markdown with `[[artifact:<hash>]]` anchors instead of duplicating inline content. Use `render_for_rag()` to recompose |
 | `blacklist` | `list[str]` | `[]` | URL prefixes or domain names to skip |
 | `blacklist_excel` | `str` | `""` | Path to Excel file with blacklisted URLs |
 | `blacklist_excel_sheet` | `str \| None` | `None` | Sheet name (first sheet if None) |
 | `blacklist_excel_column` | `str \| None` | `None` | Column name/letter (first column if None) |
+
+!!! tip "Per-call overrides & presets"
+    Most of these fields can be overridden for a **single call** via
+    `WebCrawler.crawl(..., overrides={...})` without mutating the shared config —
+    the mechanism behind named **presets** (`CrawlPreset`). See the
+    [Presets guide](../guides/presets.md).
 
 ---
 
@@ -60,7 +75,7 @@ Controls HTTP client behaviour, timeouts, SSL, polite delays, and JavaScript ren
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `user_agent` | `str` | `"LazyCrawler/0.8 (+...)"` | HTTP User-Agent header (dedicated, not a spoofed browser) |
+| `user_agent` | `str` | `"LazyCrawler/0.9 (+...)"` | HTTP User-Agent header (dedicated, not a spoofed browser) |
 | `timeout_connect` | `int` | `5` | TCP connection timeout (seconds) |
 | `timeout_read` | `int` | `25` | Read timeout (seconds) |
 | `max_retries` | `int` | `4` | Max retry attempts on transient failures |
@@ -86,6 +101,7 @@ Controls LLM model selection and request parameters for smart mode.
 |---|---|---|---|
 | `model` | `str` | `"gpt-4o-mini"` | Model string — provider inferred by LazyBridge |
 | `large_doc_model` | `str` | `""` | Model for large-doc map-reduce. `""` = use `model` |
+| `vision_model` | `str` | `""` | Vision model for artifact enrichment (image caption / chart data). `""` = use `model` |
 | `temperature` | `float` | `0.0` | LLM sampling temperature |
 | `request_timeout` | `float` | `120.0` | Max seconds per LLM request |
 | `max_links_excerpt_chars` | `int` | `3_000` | Page excerpt chars sent to LLM for link selection |

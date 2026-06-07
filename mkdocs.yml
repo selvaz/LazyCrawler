@@ -77,3 +77,5 @@ nav:
       - PDF Extraction: guides/pdf.md
       - Custom Schema: guides/custom-schema.md
       - Agent Integration: guides/agent-tools.md
+      - Crawl Presets: guides/presets.md
+      - Artifacts: guides/artifacts.md

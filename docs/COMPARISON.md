@@ -78,5 +78,6 @@ research + portfolio monitoring), its design choices are well aligned: token
 economy, provenance DB, PDF, provider-agnostic LLM, granular LLM knobs are exactly
 what those tools do *not* emphasize.
 
-See [ROADMAP.md](../ROADMAP.md) for what is implemented and what remains, and
+See the [ROADMAP](https://github.com/selvaz/lazycrawler/blob/main/ROADMAP.md) for
+what is implemented and what remains, and
 [DEEP_ASSESSMENT.md](DEEP_ASSESSMENT.md) for a full code/architecture review.
