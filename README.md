@@ -90,7 +90,14 @@ crawler and the response returned to the caller.
 > **`CrawlerTools`** (the LazyBridge agent wrapper) enables the SSRF guard
 > **automatically** — no action needed when using the agent path.
 
-> **`AsyncWebCrawler`** also enables it automatically by default.
+> **`AsyncWebCrawler`** also enables it automatically by default, and (like the
+> sync client) re-validates **every redirect hop**, not just the seed URL.
+
+> **⚠️ Best-effort, not isolation.** The guard validates the IPs a host resolves
+> to *at check time*, but the actual connection re-resolves the host, so a
+> hostile DNS server can return a public IP during the check and a private one at
+> connect time (DNS rebinding / TOCTOU). For untrusted input, combine the guard
+> with OS/network-level egress restrictions — don't rely on it alone.
 
 See [`lazycrawler/http.py`](lazycrawler/http.py#L-is_blocked_address) for the
 full list of blocked address categories (RFC-1918, loopback, link-local, cloud

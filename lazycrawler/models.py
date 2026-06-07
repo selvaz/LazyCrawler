@@ -39,6 +39,7 @@ class PageResult(BaseModel):
     is_pdf: bool = False
     depth: int = 0
     source_url: Optional[str] = None
+    requested_url: Optional[str] = None  # original URL when a redirect was adopted
     error: Optional[str] = None
     from_cache: bool = False
     markdown: Optional[str] = None  # optional HTML->Markdown render (emit_markdown)

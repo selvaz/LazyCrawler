@@ -56,7 +56,7 @@ from .http import (
     HTTPClient,
     RobotsChecker,
     compile_exclude,
-    get_base_domain,
+    get_hostname,
     is_blacklisted_domain,
     is_blocked_address,  # noqa: F401  (re-exported: tests patch lazycrawler.crawler.is_blocked_address)
     load_blacklist_from_excel,
@@ -187,6 +187,12 @@ class WebCrawler:
         ``max_depth`` overrides ``CrawlerConfig.max_depth`` for this call only.
         ``overrides`` / ``ml_overrides`` apply per-call config without mutating
         the shared instance (the preset mechanism).
+
+        Traversal-time settings honored per call include ``max_workers`` (incl. the
+        sequential-vs-parallel decision), ``strict``, ``max_pages``, ``max_depth``,
+        and the link/branching limits. ``respect_robots``, the per-host rate limiter,
+        and the HTTP client are **construction-time** (built in ``__init__``) and are
+        *not* overridable per call — construct a new ``WebCrawler`` to change those.
         """
         return self.crawl_many(
             [url],
@@ -244,25 +250,23 @@ class WebCrawler:
                 source=source,
             )
 
-        seeds = [
-            (u, get_base_domain(u)) for u in urls if not is_blacklisted_domain(u, self.blacklist)
-        ]
+        seeds = [(u, get_hostname(u)) for u in urls if not is_blacklisted_domain(u, self.blacklist)]
 
         log.info(
             "crawl: content=%s links=%s workers=%d depth=%d max_pages=%d robots=%s strict=%s",
             content_mode,
             link_mode,
-            self.cfg.max_workers,
+            eff_cfg.max_workers,
             eff_depth,
             eff_cfg.max_pages,
             self.cfg.respect_robots,
-            self.cfg.strict,
+            eff_cfg.strict,
         )
         log.debug("seeds: %d URL(s), start_domain(s): %s", len(seeds), [d for _, d in seeds])
 
         if link_mode == "ml" and st.ml_cfg.best_first:
             self._crawl_ordered(st, seeds)
-        elif self.cfg.max_workers > 1:
+        elif eff_cfg.max_workers > 1:
             self._crawl_parallel(st, seeds)
         else:
             res = self._sequential_res(st)
@@ -274,7 +278,7 @@ class WebCrawler:
                 try:
                     self._crawl_seq(st, url, 0, None, dom, res)
                 except Exception:
-                    if self.cfg.strict:
+                    if st.cfg.strict:
                         raise
                     log.exception("error crawling seed %s", url[:80])
 
@@ -341,7 +345,7 @@ class WebCrawler:
             try:
                 self._crawl_seq(st, link_url, depth + 1, url, start_domain, res)
             except Exception:
-                if self.cfg.strict:
+                if st.cfg.strict:
                     raise
                 log.exception("error crawling %s", link_url[:70])
 
@@ -352,7 +356,7 @@ class WebCrawler:
         frontier = [(url, dom, None) for (url, dom) in seeds]
         depth = 0
         try:
-            with ThreadPoolExecutor(max_workers=self.cfg.max_workers) as pool:
+            with ThreadPoolExecutor(max_workers=st.cfg.max_workers) as pool:
                 while frontier and not self._cap_reached(st):
                     fut_map = {
                         pool.submit(self._worker_process, st, url, depth, src, dom): (url, dom)
@@ -365,7 +369,7 @@ class WebCrawler:
                         try:
                             links = fut.result() or []
                         except Exception:
-                            if self.cfg.strict:
+                            if st.cfg.strict:
                                 raise
                             log.exception("parallel worker error on %s", parent_url[:70])
                             links = []
@@ -391,7 +395,7 @@ class WebCrawler:
         for url, dom in seeds:
             heapq.heappush(heap, (-1e9, 0, next(counter), url, None, dom))
         min_score = st.ml_cfg.min_link_score
-        workers = max(1, self.cfg.max_workers)
+        workers = max(1, st.cfg.max_workers)
         try:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 while heap and not self._cap_reached(st):
@@ -409,7 +413,7 @@ class WebCrawler:
                         try:
                             links = fut.result() or []
                         except Exception:
-                            if self.cfg.strict:
+                            if st.cfg.strict:
                                 raise
                             log.exception("best-first worker error on %s", parent_url[:70])
                             links = []

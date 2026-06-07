@@ -202,11 +202,14 @@ class PagePipeline:
             )
             return []
 
-        # robots re-check on the final host (post-redirect)
-        final_url = fr.final_url or url
-        if self.robots is not None and normalize_url(final_url) != url:
-            if not self.robots.allowed(final_url):
-                log.info("robots.txt disallows redirect target %s - skipping", final_url[:90])
+        # Post-redirect: re-check the final host and **adopt** it as the page
+        # identity so link resolution, cache keys, edges, canonical base, and
+        # provenance all reflect the origin the content actually came from.
+        requested_url: Optional[str] = None
+        final = normalize_url(fr.final_url or url)
+        if final != url:
+            if self.robots is not None and not self.robots.allowed(final):
+                log.info("robots.txt disallows redirect target %s - skipping", final[:90])
                 self._emit(
                     st,
                     PageResult(
@@ -221,6 +224,27 @@ class PagePipeline:
                     count=False,
                 )
                 return []
+            if is_blacklisted_domain(final, self.blacklist):
+                return []
+            if self.http_cfg.block_private_addresses and _crawler_fn("is_blocked_address")(final):
+                log.info("SSRF guard: redirect target is a blocked address %s", final[:90])
+                self._emit(
+                    st,
+                    PageResult(
+                        url=url,
+                        url_hash=uh,
+                        status="fetch_error",
+                        mode=st.content_mode,
+                        depth=depth,
+                        source_url=source_url,
+                        error="Blocked private/loopback redirect target (SSRF guard)",
+                    ),
+                    count=False,
+                )
+                return []
+            requested_url, url = url, final
+            uh = _url_hash(url)
+            self._mark_visited(st, url)  # mirror canonical adoption below
 
         # PDF vs HTML detection
         is_pdf = bool(pdf_bytes) or looks_like_pdf(url, html or "", raw_text or "")
@@ -275,6 +299,7 @@ class PagePipeline:
                 source_url=source_url,
                 published_iso=published_iso,
                 is_pdf=is_pdf,
+                requested_url=requested_url,
                 error="No extractable text",
             )
             if cfg.extract_artifacts:
@@ -336,6 +361,9 @@ class PagePipeline:
             result = self._smart_extract(
                 st, url, uh, preclean, title, published_iso, is_pdf, depth, source_url, res
             )
+
+        if requested_url:
+            result.requested_url = requested_url
 
         # artifacts (tables / images / charts / svg)
         anchored_html: Optional[str] = None

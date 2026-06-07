@@ -91,7 +91,7 @@ def test_tool_call_releases_http_and_reuses(stub_fetch, tmp_db):
     assert ct._crawler._call_depth == 0
     # the shared DB cache is NOT closed by a tool call (still usable)
     gp = json.loads(ct.get_page("https://e.org/a"))
-    assert gp.get("text")
+    assert gp.get("untrusted_page_text")
     # a subsequent tool call still works (session rebuilt lazily)
     out2 = json.loads(ct.web_crawl("https://e.org/b", depth=0))
     assert out2["found"] >= 1
