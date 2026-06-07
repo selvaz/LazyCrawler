@@ -70,6 +70,7 @@ nav:
       - PageResult: reference/pageresult.md
   - Guides:
       - Pure Mode: guides/pure-mode.md
+      - ML Mode (no-LLM): guides/ml-mode.md
       - Smart Mode: guides/smart-mode.md
       - Database & Caching: guides/database.md
       - Parallel Crawling: guides/parallel.md

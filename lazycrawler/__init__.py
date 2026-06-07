@@ -47,6 +47,7 @@ from .config import (
     DBConfig,
     HTTPConfig,
     LLMConfig,
+    MLConfig,
     SearchConfig,
 )
 from .crawler import PageResult, WebCrawler
@@ -56,7 +57,7 @@ from .presets import DEFAULT_PRESETS, CrawlPreset, resolve_presets
 from .search import WebSearch, search_ddg_urls
 from .tools import CrawlerTools
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 __all__ = [
     "WebCrawler",
@@ -75,6 +76,7 @@ __all__ = [
     "CrawlerConfig",
     "HTTPConfig",
     "LLMConfig",
+    "MLConfig",
     "SearchConfig",
     "DBConfig",
     "search_ddg_urls",

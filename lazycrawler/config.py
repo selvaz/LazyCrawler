@@ -241,7 +241,7 @@ class HTTPConfig:
         redirects internally).
     """
 
-    user_agent: str = "LazyCrawler/0.9 (+https://github.com/selvaz/lazycrawler)"
+    user_agent: str = "LazyCrawler/0.10 (+https://github.com/selvaz/lazycrawler)"
     timeout_connect: int = 5
     timeout_read: int = 25
     max_retries: int = 4
@@ -304,6 +304,50 @@ class LLMConfig:
     request_timeout: float = 120.0
     max_links_excerpt_chars: int = 3_000
     max_candidates_to_llm: int = 80
+
+
+# =============================================================================
+# MLConfig  (machine-learning mode: no LLM, no tokens)
+# =============================================================================
+
+
+@dataclass
+class MLConfig:
+    """
+    Configuration for ``ml`` mode — the no-LLM, zero-token engine that ranks
+    links (and, later, extracts content) with local ML / statistics.
+
+    Attributes
+    ----------
+    model : str
+        Model2Vec static-embedding model used for semantic link scoring. Loaded
+        once and shared across workers (numpy read-only). Needs the ``ml`` extra
+        (``pip install lazycrawler[ml]``); absent it, scoring is lexical+structural.
+    w_sem, w_lex, w_struct : float
+        Blend weights for the link score = semantic + lexical + structural.
+    best_first : bool
+        If True (default), ``links="ml"`` crawls **best-first**: expand the
+        highest-scoring frontier links first (works sequential and parallel).
+    min_link_score : float
+        Drop candidate links scoring below this from the frontier (0 = keep all).
+    max_candidates_to_embed : int
+        Cap on links semantically embedded per page (the rest get lexical+structural).
+    summary_sentences, keyphrase_topk, sentiment, use_spacy_ner :
+        Reserved for ``content="ml"`` local extraction (a later phase).
+    """
+
+    model: str = "minishlab/potion-retrieval-32M"
+    w_sem: float = 0.55
+    w_lex: float = 0.20
+    w_struct: float = 0.25
+    best_first: bool = True
+    min_link_score: float = 0.0
+    max_candidates_to_embed: int = 400
+    # -- content="ml" knobs (reserved for the local-extraction phase) --
+    summary_sentences: int = 4
+    keyphrase_topk: int = 8
+    sentiment: bool = True
+    use_spacy_ner: bool = True
 
 
 # =============================================================================
