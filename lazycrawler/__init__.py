@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-LazyCrawler — a generic web crawler + search with two modes (pure / smart).
+LazyCrawler — a generic web crawler + search with three modes (pure / ml / smart).
 
   pure   = no LLM, no cost. trafilatura/regex + heuristic link selection.
+  ml     = no LLM, zero tokens. Model2Vec best-first semantic link scoring +
+           local structured extraction (TextRank/YAKE/spaCy/VADER).
   smart  = LLM via LazyBridge for structured extraction and link selection.
 
 WebSearch is a derivation of WebCrawler: it seeds itself from a search engine's

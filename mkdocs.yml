@@ -1,5 +1,5 @@
 site_name: LazyCrawler
-site_description: Recursive web crawler with pure and LLM-powered smart modes
+site_description: Recursive web crawler with three modes — pure, ml (local, no-LLM), and smart (LLM)
 site_url: https://selvaz.github.io/lazycrawler/
 repo_url: https://github.com/selvaz/lazycrawler
 repo_name: selvaz/lazycrawler

@@ -70,7 +70,7 @@ Level 1: is URL in DB and fresh (within TTL)?
                 ▼
            Level 2: is content_hash already in DB?
                 ├── YES → reuse existing extraction (skip LLM)
-                └── NO  → extract (pure or smart)
+                └── NO  → extract (pure/ml/smart)
                                │
                                ▼
                           Level 3: was this page pure before, now smart?

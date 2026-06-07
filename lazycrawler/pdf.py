@@ -303,9 +303,9 @@ def extract_pdf_artifacts(
     if "table" in want:
         try:
             import pdfplumber
-        except Exception:
+        except BaseException:  # noqa: BLE001 - a broken native dep may panic (BaseException)
             pdfplumber = None  # type: ignore
-            log.debug("pdfplumber unavailable - no PDF table artifacts")
+            log.debug("pdfplumber unavailable - no PDF table artifacts", exc_info=True)
         if pdfplumber is not None:
             try:
                 with pdfplumber.open(io.BytesIO(data)) as pdf:
@@ -346,9 +346,9 @@ def extract_pdf_artifacts(
     if want & {"image", "chart"}:
         try:
             import fitz  # PyMuPDF
-        except Exception:
+        except BaseException:  # noqa: BLE001 - a broken native dep may panic (BaseException)
             fitz = None  # type: ignore
-            log.debug("PyMuPDF unavailable - no PDF image artifacts")
+            log.debug("PyMuPDF unavailable - no PDF image artifacts", exc_info=True)
         if fitz is not None:
             try:
                 doc = fitz.open(stream=data, filetype="pdf")

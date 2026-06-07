@@ -244,3 +244,43 @@ def test_figure_not_in_default_artifact_types():
 
     # "figure" was advertised but never emitted as its own artifact (audit #9)
     assert "figure" not in CrawlerConfig().artifact_types
+
+
+def test_pdf_image_only_yields_artifacts(stub_fetch, tmp_db):
+    """Regression: a text-less PDF (image-only / scanned) must still yield its
+    artifacts — previously it hit the no_text early-return before extraction."""
+    import io
+
+    import pytest
+
+    fitz = pytest.importorskip("fitz")  # PyMuPDF (the `pdf` extra)
+
+    from lazycrawler import CrawlerConfig, HTTPConfig, WebCrawler
+
+    buf = io.BytesIO()
+    doc = fitz.open()
+    page = doc.new_page()
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 90, 90))
+    pix.set_rect(pix.irect, (200, 50, 50))
+    page.insert_image(fitz.Rect(50, 50, 140, 140), pixmap=pix)
+    doc.save(buf)
+
+    u = "https://e.org/scan.pdf"
+    stub_fetch(pdf_map={u: buf.getvalue()})
+    with WebCrawler(
+        CrawlerConfig(
+            max_depth=0,
+            respect_robots=False,
+            extract_artifacts=True,
+            artifact_types=("image",),
+            min_image_dim=10,
+        ),
+        HTTPConfig(verify_ssl=False, link_delay=0),
+        db=tmp_db,
+    ) as c:
+        r = c.crawl(u, mode="pure")[0]
+
+    assert r.is_pdf and r.status == "no_text"  # no text, but…
+    assert len(r.artifacts) == 1  # …the image artifact is extracted
+    assert r.artifacts[0].artifact_type == "image"
+    assert len(tmp_db.get_artifacts(url_hash=r.url_hash)) == 1  # and persisted

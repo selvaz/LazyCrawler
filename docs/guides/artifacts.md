@@ -104,6 +104,12 @@ r = crawler.crawl("https://example.com/whitepaper.pdf", mode="pure")[0]
 tables = [a for a in r.artifacts if a.artifact_type == "table"]
 ```
 
+!!! note "Image-only / scanned PDFs"
+    A PDF (or HTML page) with **no extractable text** still yields its artifacts —
+    the page is reported with `status="no_text"` but `PageResult.artifacts` (and
+    the `artifacts` table) are populated. Retrieve them by session even though the
+    page isn't `"done"`: `db.get_artifacts(session_id=...)`.
+
 ---
 
 ## Vision enrichment (smart)
