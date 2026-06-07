@@ -40,7 +40,7 @@ import json
 import uuid
 from typing import Any, Dict, Optional
 
-from .config import CrawlerConfig, HTTPConfig, LLMConfig, MLConfig
+from .config import CrawlerConfig, HTTPConfig, LLMConfig, MLConfig, SearchConfig
 from .crawler import WebCrawler
 from .db import CrawlerDB
 from .http import url_hash
@@ -116,6 +116,12 @@ class CrawlerTools:
         ``web_search`` / ``web_crawl`` (and discover through ``list_presets``).
         Merged on top of the built-in catalog (``lazycrawler.presets``); a key
         matching a built-in name overrides it.
+    search_cfg : SearchConfig, optional
+        Search engine for ``web_search`` (DuckDuckGo / Brave / Tavily / Gemini).
+        Default is DuckDuckGo (no key).
+    enforce_ssrf_guard : bool
+        Force the SSRF guard ON for the tool path (default True). Set False to
+        allow crawling internal/private hosts (honors your ``http_cfg``).
     verbose : bool
         If True, print concise progress messages for interactive use.
     """
@@ -131,6 +137,8 @@ class CrawlerTools:
         topic: str = "",
         presets: Optional[Dict[str, CrawlPreset]] = None,
         ml_cfg: Optional[MLConfig] = None,
+        search_cfg: Optional[SearchConfig] = None,
+        enforce_ssrf_guard: bool = True,
         verbose: bool = False,
     ):
         self.db = db
@@ -139,17 +147,24 @@ class CrawlerTools:
         self.topic = topic
         self.presets = resolve_presets(presets)
         self.verbose = verbose
-        # The agent can pass arbitrary URLs, so turn the SSRF guard ON by default
-        # for the tool path (callers wanting internal hosts can pass an explicit
-        # HTTPConfig(block_private_addresses=False)).
-        http_cfg = self._with_ssrf_guard(http_cfg)
+        # The agent can pass arbitrary URLs, so the SSRF guard is ON by default on
+        # the tool path. With enforce_ssrf_guard=True (default) it cannot be turned
+        # off via http_cfg; pass enforce_ssrf_guard=False to crawl internal hosts.
+        http_cfg = self._with_ssrf_guard(http_cfg, enforce_ssrf_guard)
         self._crawler = WebCrawler(crawler_cfg, http_cfg, llm_cfg, db, ml_cfg=ml_cfg)
         self._search = WebSearch(
-            crawler_cfg=crawler_cfg, http_cfg=http_cfg, llm_cfg=llm_cfg, db=db, ml_cfg=ml_cfg
+            search_cfg=search_cfg,
+            crawler_cfg=crawler_cfg,
+            http_cfg=http_cfg,
+            llm_cfg=llm_cfg,
+            db=db,
+            ml_cfg=ml_cfg,
         )
 
     @staticmethod
-    def _with_ssrf_guard(http_cfg: Optional[HTTPConfig]) -> HTTPConfig:
+    def _with_ssrf_guard(http_cfg: Optional[HTTPConfig], enforce: bool = True) -> HTTPConfig:
+        if not enforce:
+            return http_cfg if http_cfg is not None else HTTPConfig()
         if http_cfg is None:
             return HTTPConfig(block_private_addresses=True)
         if not http_cfg.block_private_addresses:

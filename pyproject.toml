@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lazycrawler"
-version = "0.11.0"
+version = "0.12.0"
 description = "Web crawler + search with pure (no-LLM) and smart (LazyBridge LLM) modes, SQLite persistence and 3-level dedup."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,7 +22,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # SMART mode: extraction/selection via LazyBridge. Also install the provider extra.
-smart = ["lazybridge>=0.9"]
+# LazyBridge requires Python >=3.11, so on 3.10 only pure/ml mode is available.
+smart = ["lazybridge>=0.9; python_version >= '3.11'"]
 # PDF extraction (remote): PyMuPDF primary, pypdf fallback, pdfplumber tables.
 pdf = ["pymupdf>=1.23", "pypdf>=4.0", "pdfplumber>=0.10"]
 # WebSearch via DuckDuckGo.
@@ -45,7 +46,7 @@ ml = ["model2vec>=0.3", "numpy>=1.24"]
 nlp = ["yake>=0.4", "vaderSentiment>=3.3", "spacy>=3.7"]
 # Everything.
 all = [
-    "lazybridge>=0.9",
+    "lazybridge>=0.9; python_version >= '3.11'",
     "pymupdf>=1.23", "pypdf>=4.0", "pdfplumber>=0.10",
     "ddgs>=2.0", "playwright>=1.40", "openpyxl>=3.1", "python-dateutil>=2.8",
     "markdownify>=0.11", "pillow>=10", "model2vec>=0.3", "numpy>=1.24",

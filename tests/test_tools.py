@@ -85,3 +85,24 @@ def test_as_tools_exposes_expected_tools(tools):
     assert {"web_search", "web_crawl", "get_page", "search_cached", "get_session_pages"} <= names
     # lifecycle methods must NEVER be exposed to the agent.
     assert "close" not in names
+
+
+# -- SSRF guard enforcement (audit #2) -------------------------------------
+
+
+def test_enforce_ssrf_guard_default_on():
+    ct = CrawlerTools(
+        http_cfg=HTTPConfig(block_private_addresses=False, verify_ssl=False), content="pure"
+    )
+    assert ct._crawler.http_cfg.block_private_addresses is True  # forced on
+    ct.close()
+
+
+def test_enforce_ssrf_guard_opt_out():
+    ct = CrawlerTools(
+        http_cfg=HTTPConfig(block_private_addresses=False, verify_ssl=False),
+        enforce_ssrf_guard=False,
+        content="pure",
+    )
+    assert ct._crawler.http_cfg.block_private_addresses is False  # honored
+    ct.close()

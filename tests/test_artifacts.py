@@ -237,3 +237,10 @@ def test_crawler_downloads_artifact_bytes(stub_fetch, tmp_db, make_crawler, monk
     assert img.size_bytes == len(png) and img.mime == "image/png"
     stored = tmp_db.get_artifacts(url_hash=url_hash(url), include_blob=True)
     assert stored[0]["blob"] == png
+
+
+def test_figure_not_in_default_artifact_types():
+    from lazycrawler import CrawlerConfig
+
+    # "figure" was advertised but never emitted as its own artifact (audit #9)
+    assert "figure" not in CrawlerConfig().artifact_types

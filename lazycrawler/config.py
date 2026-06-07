@@ -51,7 +51,13 @@ class CrawlerConfig:
         Max candidate links extracted from a page before filtering/selection
         (the raw pool from which ``max_links_per_level`` are then chosen).
     same_domain_only : bool
-        If True, only follow links within the source page's domain.
+        If True, follow links within the source page's **registrable site** —
+        this is "same site-ish", not strict host match: from ``news.example.com``
+        a link to ``example.com`` (parent) or ``blog.example.com`` (sibling) is
+        allowed. Set ``same_host_only=True`` for a strict same-hostname rule.
+    same_host_only : bool
+        If True (with ``same_domain_only``), only follow links on the **exact same
+        hostname** as the source page (no parent/sibling subdomains). Default False.
     max_workers : int
         Concurrency. 1 = sequential DFS (default). N>1 = native parallel mode:
         a bounded thread pool crawls level-by-level (BFS) with N workers.
@@ -88,12 +94,12 @@ class CrawlerConfig:
         (``pip install lazycrawler[markdown]``); degrades to a basic strip if the
         renderer is unavailable. PDFs are skipped (no HTML). Default False.
     extract_artifacts : bool
-        If True, extract non-textual content -- tables, images, figures, charts,
+        If True, extract non-textual content -- tables, images, charts,
         inline SVG -- as structured ``Artifact`` records (``PageResult.artifacts``,
         persisted to the ``artifacts`` table). Works on HTML and, with the pdf
         extra, on PDFs (tables via pdfplumber, images via PyMuPDF). Default False.
     artifact_types : tuple[str, ...]
-        Which artifact types to collect (subset of table/image/figure/svg/chart).
+        Which artifact types to collect (subset of table/image/chart/svg).
     download_artifact_bytes : bool
         If True, download image/chart bytes through the crawler's HTTP client
         (honors SSL + SSRF guard), store a sha256 hash and the bytes (size-capped)
@@ -141,6 +147,7 @@ class CrawlerConfig:
     max_links_per_level: int = 15
     max_candidate_links: int = 300
     same_domain_only: bool = True
+    same_host_only: bool = False
     max_workers: int = 1
     respect_robots: bool = True
     strict: bool = False
@@ -148,9 +155,9 @@ class CrawlerConfig:
 
     emit_markdown: bool = False
 
-    # -- artifacts (tables / images / figures / charts / svg) --
+    # -- artifacts (tables / images / charts / svg) --
     extract_artifacts: bool = False
-    artifact_types: tuple = ("table", "image", "figure", "svg", "chart")
+    artifact_types: tuple = ("table", "image", "chart", "svg")
     download_artifact_bytes: bool = False
     max_artifact_bytes: int = 5_000_000
     min_image_dim: int = 48
@@ -211,6 +218,14 @@ class HTTPConfig:
         ``no_text``. Default 50 (was an implicit 200 in older versions).
     pdf_timeout : int
         Dedicated timeout for PDF downloads (usually larger).
+    max_redirects : int
+        Maximum HTTP redirect hops followed. Redirects are followed manually so
+        each hop's target is re-checked against the SSRF guard (a public host that
+        redirects to a private address is blocked). Default 5.
+    max_html_bytes / max_pdf_bytes / max_asset_bytes : int
+        Hard caps on the number of bytes downloaded for an HTML page / PDF /
+        binary asset (image). The body is streamed and truncated at the cap, so a
+        hostile or huge resource cannot exhaust memory. Defaults 5MB / 50MB / 5MB.
     verify_ssl : bool
         TLS certificate verification. Default True (secure). Set False only in
         environments with SSL inspection / MITM (e.g. antivirus such as Avast,
@@ -241,7 +256,7 @@ class HTTPConfig:
         redirects internally).
     """
 
-    user_agent: str = "LazyCrawler/0.11 (+https://github.com/selvaz/lazycrawler)"
+    user_agent: str = "LazyCrawler/0.12 (+https://github.com/selvaz/lazycrawler)"
     timeout_connect: int = 5
     timeout_read: int = 25
     max_retries: int = 4
@@ -250,6 +265,10 @@ class HTTPConfig:
     per_host_delay: float = 0.0
     min_text_chars: int = 50
     pdf_timeout: int = 60
+    max_redirects: int = 5
+    max_html_bytes: int = 5_000_000
+    max_pdf_bytes: int = 50_000_000
+    max_asset_bytes: int = 5_000_000
     verify_ssl: bool = True
     ca_bundle: str = ""
     render_js: bool = False

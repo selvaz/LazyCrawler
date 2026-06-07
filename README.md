@@ -319,7 +319,10 @@ What you get per type (best-practice driven):
 | **table** | Markdown (`content`) **+** structured rows (`data`), header↔value preserved |
 | **image** | absolute `src_url` + `alt` + caption (`<figcaption>`) + ±N chars of context |
 | **chart** | images/SVG that look like charts (alt/class/markup heuristics) |
-| **figure / svg** | `<figure>` blocks and inline SVG markup (chart candidates) |
+| **svg** | inline SVG markup (chart candidate) |
+
+`<figure>`/`<figcaption>` are used to enrich the contained image/table's caption;
+they are not emitted as a separate artifact type.
 
 Tiny/spacer/logo/tracking images are filtered out (`min_image_dim`,
 `same_domain_images`). Artifacts are persisted in a dedicated **`artifacts`**
@@ -337,9 +340,10 @@ CrawlerConfig(extract_artifacts=True, enrich_artifacts=True)  # + vision LLM (sm
 
 **Optional layers** (off by default — pure mode pays nothing):
 - `download_artifact_bytes=True` downloads images through the crawler's HTTP
-  client (honors SSL + the SSRF guard), stores a `sha256` hash + the bytes
-  (capped by `max_artifact_bytes`). Needs `pip install lazycrawler[image]` for
-  dimensions/format sniffing (Pillow).
+  client (honors SSL + the SSRF guard; the download is streamed and capped by
+  `HTTPConfig.max_asset_bytes`), then stores a `sha256` hash + the bytes (only
+  blobs ≤ `max_artifact_bytes` are kept). Needs `pip install lazycrawler[image]`
+  for dimensions/format sniffing (Pillow).
 - `enrich_artifacts=True` with `content="smart"` runs a **vision LLM** (via
   LazyBridge) to caption images, read chart trends/data points, and summarize
   tables — capped by `max_artifacts_to_enrich`. Set `LLMConfig(vision_model=...)`
@@ -392,15 +396,26 @@ When the crawler is driven by an LLM agent (`CrawlerTools`), the model can pass
 arbitrary URLs. `HTTPConfig(block_private_addresses=True)` refuses fetches that
 resolve to loopback / link-local / private (RFC-1918) / reserved addresses, plus
 `localhost`, `*.local`, and cloud metadata endpoints (e.g. `169.254.169.254`).
+**Redirects are followed manually and every hop is re-validated**, so a public
+host that 30x-redirects to a private address is blocked too (bounded by
+`HTTPConfig.max_redirects`).
 
 ```python
 HTTPConfig(block_private_addresses=True)   # default OFF for the library
 ```
 
-It is **on by default in `CrawlerTools`** (the agent path); pass an explicit
-`HTTPConfig(block_private_addresses=False)` to crawl internal hosts. Note: a public
-host that *redirects* to a private one is not caught (requests follows redirects
-internally).
+It is **on by default in `CrawlerTools`** (the agent path) and, by default,
+**cannot be turned off** via `http_cfg` — pass `CrawlerTools(enforce_ssrf_guard=False)`
+to crawl internal hosts (this honors your `HTTPConfig`):
+
+```python
+CrawlerTools(http_cfg=HTTPConfig(block_private_addresses=False),
+             enforce_ssrf_guard=False)   # opt out, deliberately
+```
+
+Downloads are also **streamed and size-capped** (`HTTPConfig.max_html_bytes` /
+`max_pdf_bytes` / `max_asset_bytes`), so a hostile or huge resource cannot
+exhaust memory.
 
 ## Resource cleanup (automatic — no `close()` in the agent path)
 
@@ -569,5 +584,8 @@ HTTPConfig(verify_ssl=False)
   use `strict=True` to fail fast instead of logging-and-continuing.
 - **WebSearch engines**: `"duckduckgo"` (no key, unofficial API), `"brave"` (free
   2 000 req/month, own index), `"tavily"` (free 1 000 req/month, LLM-optimised),
-  `"gemini"` (grounded AI answer mode). Brave and Tavily require no extra Python
-  dependencies beyond `requests`.
+  `"gemini"`. Brave and Tavily require no extra Python dependencies beyond
+  `requests`. **Note:** `"gemini"` is **not a crawl** — it returns a single
+  *synthetic* grounded answer with **no verifiable, fetchable source URLs** (the
+  result is flagged `notes="synthetic: …"`); treat it as an answer, not as audited
+  sources. The other three return real, navigable pages.

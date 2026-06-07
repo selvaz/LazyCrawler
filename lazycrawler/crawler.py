@@ -597,6 +597,7 @@ class WebCrawler:
                     timeout=self.http_cfg.pdf_timeout,
                     user_agent=self.http_cfg.user_agent,
                     verify=(self.http_cfg.ca_bundle or self.http_cfg.verify_ssl),
+                    max_bytes=self.http_cfg.max_pdf_bytes,
                 )
             if pdf_pub:
                 published_iso = pdf_pub
@@ -738,6 +739,7 @@ class WebCrawler:
             same_domain_only=cfg.same_domain_only,
             max_links=cfg.max_candidate_links,
             exclude_pattern=self._exclude_re,
+            same_host_only=cfg.same_host_only,
         )
         return self._filter_candidates(st, candidates)
 
@@ -1088,7 +1090,12 @@ class WebCrawler:
             return st.pages_done >= st.cfg.max_pages
 
     def _add_counted(self, st, result: PageResult) -> None:
+        # Atomic slot reservation: a counted page is admitted only if under the
+        # cap, so max_pages is a HARD cap on done pages even in parallel mode
+        # (workers can race past _reached_cap, but never past this check).
         with st.lock:
+            if st.pages_done >= st.cfg.max_pages:
+                return
             st.results.append(result)
             st.pages_done += 1
 
@@ -1103,6 +1110,10 @@ class WebCrawler:
         candidate_links: Optional[List[Tuple[str, str]]] = None,
     ) -> None:
         with st.lock:
+            # Counted (done) pages are hard-capped at max_pages; error/no-text
+            # rows (count=False) are always recorded.
+            if count and st.pages_done >= st.cfg.max_pages:
+                return
             st.results.append(result)
             if count:
                 st.pages_done += 1

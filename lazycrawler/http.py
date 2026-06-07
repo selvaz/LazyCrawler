@@ -489,6 +489,58 @@ class HTTPClient:
         )
         return None
 
+    def _request(self, url: str, headers: Optional[dict] = None):
+        """GET with **manual** redirect handling: every hop is re-validated by the
+        SSRF guard (so a public host that redirects to a private address is
+        blocked) and the hop count is bounded by ``max_redirects``. Returns the
+        final streamed ``Response`` (caller reads+closes the body), or None if a
+        hop is blocked / there are too many redirects."""
+        cfg = self.cfg
+        current = url
+        for _ in range(cfg.max_redirects + 1):
+            if cfg.block_private_addresses and is_blocked_address(current):
+                log.warning("SSRF guard: refusing to fetch private/loopback address %s", current)
+                return None
+            resp = self.session.get(
+                current,
+                timeout=(cfg.timeout_connect, cfg.timeout_read),
+                allow_redirects=False,
+                headers=headers,
+                verify=self._verify,
+                stream=True,
+            )
+            if resp.is_redirect and resp.headers.get("Location"):
+                nxt = urljoin(current, resp.headers["Location"])
+                resp.close()
+                current = nxt
+                continue
+            return resp
+        log.warning("too many redirects (> %d) for %s", cfg.max_redirects, url)
+        return None
+
+    @staticmethod
+    def _read_capped(resp, cap: int) -> bytes:
+        """Stream the response body, stopping at ``cap`` bytes (prevents a huge or
+        hostile resource from exhausting memory)."""
+        total = 0
+        chunks = []
+        for chunk in resp.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            chunks.append(chunk)
+            total += len(chunk)
+            if total >= cap:
+                log.warning("response body hit the %d-byte cap for %s - truncating", cap, resp.url)
+                break
+        return b"".join(chunks)[:cap]
+
+    @staticmethod
+    def _decode(body: bytes, content_type: str) -> str:
+        enc = None
+        if "charset=" in content_type:
+            enc = content_type.split("charset=")[-1].split(";")[0].strip() or None
+        return body.decode(enc or "utf-8", errors="replace")
+
     def fetch(
         self,
         url: str,
@@ -524,33 +576,30 @@ class HTTPClient:
 
         for attempt in range(1, cfg.max_retries + 1):
             try:
-                headers = extra_headers or None
-                resp = self.session.get(
-                    url,
-                    timeout=(cfg.timeout_connect, cfg.timeout_read),
-                    allow_redirects=True,
-                    headers=headers,
-                    verify=self._verify,
-                )
+                resp = self._request(url, extra_headers or None)
+                if resp is None:
+                    return FetchResult()  # blocked hop / too many redirects
                 status = resp.status_code
                 if status in (429, 500, 502, 503, 504):
+                    resp.close()
                     raise requests.HTTPError(f"HTTP {status}")  # retryable
                 if 400 <= status < 600:
                     # Permanent error (e.g. 404/403/401/410): terminal, do not retry.
+                    resp.close()
                     log.info("fetch: non-retryable HTTP %s for %s - giving up", status, url)
                     return FetchResult(status=status)
 
                 ctype = (resp.headers.get("Content-Type") or "").lower()
-                body = resp.content or b""
-                if (
-                    "application/pdf" in ctype
-                    or url.lower().split("?")[0].endswith(".pdf")
-                    or body[:5] == b"%PDF-"
-                ):
+                looks_pdf = "application/pdf" in ctype or url.lower().split("?")[0].endswith(".pdf")
+                body = self._read_capped(
+                    resp, cfg.max_pdf_bytes if looks_pdf else cfg.max_html_bytes
+                )
+                resp.close()
+                if looks_pdf or body[:5] == b"%PDF-":
                     # PDF: hand the bytes straight to the PDF pipeline (no re-download).
                     return FetchResult(status=status, content=body, content_type=ctype)
 
-                html = resp.text or ""
+                html = self._decode(body, ctype)
                 return FetchResult(
                     html=html, text=self._extract_text(html), status=status, content_type=ctype
                 )
@@ -580,20 +629,18 @@ class HTTPClient:
         ``bytes`` is None on block/failure or a >=400 response.
         """
         cfg = self.cfg
-        if cfg.block_private_addresses and is_blocked_address(url):
-            log.info("SSRF guard: refusing to fetch asset %s", url)
-            return None, "", None
         try:
-            resp = self.session.get(
-                url,
-                timeout=(cfg.timeout_connect, cfg.timeout_read),
-                allow_redirects=True,
-                verify=self._verify,
-            )
+            resp = self._request(url, None)  # per-hop SSRF validation inside
+            if resp is None:
+                return None, "", None
             ctype = (resp.headers.get("Content-Type") or "").lower()
             if resp.status_code >= 400:
+                resp.close()
                 return None, ctype, resp.status_code
-            return (resp.content or b""), ctype, resp.status_code
+            body = self._read_capped(resp, cfg.max_asset_bytes)
+            status = resp.status_code
+            resp.close()
+            return body, ctype, status
         except Exception as e:
             log.debug("fetch_bytes failed for %s: %s", url, e)
             return None, "", None
@@ -601,18 +648,19 @@ class HTTPClient:
     def get_text(self, url: str) -> Optional[str]:
         """
         Fetch a URL and return the raw response text (no extraction), honoring
-        the SSL/verify configuration. Used for robots.txt. None on any failure.
+        the SSL/verify configuration and the SSRF guard. Used for robots.txt.
+        None on any failure.
         """
         try:
-            resp = self.session.get(
-                url,
-                timeout=(self.cfg.timeout_connect, self.cfg.timeout_read),
-                allow_redirects=True,
-                verify=self._verify,
-            )
-            if resp.status_code >= 400:
+            resp = self._request(url, None)
+            if resp is None or resp.status_code >= 400:
+                if resp is not None:
+                    resp.close()
                 return None
-            return resp.text or ""
+            body = self._read_capped(resp, self.cfg.max_html_bytes)
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            resp.close()
+            return self._decode(body, ctype)
         except Exception as e:
             log.debug("get_text failed for %s: %s", url, e)
             return None

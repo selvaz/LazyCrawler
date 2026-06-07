@@ -103,3 +103,8 @@ def test_get_pages_by_session(tmp_db):
     rows = tmp_db.get_pages(session_id="sess", status="done")
     assert len(rows) == 3
     assert all(r["url"].endswith(("s0", "s1", "s2")) for r in rows)
+
+
+def test_schema_user_version_set(tmp_db):
+    v = int(tmp_db.conn.execute("PRAGMA user_version").fetchone()[0])
+    assert v == tmp_db.SCHEMA_VERSION

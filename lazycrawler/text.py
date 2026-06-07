@@ -97,6 +97,7 @@ def extract_candidate_links(
     same_domain_only: bool = True,
     max_links: int = 300,
     exclude_pattern: "Optional[Any]" = None,
+    same_host_only: bool = False,
 ) -> List[Tuple[str, str]]:
     """
     Extract candidate links from an HTML page.
@@ -141,11 +142,15 @@ def extract_candidate_links(
             continue
         if same_domain_only and start_domain:
             link_domain = get_base_domain(href)
-            if not (
-                link_domain == start_domain
-                or link_domain.endswith("." + start_domain)
-                or start_domain.endswith("." + link_domain)
-            ):
+            if same_host_only:
+                ok = link_domain == start_domain  # strict same hostname[:port]
+            else:
+                ok = (
+                    link_domain == start_domain
+                    or link_domain.endswith("." + start_domain)
+                    or start_domain.endswith("." + link_domain)
+                )
+            if not ok:
                 n_offdom += 1
                 continue
         if is_excluded_url(href, text, exclude_pattern):
