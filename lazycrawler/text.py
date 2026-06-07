@@ -17,7 +17,7 @@ from typing import Any, List, Optional, Tuple
 from urllib.parse import urljoin
 
 from ._log import log
-from .http import get_base_domain, is_excluded_url, normalize_url
+from .http import get_hostname, is_excluded_url, normalize_url, same_site
 
 # =============================================================================
 # WHITESPACE
@@ -141,15 +141,14 @@ def extract_candidate_links(
             n_offdom += 1
             continue
         if same_domain_only and start_domain:
-            link_domain = get_base_domain(href)
+            # ``start_domain`` is the seed *hostname* (no port/userinfo). Compare on
+            # hostname for strict mode, or on registrable domain (eTLD+1) otherwise
+            # so parent/sibling subdomains of the same site are followed.
+            link_host = get_hostname(href)
             if same_host_only:
-                ok = link_domain == start_domain  # strict same hostname[:port]
+                ok = link_host == start_domain  # strict same hostname
             else:
-                ok = (
-                    link_domain == start_domain
-                    or link_domain.endswith("." + start_domain)
-                    or start_domain.endswith("." + link_domain)
-                )
+                ok = same_site(link_host, start_domain)
             if not ok:
                 n_offdom += 1
                 continue

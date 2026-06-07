@@ -78,8 +78,11 @@ def search_ddg_urls(
         except ImportError as e:
             raise RuntimeError("DuckDuckGo library missing. Install with: pip install ddgs") from e
 
+    # Over-fetch a little to absorb dedup/exclusion losses, but clamp the fan-out
+    # so a large caller value can't inflate the provider request.
+    fetch_n = min(max_results * 2, 50)
     text_kwargs = dict(
-        max_results=max_results * 2,
+        max_results=fetch_n,
         region=region,
         safesearch=safesearch,
         timelimit=timelimit,
@@ -95,7 +98,7 @@ def search_ddg_urls(
             except TypeError:
                 # older ddgs/duckduckgo_search without some kwargs
                 log.debug("ddgs.text rejected extra kwargs - retrying with basics", exc_info=True)
-                hits = ddgs_client.text(query, max_results=max_results * 2)
+                hits = ddgs_client.text(query, max_results=fetch_n)
             for r in hits:
                 href = (r.get("href") or "").strip()
                 if not href or not href.startswith(("http://", "https://")):

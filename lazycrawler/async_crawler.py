@@ -52,14 +52,13 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 from ._log import log
 from .config import CrawlerConfig, HTTPConfig
 from .http import (
     compile_exclude,
-    get_base_domain,
     get_hostname,
     is_blacklisted_domain,
     normalize_url,
@@ -88,7 +87,13 @@ except ImportError:
 
 
 async def _is_blocked_async(url: str) -> bool:
-    """Async SSRF guard: resolves DNS in a thread executor, checks every IP."""
+    """Async SSRF guard: resolves DNS in a thread executor, checks every IP.
+
+    .. warning::
+       Best-effort guard, not network isolation. The IPs are validated at check
+       time but aiohttp re-resolves the host at connect time, so DNS rebinding /
+       TOCTOU is possible. See :func:`lazycrawler.http.is_blocked_address`.
+    """
     host = get_hostname(url)
     if not host:
         return True
@@ -161,6 +166,7 @@ class _AsyncFetchResult:
     html: Optional[str] = None
     text: Optional[str] = None
     status: Optional[int] = None
+    final_url: Optional[str] = None  # last hop after manual redirect following
 
 
 class _AsyncHTTPClient:
@@ -191,29 +197,9 @@ class _AsyncHTTPClient:
         cfg = self.cfg
         for attempt in range(1, cfg.max_retries + 1):
             try:
-                session = await self._ensure()
-                async with session.get(
-                    url, max_redirects=cfg.max_redirects, allow_redirects=True
-                ) as resp:
-                    status = resp.status
-                    if status in (429, 500, 502, 503, 504):
-                        raise aiohttp.ClientResponseError(
-                            resp.request_info, resp.history, status=status
-                        )
-                    if 400 <= status < 600:
-                        return _AsyncFetchResult(status=status)
-                    content_type = resp.headers.get("Content-Type", "").lower()
-                    if "application/pdf" in content_type or url.lower().endswith(".pdf"):
-                        return _AsyncFetchResult(status=status)  # skip PDFs in async mode
-                    body = await resp.read()
-                    if len(body) > cfg.max_html_bytes:
-                        body = body[: cfg.max_html_bytes]
-                    enc = None
-                    if "charset=" in content_type:
-                        enc = content_type.split("charset=")[-1].split(";")[0].strip() or None
-                    html = body.decode(enc or "utf-8", errors="replace")
-                    text = self._extract(html)
-                    return _AsyncFetchResult(html=html, text=text, status=status)
+                # ClientResponseError (retryable HTTP status) and transport errors
+                # are both retried with backoff by the generic handler below.
+                return await self._fetch_once(url)
             except Exception as exc:
                 if attempt < cfg.max_retries:
                     await asyncio.sleep(cfg.backoff_base_sec * (2 ** (attempt - 1)))
@@ -223,6 +209,53 @@ class _AsyncHTTPClient:
                     )
                     return _AsyncFetchResult()
         return _AsyncFetchResult()
+
+    async def _fetch_once(self, url: str) -> _AsyncFetchResult:
+        """One fetch attempt with **manual** redirect handling: every hop is
+        re-validated by the SSRF guard, the hop count is bounded, and the body is
+        streamed with a hard ``max_html_bytes`` cap (mirrors the sync client)."""
+        cfg = self.cfg
+        session = await self._ensure()
+        current = url
+        for _ in range(cfg.max_redirects + 1):
+            if cfg.block_private_addresses and await _is_blocked_async(current):
+                log.warning("async SSRF guard: refusing redirect/fetch to %s", current)
+                return _AsyncFetchResult(final_url=current)
+            async with session.get(current, allow_redirects=False) as resp:
+                status = resp.status
+                # Manual redirect: re-loop so the next hop is SSRF-checked.
+                if status in (301, 302, 303, 307, 308) and resp.headers.get("Location"):
+                    current = urljoin(current, resp.headers["Location"])
+                    continue
+                if status in (429, 500, 502, 503, 504):
+                    raise aiohttp.ClientResponseError(
+                        resp.request_info, resp.history, status=status
+                    )
+                if 400 <= status < 600:
+                    return _AsyncFetchResult(status=status, final_url=current)
+                content_type = resp.headers.get("Content-Type", "").lower()
+                if "application/pdf" in content_type or current.lower().endswith(".pdf"):
+                    return _AsyncFetchResult(status=status, final_url=current)  # skip PDFs
+                # Stream the body, stopping at the byte cap (avoids buffering a
+                # hostile/huge response fully into memory).
+                total = 0
+                chunks: List[bytes] = []
+                async for chunk in resp.content.iter_chunked(65536):
+                    if not chunk:
+                        continue
+                    chunks.append(chunk)
+                    total += len(chunk)
+                    if total >= cfg.max_html_bytes:
+                        break
+                body = b"".join(chunks)[: cfg.max_html_bytes]
+                enc = None
+                if "charset=" in content_type:
+                    enc = content_type.split("charset=")[-1].split(";")[0].strip() or None
+                html = body.decode(enc or "utf-8", errors="replace")
+                text = self._extract(html)
+                return _AsyncFetchResult(html=html, text=text, status=status, final_url=current)
+        log.warning("async: too many redirects (> %d) for %s", cfg.max_redirects, url)
+        return _AsyncFetchResult(final_url=current)
 
     @staticmethod
     def _extract(html: str) -> Optional[str]:
@@ -402,21 +435,23 @@ class AsyncWebCrawler:
             self.cfg.max_workers,
         )
         # BFS level-by-level with concurrency limited by max_workers
-        frontier = [(normalize_url(u), get_base_domain(u), None) for u in seeds]
+        frontier = [(normalize_url(u), get_hostname(u), None) for u in seeds]
         depth = 0
         sem = asyncio.Semaphore(max(1, self.cfg.max_workers))
         while frontier and not await self._cap(st):
             tasks = [self._process(st, url, depth, src, dom, sem) for (url, dom, src) in frontier]
             next_lists = await asyncio.gather(*tasks, return_exceptions=False)
             seen_next: Set[str] = set()
-            frontier = []
+            next_frontier = []
             if depth < eff_depth:
-                for links in next_lists:
+                # zip preserves order, so each child carries its true parent URL.
+                for (parent_url, _pdom, _psrc), links in zip(frontier, next_lists, strict=False):
                     for link_url, link_dom in links or []:
                         nu = normalize_url(link_url)
                         if nu not in seen_next:
                             seen_next.add(nu)
-                            frontier.append((link_url, link_dom, None))
+                            next_frontier.append((link_url, link_dom, parent_url))
+            frontier = next_frontier
             depth += 1
             if depth > eff_depth:
                 break
@@ -495,6 +530,24 @@ class AsyncWebCrawler:
                 )
             return []
 
+        # Adopt the post-redirect URL as the page identity (re-validate first) so
+        # link/cache/provenance reflect the real origin (async analogue of the sync
+        # pipeline's redirect adoption).
+        requested_url: Optional[str] = None
+        final = normalize_url(fr.final_url or url)
+        if final != url:
+            if is_blacklisted_domain(final, self.blacklist):
+                return []
+            if self.http_cfg.block_private_addresses and await _is_blocked_async(final):
+                log.info("async SSRF guard: blocking redirect target %s", final)
+                return []
+            if self._robots is not None and not await self._robots.allowed(final):
+                log.info("async: robots.txt disallows redirect target %s", final)
+                return []
+            requested_url, url = url, final
+            if not await self._mark_visited(st, url):
+                return []
+
         cfg = st.cfg
         page = PageResult(
             url=url,
@@ -504,6 +557,7 @@ class AsyncWebCrawler:
             text=(fr.text or "")[: cfg.max_chars_pure] or None,
             depth=depth,
             source_url=source_url,
+            requested_url=requested_url,
         )
         async with st.results_lock:
             if st.pages_done >= cfg.max_pages:
@@ -530,7 +584,7 @@ class AsyncWebCrawler:
         async with st.visited_lock:
             visited_snap = set(st.visited)
         links = [
-            (u, get_base_domain(u))
+            (u, get_hostname(u))
             for (_a, u) in candidates[: cfg.max_links_per_level]
             if normalize_url(u) not in visited_snap and not is_blacklisted_domain(u, self.blacklist)
         ]

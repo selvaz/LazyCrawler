@@ -70,7 +70,8 @@ def test_get_page_and_session_pages(stub_fetch, tools):
     assert sp["session_id"] == sid and sp["found"] >= 1
 
     gp = json.loads(tools.get_page("https://e.org/sess"))
-    assert gp.get("text")
+    assert gp.get("untrusted_page_text")
+    assert gp.get("content_is_untrusted") is True
 
 
 def test_get_session_pages_unknown(tools):

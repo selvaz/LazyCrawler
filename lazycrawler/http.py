@@ -113,11 +113,124 @@ def get_base_domain(url: str) -> str:
 
 
 def get_hostname(url: str) -> str:
-    """Lowercase hostname (no port) from a URL."""
+    """Lowercase hostname (no port, no userinfo) from a URL or bare host."""
     try:
-        return (urlparse(url).hostname or "").lower()
+        p = urlparse(url)
+        host = p.hostname
+        if host:
+            return host.lower()
     except Exception:
+        pass
+    # Bare host (no scheme): urlparse puts it in ``path``; strip any port/userinfo.
+    bare = (url or "").strip().lower()
+    if "://" not in bare and bare:
+        bare = bare.split("/")[0].split("@")[-1].split(":")[0]
+        return bare
+    return ""
+
+
+# Minimal bundled multi-part public-suffix set for the dependency-free fallback
+# (used only when ``tldextract`` is not installed). Not exhaustive; ``tldextract``
+# is the accurate path (install the ``domains`` extra).
+_MULTI_PART_SUFFIXES = frozenset(
+    {
+        "co.uk",
+        "org.uk",
+        "gov.uk",
+        "ac.uk",
+        "me.uk",
+        "com.au",
+        "net.au",
+        "org.au",
+        "gov.au",
+        "edu.au",
+        "co.jp",
+        "or.jp",
+        "ne.jp",
+        "ac.jp",
+        "go.jp",
+        "co.nz",
+        "org.nz",
+        "govt.nz",
+        "co.za",
+        "org.za",
+        "com.br",
+        "com.cn",
+        "com.sg",
+        "com.hk",
+        "co.in",
+        "co.kr",
+    }
+)
+
+# Cached tldextract extractor (built once, pinned to the bundled suffix snapshot so
+# it never refreshes over the network). ``False`` means "not yet attempted".
+_TLD_EXTRACT = False
+
+
+def _tld_extractor():
+    """Return a cached, network-free ``tldextract`` extractor, or None if absent."""
+    global _TLD_EXTRACT
+    if _TLD_EXTRACT is False:
+        try:
+            import tldextract  # type: ignore
+
+            # suffix_list_urls=() disables network refresh -> uses bundled snapshot.
+            _TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
+        except Exception:
+            _TLD_EXTRACT = None
+    return _TLD_EXTRACT
+
+
+def registrable_domain(host_or_url: str) -> str:
+    """
+    Registrable domain (eTLD+1) of a URL or bare host, lowercased.
+
+    Examples: ``news.example.com`` -> ``example.com``; ``x.bbc.co.uk`` ->
+    ``bbc.co.uk``. Ports and userinfo are stripped first. Uses ``tldextract``
+    (bundled public-suffix snapshot) when available; otherwise falls back to a
+    small built-in multi-part-suffix heuristic. Returns "" if no host.
+    """
+    host = get_hostname(host_or_url)
+    if not host:
         return ""
+    # IP literals have no registrable domain - compare them as-is.
+    try:
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        pass
+    ext = _tld_extractor()
+    if ext is not None:
+        try:
+            r = ext(host)
+            if r.domain and r.suffix:
+                return f"{r.domain}.{r.suffix}".lower()
+            # No known public suffix (e.g. test/fake TLD) -> heuristic below.
+        except Exception:
+            pass
+    return _registrable_heuristic(host)
+
+
+def _registrable_heuristic(host: str) -> str:
+    """Dependency-free eTLD+1 guess using a small bundled multi-part-suffix set."""
+    labels = host.split(".")
+    if len(labels) <= 2:
+        return host
+    last2 = ".".join(labels[-2:])
+    last3 = ".".join(labels[-3:])
+    if last2 in _MULTI_PART_SUFFIXES:
+        return ".".join(labels[-3:])
+    if last3 in _MULTI_PART_SUFFIXES:
+        return ".".join(labels[-4:]) if len(labels) >= 4 else host
+    return last2
+
+
+def same_site(host_a: str, host_b: str) -> bool:
+    """True if two hosts/URLs share the same registrable domain (eTLD+1)."""
+    ra = registrable_domain(host_a)
+    rb = registrable_domain(host_b)
+    return bool(ra) and ra == rb
 
 
 _METADATA_HOSTS = {"metadata.google.internal", "metadata"}
@@ -135,6 +248,15 @@ def is_blocked_address(url: str) -> bool:
 
     Intended for the agent/tool path where an LLM may pass arbitrary URLs. Off by
     default for the library (``HTTPConfig.block_private_addresses``).
+
+    .. warning::
+       **Best-effort guard, not network isolation.** This validates the IPs the
+       host resolves to *at check time*, but the connection is established
+       separately (by ``requests``/``aiohttp``), which re-resolves the host. A
+       hostile DNS server can therefore return a public IP during validation and a
+       private/loopback IP at connect time (DNS rebinding / TOCTOU). For a hard
+       guarantee, run the crawler with OS/network-level egress restrictions; do not
+       rely on this check alone for untrusted targets.
     """
     host = get_hostname(url)
     if not host:
