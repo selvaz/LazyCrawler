@@ -9,9 +9,15 @@ adoption, #4 registrable-domain scope, #5 per-call config in traversal,
 from __future__ import annotations
 
 import asyncio
+import importlib.util
+
+import pytest
 
 from lazycrawler import HTTPConfig
 from lazycrawler.http import FetchResult, get_hostname, registrable_domain, same_site
+
+_HAS_AIOHTTP = importlib.util.find_spec("aiohttp") is not None
+requires_aiohttp = pytest.mark.skipif(not _HAS_AIOHTTP, reason="requires aiohttp (the async extra)")
 
 # =============================================================================
 # #4 — registrable-domain semantics
@@ -239,6 +245,7 @@ def test_async_body_capped_while_streaming(monkeypatch):
     assert len(fr.html) <= 1000
 
 
+@requires_aiohttp
 def test_async_preserves_provenance(monkeypatch):
     import lazycrawler.async_crawler as ac
     from lazycrawler import CrawlerConfig
