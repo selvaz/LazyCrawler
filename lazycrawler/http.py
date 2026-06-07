@@ -18,6 +18,7 @@ import re
 import socket
 import threading
 import time
+import weakref
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
@@ -219,6 +220,16 @@ def is_excluded_url(url: str, text: str = "", pattern: "Optional[re.Pattern[str]
 # =============================================================================
 
 
+def _quiet_close(resource: object) -> None:
+    """Close a resource (HTTP session / browser / DB connection), swallowing any
+    error. Module-level so ``weakref.finalize`` never captures the owning object
+    (which would keep it alive and defeat the finalizer)."""
+    try:
+        resource.close()  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
 def sha256_hex(s: str) -> str:
     """SHA256 hex of a UTF-8 string."""
     return hashlib.sha256(s.encode("utf-8", errors="ignore")).hexdigest()
@@ -401,6 +412,11 @@ class HTTPClient:
                 log.debug("could not disable urllib3 InsecureRequestWarning", exc_info=True)
         self._session = self._make_session()
         self._browser = None
+        self._browser_finalizer: "Optional[weakref.finalize]" = None
+        # Automatic cleanup on GC / interpreter exit, so the agent/tool path never
+        # needs an explicit close(). close()/`with` stay available for
+        # deterministic release (e.g. a Playwright browser subprocess).
+        self._finalizer = weakref.finalize(self, _quiet_close, self._session)
 
     def _make_session(self) -> requests.Session:
         s = requests.Session()
@@ -596,7 +612,12 @@ class HTTPClient:
             except Exception:
                 log.debug("failed closing browser renderer", exc_info=True)
             self._browser = None
+            if self._browser_finalizer is not None:
+                self._browser_finalizer.detach()
+                self._browser_finalizer = None
         self._session.close()
+        # Disarm the GC/exit finalizer: the resources are already released.
+        self._finalizer.detach()
 
     def __enter__(self) -> "HTTPClient":
         return self
@@ -616,6 +637,8 @@ class HTTPClient:
                 wait_until=cfg.browser_wait_until,
                 timeout_ms=cfg.browser_timeout_ms,
             )
+            # Close the browser subprocess too on GC/exit if close() is never called.
+            self._browser_finalizer = weakref.finalize(self, _quiet_close, self._browser)
         return self._browser
 
 
