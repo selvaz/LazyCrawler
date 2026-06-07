@@ -559,17 +559,25 @@ CrawlerConfig(strict=True)   # raise on the first page/worker error
 
 ```
 lazycrawler/
-├── config.py    configuration dataclasses (Crawler/HTTP/LLM/Search/DB)
-├── http.py      HTTPClient + URL utils + hashing + blacklist
-├── text.py      preprocessing + link/date/canonical/title extraction
-├── pdf.py       remote PDF extraction (PyMuPDF → pypdf → pdfplumber)
-├── prompts.py   LLM prompts (smart mode only, domain-agnostic)
-├── llm.py       LazyBridge wrapper (structured output via output=PydanticModel)
-├── markdown.py  optional HTML->Markdown renderer (RAG ingestion)
-├── artifacts.py tables/images/charts/svg extraction (Artifact model)
-├── db.py        SQLite: sessions + pages + crawl_edges + artifacts, dedup, TTL, FTS5
-├── crawler.py   WebCrawler (pure + smart)
-└── search.py    WebSearch (DDG / Brave / Tavily / Gemini)
+├── config.py        configuration dataclasses (Crawler/HTTP/LLM/Search/DB/ML)
+├── models.py        PageResult (public output type) + Artifact
+├── _log.py          logging setup (set_log_level helper)
+├── http.py          HTTPClient + URL utils + hashing + SSRF guard
+├── ratelimit.py     HostRateLimiter (per-host polite delay)
+├── text.py          preprocessing + link/date/canonical/title extraction
+├── pdf.py           remote PDF extraction (PyMuPDF → pypdf → pdfplumber)
+├── prompts.py       LLM prompts (smart mode only, domain-agnostic)
+├── llm.py           LazyBridge wrapper (structured output via output=PydanticModel)
+├── ml.py            MLEngine: semantic scoring (Model2Vec) + NLP extraction
+├── markdown.py      optional HTML→Markdown renderer (RAG ingestion)
+├── artifacts.py     tables/images/charts/svg extraction (Artifact model)
+├── db.py            SQLite: sessions + pages + crawl_edges + artifacts, dedup, TTL, FTS5
+├── _pipeline.py     per-page pipeline (fetch → extract → enrich → emit)
+├── crawler.py       WebCrawler (pure + ml + smart, sequential + parallel)
+├── async_crawler.py AsyncWebCrawler (aiohttp, pure mode, high-throughput)
+├── search.py        WebSearch (DDG / Brave / Tavily / Gemini)
+├── presets.py       named preset catalog (CrawlPreset, DEFAULT_PRESETS)
+└── tools.py         LazyBridge ToolProvider (CrawlerTools)
 ```
 
 ### DB schema
