@@ -34,11 +34,12 @@ An honest evaluation of LazyCrawler against the main web-crawling frameworks.
 | Non-textual artifacts (tables/images/charts) | ✅ relational + vision | ~ (tables/md) | ~ (md) | ~ | ❌ |
 | RAG document assembly (text + artifacts) | ✅ `render_for_rag` + anchors | ~ markdown | ~ markdown | ~ | ❌ |
 | Intent presets for agents | ✅ `list_presets` + `preset=` | ❌ | ~ (params) | ❌ | ❌ |
+| No-LLM **smart** tier (semantic frontier + structured extraction) | ✅ `ml` mode | ~ (scorer only) | ❌ | ❌ | ❌ |
 | robots.txt | ✅ default-on | ~ | ✅ | ~ | ✅ |
 | Anti-bot / proxy | ❌ | ✅ | ✅ | ~ | ~ |
-| SSRF guard | ✅ agent path (no redirect re-check) | ❌ | n/a (hosted) | ❌ | ~ |
+| SSRF guard | ✅ agent path (per-hop redirect re-validation) | ❌ | n/a (hosted) | ❌ | ~ |
 | Provider-agnostic LLM | ✅ LazyBridge | ✅ | ~ | ✅ | — |
-| Maturity / distribution | v0.9, solo, not yet on PyPI | high | high | medium | very high |
+| Maturity / distribution | v0.12, solo, not yet on PyPI | high | high | medium | very high |
 
 ## Where LazyCrawler is genuinely strong
 
@@ -72,12 +73,13 @@ An honest evaluation of LazyCrawler against the main web-crawling frameworks.
    rotation, and per-domain rate limiting are still missing.
 5. **Markdown output** — *now addressed* via optional `emit_markdown`
    (`html_to_markdown`, markdownify-backed); plain text / Pydantic still available.
-6. **Weak link frontier** — pure mode is "first N" (smart mode is LLM-ranked); no
-   URL scoring / best-first / sitemap seeding.
+6. **Weak link frontier** — *now addressed* via `ml` mode: a best-first **semantic**
+   frontier (Model2Vec scoring), no LLM tokens. Sitemap seeding still missing.
 7. **No interactive actions** (click/scroll/form).
-8. **SSRF guard does not re-check redirects** — a public host that 30x-redirects to
-   a private address is not blocked (`requests` follows redirects internally).
-9. **Distribution** — pre-1.0, solo, **not yet published to PyPI**; the other
+8. **SSRF redirects / byte caps** — *now addressed* (v0.12): redirects are
+   re-validated per hop and downloads are streamed + size-capped.
+9. **Anti-bot / proxy** — still missing; blocked on protected sites.
+10. **Distribution** — pre-1.0, solo, **not yet published to PyPI**; the other
    ecosystem packages are.
 
 ## Verdict
