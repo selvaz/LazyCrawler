@@ -22,7 +22,20 @@ def test_default_catalog_has_expected_presets():
         "extract_data",
         "rag_ingest",
         "research_ml",
+        "news_scan_ml",
+        "topic_explore_ml",
+        "rag_ingest_ml",
+        "hybrid_research",
     }
+
+
+def test_ml_presets_use_ml_knobs():
+    # the new ml/hybrid presets exercise the ml engine on the expected knob
+    assert DEFAULT_PRESETS["news_scan_ml"].content == "ml"
+    assert DEFAULT_PRESETS["topic_explore_ml"].links == "ml"
+    assert DEFAULT_PRESETS["rag_ingest_ml"].content == "ml"
+    h = DEFAULT_PRESETS["hybrid_research"]
+    assert h.content == "smart" and h.links == "ml"  # killer combo
 
 
 def test_crawl_overrides_only_exposes_config_fields():
