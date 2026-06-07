@@ -79,3 +79,4 @@ nav:
       - Agent Integration: guides/agent-tools.md
       - Crawl Presets: guides/presets.md
       - Artifacts: guides/artifacts.md
+      - Markdown & RAG: guides/markdown-rag.md
