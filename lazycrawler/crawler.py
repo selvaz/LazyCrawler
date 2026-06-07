@@ -621,22 +621,25 @@ class WebCrawler:
         # no text
         if not (raw_text or "").strip():
             log.debug("  -> no_text: trafilatura/fallback returned nothing")
-            self._emit(
-                st,
-                PageResult(
-                    url=url,
-                    url_hash=uh,
-                    status="no_text",
-                    mode=st.content_mode,
-                    depth=depth,
-                    source_url=source_url,
-                    published_iso=published_iso,
-                    is_pdf=is_pdf,
-                    error="No extractable text",
-                ),
-                count=False,
-                candidate_links=candidates,
+            nt = PageResult(
+                url=url,
+                url_hash=uh,
+                status="no_text",
+                mode=st.content_mode,
+                depth=depth,
+                source_url=source_url,
+                published_iso=published_iso,
+                is_pdf=is_pdf,
+                error="No extractable text",
             )
+            # A text-less page can still carry artifacts — e.g. an image-only or
+            # scanned PDF, or an HTML page that is all tables/images. Collect them
+            # so extract_artifacts works regardless of whether there is body text.
+            if cfg.extract_artifacts:
+                nt.artifacts, _ = self._collect_artifacts(st, html, url, pdf_bytes, is_pdf, res)
+            self._emit(st, nt, count=False, candidate_links=candidates)
+            if self.db is not None and nt.artifacts:
+                self.db.add_artifacts(nt.url_hash, nt.artifacts)
             return self._select_next(st, candidates, "", res)
 
         preclean = preprocess_text(raw_text)
