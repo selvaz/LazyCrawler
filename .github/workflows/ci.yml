@@ -31,13 +31,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install package + offline test extras
-        # The offline suite (-m "not integration") needs the non-LLM extras only.
-        # The `smart`/`all` extra pulls lazybridge>=0.9 which requires Python
-        # >=3.11, so installing it would break the 3.10 leg of the matrix.
-        # LazyBridge-dependent tests are integration-marked and skipped here.
+        # The offline suite (-m "not integration") exercises the non-LLM extras.
+        # `nlp`/`markdown`/`image` are included so the ml content-extraction,
+        # markdown and artifact-image paths run in CI. `smart`/`all` pull
+        # lazybridge>=0.9 (Python >=3.11) and are integration-marked, so they are
+        # skipped here. `ml` (model2vec) is omitted: it would download a ~30MB
+        # model over the network at test time; the offline lexical/structural
+        # fallback path is what CI exercises. `js` (Playwright) is mocked in tests.
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[pdf,search,excel,dates,dev]"
+          pip install -e ".[pdf,search,excel,dates,markdown,image,nlp,dev]"
 
       - name: Lint (ruff)
         run: |

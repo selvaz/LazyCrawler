@@ -2,7 +2,7 @@
 """
 lazycrawler.artifacts
 =====================
-Extraction of non-textual page content — **tables, images, figures, charts,
+Extraction of non-textual page content — **tables, images, charts,
 SVG** — as structured ``Artifact`` records.
 
 Design (best-practice driven):
@@ -80,7 +80,7 @@ def sniff_image(
     return mime, width, height
 
 
-ArtifactType = Literal["table", "image", "figure", "svg", "chart"]
+ArtifactType = Literal["table", "image", "chart", "svg"]
 
 # Heuristic markers that an image/figure is a chart/graph rather than a photo.
 _CHART_HINT = re.compile(r"chart|graph|plot|diagram|figure|fig\.|infographic", re.IGNORECASE)
@@ -89,7 +89,7 @@ _NOISE_IMG = re.compile(r"spacer|pixel|1x1|blank|logo|icon|sprite|avatar|badge",
 
 
 class Artifact(BaseModel):
-    """A non-textual page element (table / image / figure / chart / svg)."""
+    """A non-textual page element (table / image / chart / svg)."""
 
     artifact_type: ArtifactType
     position: int = 0  # order of appearance on the page
@@ -387,7 +387,7 @@ def extract_html_artifacts(
     same_domain_images: bool = False,
 ) -> List[Artifact]:
     """
-    Extract tables / images / figures / charts / SVG from an HTML page, in
+    Extract tables / images / charts / SVG from an HTML page, in
     document order.
 
     Parameters
@@ -413,7 +413,7 @@ def extract_html_artifacts(
     out = _extract_from_soup(
         BeautifulSoup(html, "html.parser"),
         base_url,
-        want=types or {"table", "image", "figure", "svg", "chart"},
+        want=types or {"table", "image", "chart", "svg"},
         min_image_dim=min_image_dim,
         context_chars=context_chars,
         max_artifacts=max_artifacts,
@@ -454,7 +454,7 @@ def extract_html_artifacts_anchored(
     out = _extract_from_soup(
         soup,
         base_url,
-        want=types or {"table", "image", "figure", "svg", "chart"},
+        want=types or {"table", "image", "chart", "svg"},
         min_image_dim=min_image_dim,
         context_chars=context_chars,
         max_artifacts=max_artifacts,

@@ -429,6 +429,16 @@ Downloads are also **streamed and size-capped** (`HTTPConfig.max_html_bytes` /
 `max_pdf_bytes` / `max_asset_bytes`), so a hostile or huge resource cannot
 exhaust memory.
 
+The guard also covers two subtler vectors:
+- **`robots.txt` on the final host** — if a fetch redirects to a *different* host
+  whose `robots.txt` disallows the path, the content is dropped (`robots_blocked`),
+  not stored.
+- **canonical-URL poisoning** — a `<link rel="canonical">` pointing to a private
+  address is ignored (the page is not re-keyed under, say, `127.0.0.1/admin`).
+- **`render_js` is refused with the guard** — a headless browser's redirects and
+  subresources bypass the per-hop check, so `HTTPConfig(render_js=True,
+  block_private_addresses=True)` raises. Use one or the other.
+
 ## Resource cleanup (automatic — no `close()` in the agent path)
 
 You never call `close()` in the agent/tool path, and nothing lingers between calls:

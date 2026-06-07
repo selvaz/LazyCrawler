@@ -124,6 +124,7 @@ def test_fetch_retries_then_succeeds(monkeypatch):
         content = b"<html><body><p>" + b"ok " * 50 + b"</p></body></html>"
         text = "<html><body><p>" + "ok " * 50 + "</p></body></html>"
         is_redirect = False
+        url = "https://e.org/x"
 
         def iter_content(self, chunk_size=0):
             yield self.content
@@ -327,6 +328,7 @@ def test_fetch_returns_pdf_bytes_by_content_type(monkeypatch):
         content = b"%PDF-1.7 minimal"
         text = "garbage"
         is_redirect = False
+        url = "https://e.org/doc"
 
         def iter_content(self, chunk_size=0):
             yield self.content

@@ -295,7 +295,7 @@ def extract_pdf_artifacts(
     turns them into ``Artifact`` objects). Degrades to [] if the optional parsers
     are missing.
     """
-    want = want or {"table", "image", "figure", "svg", "chart"}
+    want = want or {"table", "image", "chart", "svg"}
     out: List[dict] = []
     pos = 0
 

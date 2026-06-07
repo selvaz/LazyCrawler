@@ -453,14 +453,14 @@ class CrawlerTools:
     def get_artifacts(self, url: str, artifact_type: str = "") -> str:
         """Return the non-textual artifacts extracted from an already-crawled page.
 
-        Use this to inspect the tables, images, figures and charts found on a page
+        Use this to inspect the tables, images, charts and SVG found on a page
         (after web_crawl/web_search with artifact extraction enabled). Tables come
         as Markdown + structured rows; images/charts as URL + caption (+ a vision
         summary when enrichment is on). Reads the local cache — no network call.
 
         Args:
             url: The exact page URL whose artifacts to retrieve.
-            artifact_type: Optional filter — "table", "image", "figure", "chart"
+            artifact_type: Optional filter — "table", "image", "chart"
                 or "svg". Empty returns all types.
 
         Returns:
