@@ -361,12 +361,17 @@ class WebSearch:
         links: Optional[str] = None,
         session_id: Optional[str] = None,
         max_results: Optional[int] = None,
+        overrides: Optional[dict] = None,
+        timelimit: Optional[str] = None,
     ) -> dict:
         """
         Run search + crawl.
 
         ``mode`` sets both content and links; ``content=`` / ``links=`` override
-        independently (see WebCrawler).
+        independently (see WebCrawler). ``overrides`` is a per-call dict of
+        ``CrawlerConfig`` fields forwarded to the crawl (the preset mechanism);
+        ``timelimit`` overrides ``SearchConfig.timelimit`` for this call only
+        ("d"/"w"/"m"/"y" or None). Both leave the shared config untouched.
 
         Returns
         -------
@@ -376,6 +381,7 @@ class WebSearch:
         engine = scfg.engine
         content_mode = content or mode
         link_mode = links or mode
+        eff_timelimit = scfg.timelimit if timelimit is None else timelimit
 
         # Topic expansion (only useful for smart link selection, since the topic
         # drives link relevance ranking).
@@ -397,15 +403,36 @@ class WebSearch:
             results = self._run_gemini(query, topic, content_mode)
         elif engine == "brave":
             results = self._run_brave(
-                query, topic, content_mode, link_mode, session_id, max_results
+                query,
+                topic,
+                content_mode,
+                link_mode,
+                session_id,
+                max_results,
+                overrides,
+                eff_timelimit,
             )
         elif engine == "tavily":
             results = self._run_tavily(
-                query, topic, content_mode, link_mode, session_id, max_results
+                query,
+                topic,
+                content_mode,
+                link_mode,
+                session_id,
+                max_results,
+                overrides,
+                eff_timelimit,
             )
         else:
             results = self._run_duckduckgo(
-                query, topic, content_mode, link_mode, session_id, max_results
+                query,
+                topic,
+                content_mode,
+                link_mode,
+                session_id,
+                max_results,
+                overrides,
+                eff_timelimit,
             )
 
         pages_found = sum(1 for r in results if r.status == "done")
@@ -421,7 +448,15 @@ class WebSearch:
     # -- DuckDuckGo: URLs -> crawl --------------------------------------------
 
     def _run_duckduckgo(
-        self, query, topic, content_mode, link_mode, session_id, max_results
+        self,
+        query,
+        topic,
+        content_mode,
+        link_mode,
+        session_id,
+        max_results,
+        overrides=None,
+        timelimit=None,
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
         scfg = self.search_cfg
@@ -431,7 +466,7 @@ class WebSearch:
             self.crawler.blacklist,
             region=scfg.region,
             safesearch=scfg.safesearch,
-            timelimit=scfg.timelimit,
+            timelimit=timelimit,
             backend=scfg.backend,
         )
         log.info("%d URLs from DuckDuckGo", len(urls))
@@ -446,12 +481,21 @@ class WebSearch:
             topic=topic,
             session_id=session_id,
             source="search:duckduckgo",
+            overrides=overrides,
         )
 
     # -- Brave Search: URLs -> crawl ------------------------------------------
 
     def _run_brave(
-        self, query, topic, content_mode, link_mode, session_id, max_results
+        self,
+        query,
+        topic,
+        content_mode,
+        link_mode,
+        session_id,
+        max_results,
+        overrides=None,
+        timelimit=None,
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
         scfg = self.search_cfg
@@ -461,7 +505,7 @@ class WebSearch:
             scfg.brave_api_key,
             self.crawler.blacklist,
             safesearch=scfg.safesearch,
-            timelimit=scfg.timelimit,
+            timelimit=timelimit,
             region=scfg.region,
         )
         log.info("%d URLs from Brave Search", len(urls))
@@ -476,12 +520,21 @@ class WebSearch:
             topic=topic,
             session_id=session_id,
             source="search:brave",
+            overrides=overrides,
         )
 
     # -- Tavily Search: URLs -> crawl -----------------------------------------
 
     def _run_tavily(
-        self, query, topic, content_mode, link_mode, session_id, max_results
+        self,
+        query,
+        topic,
+        content_mode,
+        link_mode,
+        session_id,
+        max_results,
+        overrides=None,
+        timelimit=None,
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
         scfg = self.search_cfg
@@ -491,7 +544,7 @@ class WebSearch:
             scfg.tavily_api_key,
             self.crawler.blacklist,
             search_depth=scfg.tavily_search_depth,
-            timelimit=scfg.timelimit,
+            timelimit=timelimit,
         )
         log.info("%d URLs from Tavily Search", len(urls))
         for i, u in enumerate(urls, 1):
@@ -505,6 +558,7 @@ class WebSearch:
             topic=topic,
             session_id=session_id,
             source="search:tavily",
+            overrides=overrides,
         )
 
     # -- Gemini grounded (answer mode) ----------------------------------------

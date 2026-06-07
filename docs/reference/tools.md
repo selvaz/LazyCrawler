@@ -53,23 +53,43 @@ agent = Agent(engine=engine, tools=tools)
 
 ## Tool descriptions (as the LLM sees them)
 
+### list_presets
+
+```
+list_presets() -> str
+```
+
+List the named presets the agent can pass as `preset=` to `web_search` / `web_crawl`.
+Each preset is an *intent* (e.g. `quick_lookup`, `deep_research`, `news_scan`,
+`extract_data`, `rag_ingest`) bundling a ready-made configuration — content mode,
+link-following, depth, artifact extraction, Markdown output, search recency — plus
+a coarse `cost` hint. Returns JSON: `{"presets": [{name, intent, cost, content,
+follows_links, link_mode, depth, artifacts, markdown, recency}]}`.
+
+The catalog can be extended/overridden per `CrawlerTools(presets={...})` with
+`CrawlPreset` objects (a key matching a built-in name overrides it).
+
 ### web_search
 
 ```
-web_search(query: str, max_results: int = 15) -> str
+web_search(query: str, max_results: int | None = None, preset: str = "") -> str
 ```
 
-Search the web using DuckDuckGo and return a JSON list of page results for the top matches.
+Search the web and return a JSON list of page results for the top matches.
+`preset` selects a named configuration (see `list_presets`); omit it for the
+default behavior. `max_results` defaults to the preset's value (or 15).
 
-Returns JSON: `[{"url": ..., "title": ..., "summary": ..., "text": ...}, ...]`
+Returns JSON: `{"query", "found", "session_id", "pages": [...]}`
 
 ### web_crawl
 
 ```
-web_crawl(url: str, depth: int = 1) -> str
+web_crawl(url: str, depth: int | None = None, preset: str = "") -> str
 ```
 
-Crawl a URL and its linked pages up to `depth` levels. Returns JSON list of page results.
+Crawl a URL and its linked pages up to `depth` levels. Returns a JSON list of
+page results. `preset` selects a named configuration; an explicit `depth` still
+overrides the preset's depth.
 
 !!! tip
     Keep `depth` small (0 or 1) in agent context — deep crawls are slow and consume many tokens.

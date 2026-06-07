@@ -44,6 +44,7 @@ from .config import CrawlerConfig, HTTPConfig, LLMConfig
 from .crawler import WebCrawler
 from .db import CrawlerDB
 from .http import url_hash
+from .presets import CrawlPreset, resolve_presets
 from .search import WebSearch
 
 # Per-page snippet length in tool results (full text via get_page()).
@@ -110,6 +111,11 @@ class CrawlerTools:
         How links are chosen during multi-page crawls (default "pure").
     topic : str
         Optional topic hint used for smart link selection.
+    presets : dict[str, CrawlPreset], optional
+        Extra/override named presets the agent can select via ``preset=`` on
+        ``web_search`` / ``web_crawl`` (and discover through ``list_presets``).
+        Merged on top of the built-in catalog (``lazycrawler.presets``); a key
+        matching a built-in name overrides it.
     verbose : bool
         If True, print concise progress messages for interactive use.
     """
@@ -123,12 +129,14 @@ class CrawlerTools:
         content: str = "smart",
         links: str = "pure",
         topic: str = "",
+        presets: Optional[Dict[str, CrawlPreset]] = None,
         verbose: bool = False,
     ):
         self.db = db
         self.content = content
         self.links = links
         self.topic = topic
+        self.presets = resolve_presets(presets)
         self.verbose = verbose
         # The agent can pass arbitrary URLs, so turn the SSRF guard ON by default
         # for the tool path (callers wanting internal hosts can pass an explicit
@@ -149,6 +157,21 @@ class CrawlerTools:
         if self.verbose:
             print(f"[LazyCrawler] {message}", flush=True)
 
+    def _resolve_preset(self, name: str) -> "tuple[Optional[CrawlPreset], Optional[str]]":
+        """Look up a preset by name. Returns (preset, error_json). Empty name -> (None, None)."""
+        if not name:
+            return None, None
+        preset = self.presets.get(name)
+        if preset is None:
+            return None, _dumps(
+                {
+                    "error": f"unknown preset '{name}'",
+                    "available": list(self.presets),
+                    "hint": "call list_presets() to see each preset's intent and cost",
+                }
+            )
+        return preset, None
+
     # -- ToolProvider ---------------------------------------------------------
 
     def as_tools(self) -> list:
@@ -159,6 +182,7 @@ class CrawlerTools:
         from lazybridge import Tool
 
         tools = [
+            Tool.wrap(self.list_presets, name="list_presets"),
             Tool.wrap(self.web_search, name="web_search"),
             Tool.wrap(self.web_crawl, name="web_crawl"),
             Tool.wrap(self.get_page, name="get_page"),
@@ -171,7 +195,7 @@ class CrawlerTools:
 
     # -- tools (LLM-facing; docstrings are the schema the model sees) ---------
 
-    def web_search(self, query: str, max_results: int = 15) -> str:
+    def web_search(self, query: str, max_results: Optional[int] = None, preset: str = "") -> str:
         """Search the web for a query and return clean, summarized results.
 
         Use this to find current information on a topic when you don't already
@@ -181,27 +205,42 @@ class CrawlerTools:
 
         Args:
             query: What to search for, e.g. "EU AI Act enforcement 2026".
-            max_results: How many result pages to fetch (default 15).
+            max_results: How many result pages to fetch. Omit to use the preset's
+                default (or 15 when no preset).
+            preset: Optional named configuration tuned for one intent (e.g.
+                "quick_lookup", "deep_research", "news_scan"). Call
+                ``list_presets()`` to see the options and their cost. Omit for the
+                default behavior.
 
         Returns:
             A JSON string: {"query", "found", "pages": [{url, title, snippet,
             sentiment, published, status, full_text_available}]}.
 
         Example:
-            web_search("solid-state battery breakthroughs", max_results=5)
+            web_search("solid-state battery breakthroughs", preset="deep_research")
         """
-        max_results = max(1, int(max_results))
+        p, err = self._resolve_preset(preset)
+        if err:
+            return err
+        content = p.content if p else self.content
+        links = p.links if p else self.links
+        n = int(max_results) if max_results is not None else (p.max_results if p else 15)
+        n = max(1, n)
+        overrides = p.crawl_overrides() if p else None
+        timelimit = p.timelimit if p else None
         sid = f"search_{uuid.uuid4().hex[:12]}"
         self._say(
-            f"search query={query!r} max_results={max_results} "
-            f"content={self.content} links={self.links}"
+            f"search query={query!r} preset={preset or '-'} max_results={n} "
+            f"content={content} links={links}"
         )
         out = self._search.run(
             query,
-            content=self.content,
-            links=self.links,
-            max_results=max_results,
+            content=content,
+            links=links,
+            max_results=n,
             session_id=sid,
+            overrides=overrides,
+            timelimit=timelimit,
         )
         pages = [_brief(r.model_dump()) for r in out["results"]]
         self._say(f"search done: extracted={out['pages_found']} entries={len(pages)}")
@@ -209,7 +248,7 @@ class CrawlerTools:
             {"query": query, "found": out["pages_found"], "session_id": sid, "pages": pages}
         )
 
-    def web_crawl(self, url: str, depth: int = 1) -> str:
+    def web_crawl(self, url: str, depth: Optional[int] = None, preset: str = "") -> str:
         """Crawl a specific URL (and optionally its links) and return clean content.
 
         Use this when you already have a URL to read. With depth>0 it also
@@ -218,33 +257,69 @@ class CrawlerTools:
 
         Args:
             url: The page to crawl, e.g. "https://example.com/report".
-            depth: Link-following depth. 0 = just this page; 1 = also its links
-                (default 1). Keep small to control cost.
+            depth: Link-following depth. 0 = just this page; 1 = also its links.
+                Omit to use the preset's depth (or 1 when no preset). Keep small
+                to control cost.
+            preset: Optional named configuration tuned for one intent (e.g.
+                "quick_lookup", "extract_data", "rag_ingest"). Call
+                ``list_presets()`` to see the options and their cost. Omit for the
+                default behavior. An explicit ``depth`` still overrides the preset.
 
         Returns:
             A JSON string: {"url", "found", "pages": [{url, title, snippet,
             sentiment, published, status, full_text_available}]}.
 
         Example:
-            web_crawl("https://www.nature.com/articles/xyz", depth=0)
+            web_crawl("https://example.com/report", preset="extract_data")
         """
-        depth = max(0, int(depth))
+        p, err = self._resolve_preset(preset)
+        if err:
+            return err
+        content = p.content if p else self.content
+        links = p.links if p else self.links
+        eff_depth = depth if depth is not None else (p.max_depth if p else 1)
+        eff_depth = max(0, int(eff_depth))
+        overrides = p.crawl_overrides() if p else None
         sid = f"crawl_{uuid.uuid4().hex[:12]}"
-        self._say(f"crawl url={url!r} depth={depth} content={self.content} links={self.links}")
-        # Pass depth as a per-call override instead of mutating shared config,
-        # so concurrent tool calls never clobber each other's depth.
+        self._say(
+            f"crawl url={url!r} preset={preset or '-'} depth={eff_depth} "
+            f"content={content} links={links}"
+        )
+        # Pass depth/overrides as per-call overrides instead of mutating shared
+        # config, so concurrent tool calls never clobber each other.
         results = self._crawler.crawl(
             url,
-            content=self.content,
-            links=self.links,
+            content=content,
+            links=links,
             topic=self.topic,
             session_id=sid,
-            max_depth=depth,
+            max_depth=eff_depth,
+            overrides=overrides,
         )
         pages = [_brief(r.model_dump()) for r in results]
         found = sum(1 for r in results if r.status == "done")
         self._say(f"crawl done: extracted={found} entries={len(pages)}")
         return _dumps({"url": url, "found": found, "session_id": sid, "pages": pages})
+
+    def list_presets(self) -> str:
+        """List the named crawl presets you can pass as ``preset=`` to web_search / web_crawl.
+
+        Each preset bundles a ready-made configuration tuned for one intent — how
+        page content is extracted (cheap clean text vs LLM summary+sentiment),
+        whether links are followed, crawl depth, table/image extraction, Markdown
+        output and search recency — together with a coarse ``cost`` hint. Call
+        this first when unsure which preset fits, then pass the chosen name. With
+        no preset the tools use their default behavior.
+
+        Returns:
+            A JSON string: {"presets": [{name, intent, cost, content,
+            follows_links, link_mode, depth, artifacts, markdown, recency}]}.
+
+        Example:
+            list_presets()   # then: web_search("...", preset="deep_research")
+        """
+        self._say("list_presets")
+        return _dumps({"presets": [p.brief() for p in self.presets.values()]})
 
     def search_cached(self, query: str, limit: int = 10) -> str:
         """Full-text search over already-crawled pages in the local cache (free).

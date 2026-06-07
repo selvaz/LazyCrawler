@@ -236,7 +236,7 @@ class HTTPConfig:
         redirects internally).
     """
 
-    user_agent: str = "LazyCrawler/0.8 (+https://github.com/selvaz/lazycrawler)"
+    user_agent: str = "LazyCrawler/0.9 (+https://github.com/selvaz/lazycrawler)"
     timeout_connect: int = 5
     timeout_read: int = 25
     max_retries: int = 4
