@@ -93,6 +93,13 @@ def _tokens(s: Optional[str]) -> set:
     return set(_WORD.findall((s or "").lower()))
 
 
+def _content_tokens(s: Optional[str]) -> set:
+    """Tokens with stopwords and 1-2 char fragments removed — used for the lexical
+    overlap signal so common words ("the", "of") neither dilute the topic nor
+    count as spurious matches. ``_STOP`` is resolved at call time (defined below)."""
+    return {t for t in _WORD.findall((s or "").lower()) if len(t) > 2 and t not in _STOP}
+
+
 @dataclass
 class _LinkScorer:
     """Ranks candidate links by relevance to ``topic`` — no LLM, no tokens.
@@ -110,7 +117,7 @@ class _LinkScorer:
     topic_vec: object = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        self.topic_tokens = _tokens(self.topic)
+        self.topic_tokens = _content_tokens(self.topic)
         if self.embedder is not None and self.topic.strip():
             try:
                 self.topic_vec = self.embedder.encode([self.topic])[0]
@@ -121,27 +128,80 @@ class _LinkScorer:
     def rank(
         self, candidates: List[Tuple[str, str]], excerpt: str = ""
     ) -> List[Tuple[float, str, str]]:
-        """Return ``[(score, anchor, url)]`` sorted by descending relevance."""
+        """Return ``[(score, anchor, url)]`` sorted by descending relevance.
+
+        ``excerpt`` is the text of the page the links were found on; when an
+        embedder is available it contributes a small context-similarity signal
+        (focused crawling: links resembling the current page tend to stay
+        on-topic). Scores are normalized to [0, 1] regardless of which signals are
+        available, so ``min_link_score`` gating means the same thing with or
+        without the semantic model installed.
+        """
         if not candidates:
             return []
-        sims = None
-        if self.topic_vec is not None:
-            try:
-                sub = candidates[: self.cfg.max_candidates_to_embed]
-                vecs = self.embedder.encode([self._cand_text(a, u) for (a, u) in sub])
-                sims = vecs @ self.topic_vec  # both L2-normalized -> cosine in [-1, 1]
-            except Exception:
-                log.debug("ml: candidate embedding failed - semantic disabled", exc_info=True)
-                sims = None
+        sims_topic, sims_ctx, pos_of = self._semantic_sims(candidates, excerpt)
+        semantic_active = sims_topic is not None or sims_ctx is not None
         out: List[Tuple[float, str, str]] = []
         for i, (anchor, url) in enumerate(candidates):
-            sem = (float(sims[i]) + 1.0) / 2.0 if (sims is not None and i < len(sims)) else 0.0
+            p = pos_of.get(i)
+            sem = self._semantic(p, sims_topic, sims_ctx) if p is not None else 0.0
             lex = self._lexical(anchor, url)
             struct = self._structural(anchor, url)
-            score = self.cfg.w_sem * sem + self.cfg.w_lex * lex + self.cfg.w_struct * struct
-            out.append((score, anchor, url))
+            out.append((self._blend(sem, lex, struct, semantic_active), anchor, url))
         out.sort(key=lambda t: t[0], reverse=True)
         return out
+
+    def _semantic_sims(self, candidates, excerpt):
+        """Embed the most promising candidates (cheap lexical pre-rank, not document
+        order) and return (topic_sims, context_sims, pos_of) where ``pos_of`` maps a
+        candidate index to its row in the sims arrays. Any of the sims may be None."""
+        if self.embedder is None or (self.topic_vec is None and not excerpt.strip()):
+            return None, None, {}
+        try:
+            cap = self.cfg.max_candidates_to_embed
+            if len(candidates) > cap:
+                # Spend the bounded embedding budget on the candidates a cheap
+                # lexical signal already likes, instead of whoever appears first.
+                order = sorted(
+                    range(len(candidates)),
+                    key=lambda i: self._lexical(*candidates[i]),
+                    reverse=True,
+                )
+                idx = sorted(order[:cap])
+            else:
+                idx = list(range(len(candidates)))
+            vecs = self.embedder.encode([self._cand_text(*candidates[i]) for i in idx])
+            sims_topic = (vecs @ self.topic_vec) if self.topic_vec is not None else None
+            sims_ctx = None
+            if excerpt.strip():
+                ctx_vec = self.embedder.encode([excerpt[:5000]])[0]
+                sims_ctx = vecs @ ctx_vec
+            return sims_topic, sims_ctx, {ci: p for p, ci in enumerate(idx)}
+        except Exception:
+            log.debug("ml: candidate embedding failed - semantic disabled", exc_info=True)
+            return None, None, {}
+
+    def _semantic(self, p: int, sims_topic, sims_ctx) -> float:
+        """Semantic score in [0, 1] for the candidate at sims-row ``p``: a blend of
+        topic similarity and (optionally) current-page-context similarity."""
+        t = (float(sims_topic[p]) + 1.0) / 2.0 if sims_topic is not None else None
+        c = (float(sims_ctx[p]) + 1.0) / 2.0 if sims_ctx is not None else None
+        if t is not None and c is not None:
+            wc = self.cfg.w_context
+            return (1.0 - wc) * t + wc * c
+        return t if t is not None else (c if c is not None else 0.0)
+
+    def _blend(self, sem: float, lex: float, struct: float, semantic_active: bool) -> float:
+        """Weighted blend in [0, 1]. With the semantic signal present the weights
+        already sum to ~1; without it, the semantic weight is dropped and the rest
+        renormalized so the score (and ``min_link_score``) stays on the same scale."""
+        cfg = self.cfg
+        if semantic_active:
+            return cfg.w_sem * sem + cfg.w_lex * lex + cfg.w_struct * struct
+        total = cfg.w_lex + cfg.w_struct
+        if total <= 0:
+            return 0.0
+        return (cfg.w_lex * lex + cfg.w_struct * struct) / total
 
     def _cand_text(self, anchor: str, url: str) -> str:
         path_tokens = _WORD.findall(urlparse(url).path.lower())
@@ -150,7 +210,7 @@ class _LinkScorer:
     def _lexical(self, anchor: str, url: str) -> float:
         if not self.topic_tokens:
             return 0.0
-        toks = _tokens(anchor) | _tokens(urlparse(url).path)
+        toks = _content_tokens(anchor) | _content_tokens(urlparse(url).path)
         if not toks:
             return 0.0
         return len(self.topic_tokens & toks) / len(self.topic_tokens)
@@ -258,10 +318,15 @@ def _split_sentences(text: str) -> List[str]:
     return [p.strip() for p in parts if len(p.strip()) > 20]
 
 
-def summarize(text: str, embedder, n_sentences: int) -> str:
+def summarize(text: str, embedder, n_sentences: int, max_sentences: int = 200) -> str:
     """Extractive TextRank summary over static sentence embeddings (or lead
     sentences when no embedder is available). Returns the top sentences in their
-    original order."""
+    original order.
+
+    For very long documents the candidate pool is capped at ``max_sentences`` (the
+    similarity matrix is O(n^2)); the cap is sampled at an **even stride across the
+    whole document** rather than truncated to the first N, so the summary isn't
+    biased toward the introduction."""
     sents = _split_sentences(text)
     if len(sents) <= n_sentences:
         return " ".join(sents)[:1500]
@@ -270,7 +335,12 @@ def summarize(text: str, embedder, n_sentences: int) -> str:
     try:
         import numpy as np
 
-        cap = sents[:200]
+        if len(sents) > max_sentences:
+            step = len(sents) / max_sentences
+            keep = sorted({int(i * step) for i in range(max_sentences)})
+            cap = [sents[i] for i in keep]
+        else:
+            cap = sents
         v = embedder.encode(cap)  # L2-normalized
         sim = np.clip(v @ v.T, 0.0, None)
         np.fill_diagonal(sim, 0.0)
@@ -392,7 +462,9 @@ class MLEngine:
         cfg = self.cfg
         return PageExtract(
             clean_text=text,
-            summary=summarize(text, self.embedder, cfg.summary_sentences),
+            summary=summarize(
+                text, self.embedder, cfg.summary_sentences, cfg.summary_max_sentences
+            ),
             topics=keyphrases(text, cfg.keyphrase_topk),
             entities=entities(text) if cfg.use_spacy_ner else [],
             sentiment=sentiment(text) if cfg.sentiment else "neutral",

@@ -206,3 +206,105 @@ def test_ml_min_link_score_override_prunes_frontier(stub_fetch, make_crawler):
         "https://e.org/seed", links="ml", topic="x"
     )
     assert len([r for r in free if r.status == "done"]) >= 2
+
+
+# =============================================================================
+# Deep-audit round 4 — link-scoring best-practice fixes
+# =============================================================================
+
+
+def test_lexical_ignores_stopwords():
+    """Stopwords in the topic/anchor neither dilute nor spuriously match."""
+    sc = _LinkScorer("the storage of energy", MLConfig(), embedder=None)
+    ranked = sc.rank(
+        [
+            ("the of a an", "https://e.org/the-of"),  # stopwords only -> 0 overlap
+            ("energy storage report", "https://e.org/energy-storage"),
+        ]
+    )
+    assert ranked[0][2].endswith("/energy-storage")
+    # The stopword-only link gets no LEXICAL credit (structural prior is separate).
+    assert sc._lexical("the of a an", "https://e.org/the-of") == 0.0
+    # "the"/"of" in the topic don't pad the denominator: one content-word overlap
+    # counts as 1/2 (topic content tokens = {storage, energy}), not 1/4.
+    assert sc._lexical("energy market", "https://e.org/x") == 0.5
+
+
+def test_gate_reachable_without_embeddings():
+    """F (calibration): with no embedder the score is renormalized to [0,1], so a
+    strongly on-topic link can still clear a high min_link_score gate (e.g. 0.5)."""
+    sc = _LinkScorer("battery storage", MLConfig(), embedder=None)
+    ranked = sc.rank([("battery storage research guide", "https://e.org/battery-storage")])
+    # Pre-fix this maxed out at 0.45 (w_lex+w_struct) and a 0.5 gate was unreachable.
+    assert ranked[0][0] >= 0.5
+
+
+def test_context_signal_makes_selection_page_aware():
+    """The page excerpt is actually used: with equal topic similarity, the link
+    most similar to the current page's content is preferred (focused crawling)."""
+    np = pytest.importorskip("numpy")
+
+    class Fake:
+        VOCAB = ["solar", "battery", "wind"]
+
+        def encode(self, texts):
+            rows = []
+            for t in texts:
+                low = t.lower()
+                v = np.array([1.0 if w in low else 0.0 for w in self.VOCAB], dtype="float32")
+                n = np.linalg.norm(v) or 1.0
+                rows.append(v / n)
+            return np.vstack(rows)
+
+    sc = _LinkScorer("solar", MLConfig(w_context=0.5), embedder=Fake())
+    cands = [("battery guide", "https://e.org/battery"), ("wind guide", "https://e.org/wind")]
+    # excerpt about batteries -> the battery link wins; about wind -> the wind link wins.
+    assert sc.rank(cands, excerpt="battery battery battery")[0][2].endswith("/battery")
+    assert sc.rank(cands, excerpt="wind wind wind")[0][2].endswith("/wind")
+
+
+def test_embed_budget_targets_high_lexical_candidates():
+    """The bounded embedding budget goes to candidates a cheap lexical signal likes,
+    not whoever appears first in document order."""
+    np = pytest.importorskip("numpy")
+
+    class Fake:
+        def encode(self, texts):
+            return np.ones((len(texts), 2), dtype="float32") / (2**0.5)
+
+    sc = _LinkScorer("battery", MLConfig(max_candidates_to_embed=1), embedder=Fake())
+    cands = [("news", "https://e.org/news"), ("battery research", "https://e.org/battery")]
+    _topic_sims, _ctx_sims, pos_of = sc._semantic_sims(cands, "")
+    assert 1 in pos_of and 0 not in pos_of  # the on-topic (idx 1) link got embedded
+
+
+# -- offline EVAL: best-first vs first-N within a page budget ----------------
+
+
+def test_best_first_outperforms_first_n_within_budget(stub_fetch):
+    """Eval (no model2vec, lexical+structural only): under a tight page budget the
+    semantic/lexical best-first frontier collects the ON-topic children while plain
+    'first N' document-order following wastes the budget on the off-topic ones."""
+    topic = "lithium battery storage"
+    # Off-topic links appear FIRST in document order; on-topic links appear last.
+    links = (
+        '<a href="https://e.org/off-1">celebrity gossip news</a>'
+        '<a href="https://e.org/off-2">sports scores today</a>'
+        '<a href="https://e.org/off-3">cooking recipes ideas</a>'
+        '<a href="https://e.org/on-1">lithium battery storage research</a>'
+        '<a href="https://e.org/on-2">battery storage grid breakthrough</a>'
+    )
+    stub_fetch(links_map={U: links})
+
+    def crawl(link_mode):
+        with WebCrawler(
+            CrawlerConfig(max_depth=1, max_pages=3, respect_robots=False),  # seed + 2 children
+            HTTPConfig(verify_ssl=False, link_delay=0),
+        ) as c:
+            return {r.url for r in c.crawl(U, links=link_mode, topic=topic) if r.status == "done"}
+
+    on = lambda urls: sum(1 for u in urls if "/on-" in u)  # noqa: E731
+    ml_urls, pure_urls = crawl("ml"), crawl("pure")
+    assert on(ml_urls) == 2  # best-first spent the whole budget on-topic
+    assert on(pure_urls) == 0  # first-N burned it on the document-order (off-topic) links
+    assert on(ml_urls) > on(pure_urls)
