@@ -45,7 +45,16 @@ Controls traversal depth, page limits, domain filtering, and blacklists.
 | `large_doc_chunk_chars` | `int` | `12_000` | Chunk size for map-reduce summarization |
 | `large_doc_max_chunks` | `int` | `12` | Max chunks processed in map-reduce |
 | `emit_markdown` | `bool` | `False` | Render each crawled HTML page to Markdown (`PageResult.markdown`). Requires `pip install lazycrawler[markdown]` |
-| `extract_artifacts` | `bool` | `False` | Extract tables, images, charts, SVG as structured `Artifact` records |
+| `extract_artifacts` | `bool` | `False` | Extract tables, images, charts, figures, SVG as structured `Artifact` records (HTML + PDF). See the [Artifacts guide](../guides/artifacts.md) |
+| `artifact_types` | `tuple` | `("table","image","figure","svg","chart")` | Which artifact types to collect |
+| `download_artifact_bytes` | `bool` | `False` | Download image/chart bytes through the crawler (honors SSL + SSRF guard) → `sha256` + blob in DB |
+| `max_artifact_bytes` | `int` | `5_000_000` | Max image size stored as a blob (larger → keep hash/metadata only) |
+| `min_image_dim` | `int` | `48` | Drop images whose declared width/height is below this (filters icons/spacers) |
+| `artifact_context_chars` | `int` | `200` | Chars of surrounding text captured for images lacking a caption |
+| `max_artifacts_per_page` | `int` | `100` | Hard cap on artifacts collected per page |
+| `same_domain_images` | `bool` | `False` | Keep only images hosted on the page's own domain |
+| `enrich_artifacts` | `bool` | `False` | Vision-LLM enrichment of artifacts (requires `content="smart"`) — captions, chart data, table summaries |
+| `max_artifacts_to_enrich` | `int` | `8` | Per-page cap on LLM-enriched artifacts (cost control) |
 | `markdown_artifact_anchors` | `bool` | `False` | With `emit_markdown + extract_artifacts`: replace each table/image in Markdown with `[[artifact:<hash>]]` anchors instead of duplicating inline content. Use `render_for_rag()` to recompose |
 | `blacklist` | `list[str]` | `[]` | URL prefixes or domain names to skip |
 | `blacklist_excel` | `str` | `""` | Path to Excel file with blacklisted URLs |

@@ -121,17 +121,46 @@ Full-text search against the local DB cache. Returns JSON list of matching pages
 get_page(url: str) -> str
 ```
 
-Fetch and extract a single URL. Returns JSON with `url`, `title`, `text`, `summary`, and metadata.
+Return the **full** stored content of a single already-crawled page from the
+local cache (no network call). Returns JSON with `url`, `title`, `text`,
+`summary`, `entities`, `topics`, `sentiment`, and metadata. If the page isn't
+cached: `{"error": ..., "hint": "crawl it first"}`.
+
+### get_session_pages
+
+```
+get_session_pages(session_id: str) -> str
+```
+
+List the pages collected in a previous `web_search` / `web_crawl` run (each
+returns a `session_id`). Reads the cache — no network call. *(Exposed only when a
+`db` is configured.)*
+
+### get_artifacts
+
+```
+get_artifacts(url: str, artifact_type: str = "") -> str
+```
+
+Return the non-textual artifacts (tables, images, figures, charts) extracted from
+an already-crawled page. `artifact_type` filters by `"table"` / `"image"` /
+`"figure"` / `"chart"` / `"svg"` (empty = all). Tables come as Markdown + rows;
+images/charts as URL + caption (+ a vision summary when enrichment is on). Reads
+the cache — no network call. See the [Artifacts guide](../guides/artifacts.md).
+*(Exposed only when a `db` is configured, and only useful with
+`extract_artifacts=True`.)*
 
 ---
 
-## close()
+## close() / release()
 
 ```python
 def close() -> None
 ```
 
-Release resources (HTTP client, DB connection).
+Releases the HTTP resources of the underlying crawler and search. **Optional** —
+each tool call already releases its HTTP sockets at the end, and resources are
+freed on GC / interpreter exit. `close` is **not** exposed as an agent tool.
 
 ---
 
