@@ -32,11 +32,13 @@ An honest evaluation of LazyCrawler against the main web-crawling frameworks.
 | Persistence + provenance | ✅ relational DB | ❌ | ❌ (API) | ❌ | ~ feed export |
 | Native PDF | ✅ | ~ | ~ | ❌ | ❌ |
 | Non-textual artifacts (tables/images/charts) | ✅ relational + vision | ~ (tables/md) | ~ (md) | ~ | ❌ |
+| RAG document assembly (text + artifacts) | ✅ `render_for_rag` + anchors | ~ markdown | ~ markdown | ~ | ❌ |
+| Intent presets for agents | ✅ `list_presets` + `preset=` | ❌ | ~ (params) | ❌ | ❌ |
 | robots.txt | ✅ default-on | ~ | ✅ | ~ | ✅ |
 | Anti-bot / proxy | ❌ | ✅ | ✅ | ~ | ~ |
-| SSRF guard | ✅ (agent path) | ❌ | n/a (hosted) | ❌ | ~ |
+| SSRF guard | ✅ agent path (no redirect re-check) | ❌ | n/a (hosted) | ❌ | ~ |
 | Provider-agnostic LLM | ✅ LazyBridge | ✅ | ~ | ✅ | — |
-| Maturity / community | v0.8, solo | high | high | medium | very high |
+| Maturity / distribution | v0.9, solo, not yet on PyPI | high | high | medium | very high |
 
 ## Where LazyCrawler is genuinely strong
 
@@ -51,7 +53,12 @@ An honest evaluation of LazyCrawler against the main web-crawling frameworks.
    model fits a "monitor over time" use case.
 4. **Native PDF** with a real fallback chain — financial reports are PDFs.
 5. **Provider-agnostic inside your own ecosystem** (LazyBridge) — composable with
-   your agents.
+   your agents; `CrawlerTools` exposes intent **presets** (`list_presets()` +
+   `preset=`) so the agent picks a config by intent, and releases its HTTP
+   resources at the end of every tool call.
+6. **RAG document assembly** — `emit_markdown` + `[[artifact:<hash>]]` anchors +
+   `render_for_rag()` recompose narrative and extracted artifacts into one
+   chunk-ready document (the multi-vector pattern, built in).
 
 ## Real gaps (and status)
 
@@ -65,9 +72,13 @@ An honest evaluation of LazyCrawler against the main web-crawling frameworks.
    rotation, and per-domain rate limiting are still missing.
 5. **Markdown output** — *now addressed* via optional `emit_markdown`
    (`html_to_markdown`, markdownify-backed); plain text / Pydantic still available.
-6. **Weak link frontier** — pure mode is "first N"; no URL scoring / best-first /
-   sitemap seeding.
-7. **No interactive actions** (click/scroll/form); immature (v0.1).
+6. **Weak link frontier** — pure mode is "first N" (smart mode is LLM-ranked); no
+   URL scoring / best-first / sitemap seeding.
+7. **No interactive actions** (click/scroll/form).
+8. **SSRF guard does not re-check redirects** — a public host that 30x-redirects to
+   a private address is not blocked (`requests` follows redirects internally).
+9. **Distribution** — pre-1.0, solo, **not yet published to PyPI**; the other
+   ecosystem packages are.
 
 ## Verdict
 
