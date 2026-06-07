@@ -57,6 +57,45 @@ provider (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
 `DEEPSEEK_API_KEY`). In the ecosystem, `spyder_startup.py` adds LazyBridge to the
 path and loads `.env`.
 
+**Async mode** (high-throughput, pure mode):
+
+```bash
+pip install -e ".[async]"   # aiohttp
+```
+
+---
+
+## ⚠️ SSRF Guard — read this before accepting URLs from external sources
+
+`HTTPConfig.block_private_addresses` is **`False` by default** so that the
+library can crawl localhost, intranets, and internal services without
+configuration. This is the right default for **trusted, developer-controlled**
+URL lists.
+
+**If you accept URLs from any untrusted source** — user input, search results,
+an LLM agent, a third-party API — you **must** enable the SSRF guard:
+
+```python
+from lazycrawler import WebCrawler, HTTPConfig
+
+crawler = WebCrawler(
+    http_cfg=HTTPConfig(block_private_addresses=True),  # ← required for untrusted URLs
+)
+```
+
+Without it, a crafted URL such as `http://169.254.169.254/latest/meta-data/`
+(AWS metadata endpoint) or `http://192.168.1.1/admin` could be fetched by the
+crawler and the response returned to the caller.
+
+> **`CrawlerTools`** (the LazyBridge agent wrapper) enables the SSRF guard
+> **automatically** — no action needed when using the agent path.
+
+> **`AsyncWebCrawler`** also enables it automatically by default.
+
+See [`lazycrawler/http.py`](lazycrawler/http.py#L-is_blocked_address) for the
+full list of blocked address categories (RFC-1918, loopback, link-local, cloud
+metadata, `*.local`).
+
 ---
 
 ## Quick start

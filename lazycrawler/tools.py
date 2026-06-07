@@ -50,6 +50,11 @@ from .search import WebSearch
 # Per-page snippet length in tool results (full text via get_page()).
 _SNIPPET_CHARS = 500
 
+# Safety cap on depth for the agent-facing web_crawl tool. An LLM could
+# accidentally pass depth=100; this prevents runaway crawls without breaking
+# legitimate deep crawls (anything >20 is almost certainly a mistake).
+_MAX_AGENT_DEPTH = 20
+
 
 def _brief(row: Dict[str, Any]) -> Dict[str, Any]:
     """A compact, LLM-friendly view of a page (dict form). Full text via get_page()."""
@@ -305,7 +310,7 @@ class CrawlerTools:
         content = p.content if p else self.content
         links = p.links if p else self.links
         eff_depth = depth if depth is not None else (p.max_depth if p else 1)
-        eff_depth = max(0, int(eff_depth))
+        eff_depth = max(0, min(int(eff_depth), _MAX_AGENT_DEPTH))
         overrides = p.crawl_overrides() if p else None
         ml_overrides = p.ml_overrides() if p else None
         sid = f"crawl_{uuid.uuid4().hex[:12]}"

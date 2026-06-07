@@ -427,11 +427,15 @@ class CrawlerDB:
                 return [self._row_to_page(dict(r)) for r in rows]
             except sqlite3.OperationalError:
                 log.debug("FTS MATCH query failed - falling back to LIKE", exc_info=True)
-        like = f"%{query}%"
+        # Escape LIKE special characters so '%' and '_' in the query are treated
+        # as literals, not wildcards. SQLite LIKE is case-insensitive for ASCII.
+        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped}%"
         with self._lock:
             rows = self.conn.execute(
                 "SELECT * FROM pages WHERE status='done' AND "
-                "(title LIKE ? OR clean_text LIKE ?) ORDER BY crawled_at DESC LIMIT ?",
+                "(title LIKE ? ESCAPE '\\' OR clean_text LIKE ? ESCAPE '\\') "
+                "ORDER BY crawled_at DESC LIMIT ?",
                 (like, like, limit),
             ).fetchall()
         return [self._row_to_page(dict(r)) for r in rows]
