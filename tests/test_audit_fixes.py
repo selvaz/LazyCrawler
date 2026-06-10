@@ -91,6 +91,26 @@ def test_redirect_final_url_is_adopted(monkeypatch, make_crawler):
     assert not any("a.example/article" in p.url for p in r)
 
 
+def test_redirect_to_shared_target_is_not_emitted_twice(monkeypatch, make_crawler):
+    """Two distinct source URLs that redirect to the SAME final URL must produce a
+    single page (no duplicate emission, no double count toward max_pages) —
+    mirroring the canonical-adoption dedup guard."""
+
+    def fetch(self, url, extra_headers=None):
+        body = "Shared canonical target body, long enough to be real content. " * 4
+        html = f"<html><body><p>{body}</p></body></html>"
+        return FetchResult(
+            html=html, text=body, status=200, final_url="https://target.example/final"
+        )
+
+    monkeypatch.setattr("lazycrawler.http.HTTPClient.fetch", fetch)
+    c = make_crawler(max_depth=0, respect_robots=False)
+    r = c.crawl_many(["https://a.example/one", "https://b.example/two"], mode="pure")
+
+    finals = [p for p in r if p.url == "https://target.example/final"]
+    assert len(finals) == 1  # emitted once, not once per source URL
+
+
 # =============================================================================
 # #5 — per-call overrides apply inside traversal (mode selection)
 # =============================================================================
