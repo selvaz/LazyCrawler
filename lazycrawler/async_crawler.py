@@ -281,7 +281,13 @@ class _AsyncHTTPClient:
                 if 400 <= status < 600:
                     return _AsyncFetchResult(status=status, final_url=current)
                 content_type = resp.headers.get("Content-Type", "").lower()
-                is_pdf = "application/pdf" in content_type or current.lower().endswith(".pdf")
+                # Strip the query before the extension test (parity with the sync
+                # client) so a PDF URL carrying a query string (``/doc.pdf?t=…``) is
+                # still grabbed as bytes here, rather than mis-capped as HTML and
+                # forced into the pipeline's urllib re-download path.
+                is_pdf = "application/pdf" in content_type or current.lower().split("?")[
+                    0
+                ].endswith(".pdf")
                 # PDFs are downloaded once as raw bytes (capped); text extraction
                 # is deferred to the shared pipeline (extract_pdf_bytes), matching
                 # the synchronous client. HTML is streamed to max_html_bytes.

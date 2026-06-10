@@ -275,7 +275,14 @@ class PagePipeline:
                 return []
             requested_url, url = url, final
             uh = _url_hash(url)
-            self._mark_visited(st, url)  # mirror canonical adoption below
+            # Adopt the redirect target as this page's identity. If it was already
+            # visited (another seed/page redirected or normalized to the same final
+            # URL), it is already represented — bail without re-emitting, mirroring
+            # the canonical-adoption guard below. Without this, two source URLs that
+            # land on one target both emit it and both count toward max_pages.
+            if not self._mark_visited(st, url):
+                log.debug("  redirect target already visited - skipping duplicate: %s", url[:90])
+                return []
 
         # PDF vs HTML detection
         is_pdf = bool(pdf_bytes) or looks_like_pdf(url, html or "", raw_text or "")
