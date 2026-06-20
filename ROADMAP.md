@@ -119,7 +119,10 @@ by impact.
 - [ ] Interactive actions (click / scroll / form-fill) before extraction.
 - [ ] WebSearch `gemini` seed-URL crawling once LazyBridge surfaces grounding
       sources on the `Envelope`.
-- [ ] Migrate into `lazytools.connectors.web` when production-ready.
+- [x] Surface the LLM-tool interface through `lazytools.connectors.web`
+      (`WebTools`, install via `lazytoolkit[web]`) — a thin pass-through over
+      `CrawlerTools`. The crawler engine stays standalone here; only the tool
+      surface is re-exposed (not a full library migration).
 
 ## Acknowledged trade-offs (from ANALYSIS.md)
 
