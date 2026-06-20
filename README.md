@@ -25,8 +25,11 @@ crawl(url, content="pure",  links="smart")     # no summary, LLM picks the links
 **WebSearch is a derivation of WebCrawler**: it seeds itself from a search
 engine's results (DuckDuckGo, Brave, Tavily, or Gemini grounded) and then crawls.
 
-> **Status**: standalone development. When production-ready it will migrate into
-> `lazytools.connectors.web` (client + tools pattern, like gmail/telegram).
+> **Status**: standalone library. LazyCrawler's **LLM-tool interface** is now
+> surfaced through LazyTools as `lazytools.connectors.web.WebTools` (install via
+> `pip install 'lazytoolkit[web]'`) — a thin pass-through over `CrawlerTools`.
+> Only the tool surface is re-exposed; the crawler engine stays here, standalone
+> and unchanged.
 
 ---
 
