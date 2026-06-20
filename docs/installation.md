@@ -46,6 +46,8 @@
 | `image` | `pillow` | Artifact image dimensions / format sniffing |
 | `excel` | `openpyxl` | Load URL blacklist from Excel |
 | `dates` | `python-dateutil` | Parse `published_iso` from page metadata |
+| `async` | `aiohttp` | Async/parallel crawling (see the parallel-crawl guide) |
+| `domains` | `tldextract` | Accurate registered-domain extraction for same-site scoping (falls back to a heuristic when absent) |
 | `all` | all of the above | Full feature set |
 
 Brave and Tavily search need **no extra** (they use `requests`); just set
