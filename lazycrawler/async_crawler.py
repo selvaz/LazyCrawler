@@ -365,19 +365,24 @@ class _AsyncHTTPClient:
             p = urlparse(url)
             if p.scheme not in ("http", "https"):
                 return None
-            robots_url = f"{p.scheme}://{p.netloc}/robots.txt"
-            # Re-validate against the SSRF guard: robots.txt is a live GET too, so
-            # a private-network host must not be reached here just because the main
-            # fetch was refused (parity with the sync client, which routes robots
-            # through HTTPClient._request).
-            if self.cfg.block_private_addresses and await _is_blocked_async(robots_url):
-                log.warning("async SSRF guard: refusing robots.txt fetch to %s", robots_url)
-                return None
-            session = await self._ensure()
-            # No auto-redirects (an unvalidated hop could point into a private
-            # network); cap the body so a multi-GB robots.txt can't exhaust memory.
-            async with session.get(robots_url, allow_redirects=False) as resp:
-                if resp.status < 400:
+            current = f"{p.scheme}://{p.netloc}/robots.txt"
+            # robots.txt is a live GET too, so follow redirects (http->https and
+            # apex<->www are common for /robots.txt) but re-validate EVERY hop
+            # against the SSRF guard and cap the body - mirroring the manual
+            # redirect loop the sync client / _fetch_once use for pages. Simply
+            # disabling redirects would treat a 301 as an empty robots file and
+            # silently drop robots enforcement for redirecting hosts.
+            for _ in range(self.cfg.max_redirects + 1):
+                if self.cfg.block_private_addresses and await _is_blocked_async(current):
+                    log.warning("async SSRF guard: refusing robots.txt fetch to %s", current)
+                    return None
+                session = await self._ensure()
+                async with session.get(current, allow_redirects=False) as resp:
+                    if resp.status in (301, 302, 303, 307, 308) and resp.headers.get("Location"):
+                        current = urljoin(current, resp.headers["Location"])
+                        continue
+                    if resp.status >= 400:
+                        return None
                     total = 0
                     chunks: List[bytes] = []
                     async for chunk in resp.content.iter_chunked(65536):

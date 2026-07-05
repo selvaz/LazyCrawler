@@ -473,6 +473,63 @@ def test_async_process_skips_robots_on_blocked_redirect(monkeypatch):
 
 
 @requires_aiohttp
+def test_async_get_robots_follows_validated_redirect(monkeypatch):
+    """H1 follow-up (Codex): a /robots.txt redirect (e.g. http->https) is followed
+    after the SSRF check, not treated as an empty 'no robots' body."""
+    import lazycrawler.async_crawler as ac
+
+    async def no_block(url: str) -> bool:
+        return False
+
+    monkeypatch.setattr(ac, "_is_blocked_async", no_block)
+
+    body = b"User-agent: *\nDisallow: /secret\n"
+
+    def redirect():
+        return _FakeResp(301, {"Location": "https://site.example/robots.txt"})
+
+    def real():
+        return _FakeResp(200, {}, body=body)
+
+    client = _make_async_client(
+        monkeypatch,
+        {
+            "http://site.example/robots.txt": redirect,
+            "https://site.example/robots.txt": real,
+        },
+    )
+    text = asyncio.run(client.get_robots("http://site.example/page"))
+    assert text is not None and "Disallow: /secret" in text
+
+
+@requires_aiohttp
+def test_async_get_robots_refuses_redirect_into_private(monkeypatch):
+    """The redirect target is SSRF-validated: a robots.txt 302 into a private host
+    is refused, not fetched."""
+    import lazycrawler.async_crawler as ac
+
+    async def guard(url: str) -> bool:
+        return "10.0.0." in url
+
+    monkeypatch.setattr(ac, "_is_blocked_async", guard)
+
+    def redirect():
+        return _FakeResp(302, {"Location": "http://10.0.0.9/robots.txt"})
+
+    def private():
+        raise AssertionError("private robots hop must never be requested")
+
+    client = _make_async_client(
+        monkeypatch,
+        {
+            "http://pub.example/robots.txt": redirect,
+            "http://10.0.0.9/robots.txt": private,
+        },
+    )
+    assert asyncio.run(client.get_robots("http://pub.example/page")) is None
+
+
+@requires_aiohttp
 def test_async_rate_limiter_honors_robots_crawl_delay():
     """M-C2: the async rate limiter takes max(per_host_delay, robots Crawl-delay),
     matching the sync HostRateLimiter."""

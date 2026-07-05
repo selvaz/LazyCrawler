@@ -284,11 +284,17 @@ class CrawlerLLM:
             )
             return subset[:max_links]
 
-        # A structured-output failure (env.ok False, refusal, truncation, or a
-        # non-LinkSelection payload) must fall back to first-N too - otherwise a
-        # transient model failure silently empties the frontier and terminates
-        # recursion, indistinguishable from a deliberate "no links".
-        if not env.ok or not isinstance(env.payload, LinkSelection):
+        # A structured-output failure (env.ok False, refusal, truncation, a
+        # non-LinkSelection payload, or a malformed/None envelope from an older
+        # adapter) must fall back to first-N too - otherwise the frontier is
+        # silently emptied and recursion terminates, indistinguishable from a
+        # deliberate "no links". Use getattr so a duck-typed/None env can't raise
+        # AttributeError out here (past the try) and abort the crawl.
+        if (
+            env is None
+            or not getattr(env, "ok", False)
+            or not isinstance(getattr(env, "payload", None), LinkSelection)
+        ):
             log.warning(
                 "LLM select_links returned no valid selection (ok=%s) - "
                 "falling back to first %d candidates",

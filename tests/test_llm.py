@@ -66,6 +66,20 @@ def test_select_links_falls_back_on_exception():
     assert llm.select_links(boom, "x", _CANDS, 2) == _CANDS[:2]
 
 
+def test_select_links_falls_back_on_none_or_malformed_envelope():
+    # A None return, or a duck-typed object missing ok/payload, must fall back —
+    # not raise AttributeError past the try and abort the crawl.
+    llm = _llm()
+    assert llm.select_links(lambda u: None, "x", _CANDS, 2) == _CANDS[:2]
+
+    class _Weird:  # no .ok, no .payload
+        pass
+
+    assert llm.select_links(lambda u: _Weird(), "x", _CANDS, 2) == _CANDS[:2]
+    # ok True but no payload attribute at all.
+    assert llm.select_links(lambda u: types.SimpleNamespace(ok=True), "x", _CANDS, 2) == _CANDS[:2]
+
+
 def test_select_links_empty_candidates():
     llm = _llm()
     assert llm.select_links(lambda u: _env(True, LinkSelection(indices=[1])), "x", [], 5) == []
