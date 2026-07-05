@@ -401,3 +401,130 @@ def test_async_render_js_is_disabled():
     crawler = AsyncWebCrawler(http_cfg=HTTPConfig(render_js=True, block_private_addresses=True))
     assert crawler.http_cfg.render_js is False
     assert crawler.http_cfg.block_private_addresses is True
+
+
+# =============================================================================
+# Deep-audit round 3 — async parity: robots SSRF, strict isolation
+# =============================================================================
+
+
+@requires_aiohttp
+def test_async_get_robots_respects_ssrf_guard_and_scheme(monkeypatch):
+    """H1: robots.txt is a live GET too — a blocked host (or a non-http scheme)
+    must not be reached just because the guard refused the main fetch."""
+    import lazycrawler.async_crawler as ac
+    from lazycrawler.async_crawler import _AsyncHTTPClient
+
+    client = _AsyncHTTPClient(HTTPConfig(block_private_addresses=True))
+
+    async def always_blocked(url: str) -> bool:
+        return True
+
+    # If the guard is honored, _ensure()/the network is never touched.
+    def explode(self):
+        raise AssertionError("must not open a session for a blocked robots.txt")
+
+    monkeypatch.setattr(ac, "_is_blocked_async", always_blocked)
+    monkeypatch.setattr(_AsyncHTTPClient, "_ensure", explode)
+
+    assert asyncio.run(client.get_robots("http://10.0.0.5:8080/page")) is None
+    # Non-http scheme is rejected outright.
+    assert asyncio.run(client.get_robots("file:///etc/passwd")) is None
+
+
+@requires_aiohttp
+def test_async_process_skips_robots_on_blocked_redirect(monkeypatch):
+    """H1: when a fetch produced no content (SSRF-refused / never-validated hop),
+    _process must not issue a robots.txt check against that hop."""
+    import lazycrawler.async_crawler as ac
+    from lazycrawler import CrawlerConfig
+    from lazycrawler.async_crawler import AsyncWebCrawler, _AsyncFetchResult
+
+    async def no_block(url: str) -> bool:
+        return False
+
+    monkeypatch.setattr(ac, "_is_blocked_async", no_block)
+
+    async def fake_fetch(self, url):
+        # Simulate a fetch refused after a redirect: no status, final_url is the
+        # blocked private hop (this is what _fetch_once returns on SSRF refusal).
+        return _AsyncFetchResult(status=None, final_url="http://10.0.0.5:8080/x")
+
+    monkeypatch.setattr(ac._AsyncHTTPClient, "fetch", fake_fetch)
+
+    checked = []
+
+    async def spy_allowed(self, url):
+        checked.append(url)
+        return True
+
+    monkeypatch.setattr(ac._AsyncRobotsChecker, "allowed", spy_allowed)
+
+    async def run():
+        c = AsyncWebCrawler(CrawlerConfig(max_depth=0, max_pages=5, respect_robots=True))
+        try:
+            return await c.crawl("https://public.example/seed")
+        finally:
+            await c.close()
+
+    asyncio.run(run())
+    # The seed itself is checked, but never the blocked redirect target.
+    assert not any("10.0.0.5" in u for u in checked)
+
+
+@requires_aiohttp
+def test_async_strict_false_isolates_worker_failure(monkeypatch):
+    """H2: a single page raising in the executor pipeline must not discard the
+    whole crawl under strict=False; under strict=True it propagates."""
+    import lazycrawler.async_crawler as ac
+    from lazycrawler import CrawlerConfig
+    from lazycrawler.async_crawler import AsyncWebCrawler, _AsyncFetchResult
+
+    async def no_block(url: str) -> bool:
+        return False
+
+    monkeypatch.setattr(ac, "_is_blocked_async", no_block)
+
+    seed = "https://e.org/seed"
+    body = "Body long enough to be treated as real article text now. " * 4
+
+    async def fake_fetch(self, url):
+        extra = (
+            '<a href="https://e.org/good">good</a><a href="https://e.org/bad">bad</a>'
+            if url.rstrip("/") == seed
+            else ""
+        )
+        html = f"<html><body><p>{body}</p>{extra}</body></html>"
+        return _AsyncFetchResult(html=html, text=body, status=200, final_url=url)
+
+    monkeypatch.setattr(ac._AsyncHTTPClient, "fetch", fake_fetch)
+
+    orig = AsyncWebCrawler._run_pipeline
+
+    def boom(self, st, url, depth, source_url, start_domain, fr):
+        if url.endswith("/bad"):
+            raise RuntimeError("worker blew up")
+        return orig(self, st, url, depth, source_url, start_domain, fr)
+
+    monkeypatch.setattr(AsyncWebCrawler, "_run_pipeline", boom)
+
+    async def run(strict):
+        c = AsyncWebCrawler(
+            CrawlerConfig(
+                max_depth=1, max_pages=10, respect_robots=False, strict=strict
+            )
+        )
+        try:
+            return await c.crawl(seed)
+        finally:
+            await c.close()
+
+    # strict=False (default): the good page + seed survive; the bad one is dropped.
+    results = asyncio.run(run(False))
+    urls = {r.url for r in results}
+    assert any(u.endswith("/seed") for u in urls)
+    assert any(u.endswith("/good") for u in urls)
+
+    # strict=True: the failure surfaces to the caller.
+    with pytest.raises(RuntimeError):
+        asyncio.run(run(True))

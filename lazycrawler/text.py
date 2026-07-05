@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional, Tuple
 from urllib.parse import urljoin
 
@@ -315,11 +315,16 @@ def extract_published_datetime(html: str, base_url: str = "") -> Optional[str]:
         _walk(obj)
 
     now = datetime.now(timezone.utc)
+    # ~2 years ahead as a sanity ceiling. Use a timedelta rather than
+    # ``now.replace(year=now.year + 2)``, which raises ValueError on Feb 29
+    # (a leap year + 2 is never a leap year) and would kill date extraction —
+    # and the whole page in non-strict mode — every leap day.
+    max_future = now + timedelta(days=730)
     for cand in candidates:
         dt = _parse_datetime_any(cand)
         if not dt or dt.year < 1990:
             continue
-        if dt > now.replace(year=now.year + 2):
+        if dt > max_future:
             continue
         return dt.isoformat()
     return None
