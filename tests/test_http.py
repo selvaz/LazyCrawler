@@ -114,6 +114,16 @@ def test_fetchresult_unpacks_as_triple():
     assert (html, text, status) == ("<p>h</p>", "h", 200)
 
 
+def test_decode_falls_back_on_unknown_charset():
+    # Regression: an unknown/legacy charset token raised LookupError (not
+    # suppressed by errors="replace"), turning a good 200 into a retried failure.
+    body = "café résumé".encode("utf-8")
+    assert HTTPClient._decode(body, "text/html; charset=x-user-defined") == "café résumé"
+    assert HTTPClient._decode(body, "text/html; charset=none") == "café résumé"
+    # A valid charset is still honored.
+    assert HTTPClient._decode("ünïcode".encode("utf-8"), "text/html; charset=utf-8") == "ünïcode"
+
+
 def test_fetch_retries_then_succeeds(monkeypatch):
     client = HTTPClient(HTTPConfig(max_retries=3, backoff_base_sec=0, verify_ssl=False))
     calls = {"n": 0}

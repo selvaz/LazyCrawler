@@ -20,6 +20,26 @@ def test_preprocess_strips_noise():
     assert "cookies" not in out.lower()
 
 
+def test_preprocess_keeps_prose_mentioning_boilerplate_terms():
+    # Regression: unanchored terms (gdpr, advertisement, privacy policy) matched
+    # inside real sentences and dropped the whole line.
+    raw = (
+        "The EU handed down a landmark GDPR ruling against the company this week.\n"
+        "Regulators said the advertisement industry must overhaul its data practices.\n"
+        "The firm updated its privacy policy in response to the sweeping decision.\n"
+        "Cookie Settings\n"
+        "Advertisement"
+    )
+    out = preprocess_text(raw)
+    assert "landmark GDPR ruling" in out
+    assert "advertisement industry must overhaul" in out
+    assert "updated its privacy policy" in out
+    # But the short banner/button lines are still removed.
+    assert "Cookie Settings" not in out
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    assert "Advertisement" not in lines
+
+
 def test_extract_links_dedup_and_absolute():
     html = (
         '<a href="/a">A</a><a href="/a">dup</a>'

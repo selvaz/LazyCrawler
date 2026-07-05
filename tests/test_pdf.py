@@ -33,6 +33,13 @@ def test_normalize_pdf_date():
     assert _normalize_pdf_date("") is None
 
 
+def test_normalize_pdf_date_rejects_impossible_dates():
+    # Regression: month/day were not range-checked -> "2026-99-99" persisted.
+    assert _normalize_pdf_date("D:20269999123000Z") is None
+    assert _normalize_pdf_date("2026-13-40") is None
+    assert _normalize_pdf_date("D:20260230000000Z") is None  # Feb 30
+
+
 def test_extract_pdf_bytes_roundtrip():
     fitz = pytest.importorskip("fitz")  # PyMuPDF (pdf extra)
     doc = fitz.open()

@@ -36,9 +36,11 @@ def normalize_whitespace(s: str) -> str:
 # ARTICLE PRECLEAN (regex)
 # =============================================================================
 
+# Unambiguous boilerplate — specific enough to match anywhere on a line without
+# hitting real prose.
 _LINE_NOISE = re.compile(
-    r"cookie|gdpr|we use cookies|accept all cookies|reject all cookies"
-    r"|privacy policy|terms of (service|use)"
+    r"we use cookies|uses cookies|accept all cookies|reject all cookies"
+    r"|cookies to (improve|enhance|ensure|personalize|analyze)"
     r"|share (this|on|via) (twitter|facebook|linkedin|email|whatsapp)"
     r"|follow us on"
     r"|subscribe (to|for) (our|the|a)?\s*(newsletter|email|updates)"
@@ -48,10 +50,23 @@ _LINE_NOISE = re.compile(
     r"|^\s*©\s*\d{4}"
     r"|^\s*read more\s*$|^\s*continue reading\s*$|^\s*see more\s*$"
     r"|^\s*load more\s*$|^\s*show more\s*$"
-    r"|comment(s)? \(\d+\)|leave a comment|post a comment|add a comment"
+    r"|comment(s)? \(\d+\)|leave a comment|post a comment|add a comment",
+    re.IGNORECASE,
+)
+# High-collision terms that also occur in ordinary prose ("the EU GDPR ruling",
+# "the advertisement industry", "the court struck down the privacy policy"). We
+# only drop a line on these when it is banner/button-shaped (short, few words),
+# never when it is a real sentence — otherwise legitimate article text is gutted.
+_LINE_NOISE_SHORT = re.compile(
+    r"cookie|gdpr|privacy policy|terms of (service|use)"
     r"|advertisement|sponsored content|paid partnership",
     re.IGNORECASE,
 )
+
+
+def _looks_boilerplate_line(stripped: str) -> bool:
+    """A banner/button/footer line: short and with few words (not prose)."""
+    return len(stripped) <= 40 or len(stripped.split()) <= 4
 _PIPE_NAV = re.compile(r"^[^.\n]{0,200}(\|[^.\n]{0,60}){2,}$")
 _BREADCRUMB = re.compile(r"^[^.\n]{0,30}\s*[>»›]\s*[^.\n]{0,30}\s*[>»›]")
 _URL_ONLY = re.compile(r"^\s*https?://\S+\s*$")
@@ -74,6 +89,8 @@ def preprocess_text(raw: str) -> str:
             filtered.append(line)
             continue
         if _LINE_NOISE.search(stripped):
+            continue
+        if _looks_boilerplate_line(stripped) and _LINE_NOISE_SHORT.search(stripped):
             continue
         if _PIPE_NAV.match(stripped):
             continue

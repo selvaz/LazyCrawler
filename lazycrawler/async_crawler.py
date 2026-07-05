@@ -333,7 +333,12 @@ class _AsyncHTTPClient:
                 enc = None
                 if "charset=" in content_type:
                     enc = content_type.split("charset=")[-1].split(";")[0].strip() or None
-                html = body.decode(enc or "utf-8", errors="replace")
+                try:
+                    html = body.decode(enc or "utf-8", errors="replace")
+                except LookupError:
+                    # Unknown charset token: don't let a good response be retried
+                    # into a fetch_error (parity with HTTPClient._decode).
+                    html = body.decode("utf-8", errors="replace")
                 text = self._extract(html)
                 return _AsyncFetchResult(html=html, text=text, status=status, final_url=current)
         log.warning("async: too many redirects (> %d) for %s", cfg.max_redirects, url)
