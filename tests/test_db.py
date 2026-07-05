@@ -76,7 +76,13 @@ def test_fresh_done_still_overwrites_and_error_over_error_updates(tmp_db):
     assert tmp_db.get_page(url_hash(u))["status"] == "fetch_error"
     # Error-over-error updates normally.
     tmp_db.upsert_page(
-        {"url": u, "url_hash": url_hash(u), "status": "robots_blocked", "mode": "pure", "error": "e2"}
+        {
+            "url": u,
+            "url_hash": url_hash(u),
+            "status": "robots_blocked",
+            "mode": "pure",
+            "error": "e2",
+        }
     )
     assert tmp_db.get_page(url_hash(u))["status"] == "robots_blocked"
     # A fresh 'done' fully overwrites.

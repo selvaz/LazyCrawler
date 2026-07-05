@@ -67,6 +67,8 @@ _LINE_NOISE_SHORT = re.compile(
 def _looks_boilerplate_line(stripped: str) -> bool:
     """A banner/button/footer line: short and with few words (not prose)."""
     return len(stripped) <= 40 or len(stripped.split()) <= 4
+
+
 _PIPE_NAV = re.compile(r"^[^.\n]{0,200}(\|[^.\n]{0,60}){2,}$")
 _BREADCRUMB = re.compile(r"^[^.\n]{0,30}\s*[>»›]\s*[^.\n]{0,30}\s*[>»›]")
 _URL_ONLY = re.compile(r"^\s*https?://\S+\s*$")

@@ -345,9 +345,7 @@ class CrawlerDB:
             # content instead of wiping raw_text/clean_text/title. A fresh 'done'
             # still overwrites, and error-over-error updates normally.
             if data.get("status") != "done":
-                cur = self.conn.execute(
-                    "SELECT status FROM pages WHERE url_hash=?", (uh,)
-                )
+                cur = self.conn.execute("SELECT status FROM pages WHERE url_hash=?", (uh,))
                 existing = cur.fetchone()
                 if existing is not None and existing[0] == "done":
                     return uh

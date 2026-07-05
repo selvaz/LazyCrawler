@@ -527,9 +527,7 @@ def test_async_strict_false_isolates_worker_failure(monkeypatch):
 
     async def run(strict):
         c = AsyncWebCrawler(
-            CrawlerConfig(
-                max_depth=1, max_pages=10, respect_robots=False, strict=strict
-            )
+            CrawlerConfig(max_depth=1, max_pages=10, respect_robots=False, strict=strict)
         )
         try:
             return await c.crawl(seed)
