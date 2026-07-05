@@ -11,6 +11,20 @@ requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "selvaz" }]
 keywords = ["web-crawler", "web-search", "llm", "lazybridge", "trafilatura"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 
 # Core: the minimum for PURE mode (no LLM).
 dependencies = [
@@ -49,18 +63,14 @@ async = ["aiohttp>=3.9"]
 # Accurate registrable-domain (eTLD+1) scope via the public suffix list. Without
 # it, same_domain_only falls back to a small built-in multi-part-suffix heuristic.
 domains = ["tldextract>=5"]
-# Everything.
+# Everything. Self-referential so it can never drift from the extras above.
 all = [
-    "lazybridge>=0.9; python_version >= '3.11'",
-    "pymupdf>=1.23", "pypdf>=4.0", "pdfplumber>=0.10",
-    "ddgs>=2.0", "playwright>=1.40", "openpyxl>=3.1", "python-dateutil>=2.8",
-    "markdownify>=0.11", "pillow>=10", "model2vec>=0.3", "numpy>=1.24",
-    "yake>=0.4", "vaderSentiment>=3.3", "spacy>=3.7",
-    "aiohttp>=3.9", "tldextract>=5",
+    "lazycrawler[smart,pdf,search,js,excel,dates,markdown,image,ml,nlp,async,domains]",
 ]
-# Development: tests, lint/format, build & publish tooling.
+# Development: tests, coverage, lint/format, build & publish tooling.
 dev = [
     "pytest>=8",
+    "pytest-cov>=5",
     "ruff>=0.5",
     "build>=1.0",
     "twine>=5.0",
@@ -71,6 +81,10 @@ Repository = "https://github.com/selvaz/lazycrawler"
 
 [tool.setuptools]
 packages = ["lazycrawler"]
+
+[tool.setuptools.package-data]
+# Ship the PEP 561 marker so downstream type-checkers see our annotations.
+lazycrawler = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
