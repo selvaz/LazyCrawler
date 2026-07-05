@@ -8,6 +8,11 @@ on:
       - 'docs/**'
       - 'mkdocs.yml'
       - 'requirements-docs.txt'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'requirements-docs.txt'
   workflow_dispatch:
 
 permissions:
@@ -35,15 +40,19 @@ jobs:
         run: pip install -r requirements-docs.txt
 
       - name: Build MkDocs site
+        # Runs on PRs too (deploy is gated below), so a change that breaks the
+        # docs build is caught before merge, not after deploy.
         run: mkdocs build
 
       - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: site/
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

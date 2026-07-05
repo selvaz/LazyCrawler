@@ -1,29 +1,13 @@
 # LazyCrawler — dependencies
 #
-# Core (PURE mode, no LLM):
-requests>=2.28
-beautifulsoup4>=4.11
-trafilatura>=1.6
-pydantic>=2.0
-
-# SMART mode (LLM via LazyBridge) — also install the provider extra:
-#   pip install "lazybridge[anthropic]"  (or openai / google / deepseek)
-lazybridge>=0.9
-
-# PDF (remote extraction):
-pymupdf>=1.23
-pypdf>=4.0
-pdfplumber>=0.10
-
-# WebSearch (DuckDuckGo):
-ddgs>=2.0
-
-# JavaScript rendering (optional, for HTTPConfig(render_js=True)):
-#   pip install playwright && playwright install chromium
-playwright>=1.40
-
-# Blacklist from Excel:
-openpyxl>=3.1
-
-# Robust date parsing:
-python-dateutil>=2.8
+# This file is a convenience pointer at pyproject.toml so the two never drift.
+# It installs LazyCrawler with ALL optional features (equivalent to the [all]
+# extra), including the correct environment markers (e.g. LazyBridge is only
+# pulled in on Python >= 3.11).
+#
+#   pip install -r requirements.txt
+#
+# For a minimal PURE-mode install (no LLM, no extras):  pip install -e .
+# For a specific feature set:                           pip install -e ".[ml,pdf,async]"
+#
+-e .[all]

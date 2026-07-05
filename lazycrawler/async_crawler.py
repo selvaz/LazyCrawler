@@ -81,6 +81,7 @@ from .http import (
     compile_exclude,
     get_hostname,
     is_blacklisted_domain,
+    load_blacklist_from_excel,
     normalize_url,
 )
 from .http import url_hash as _url_hash
@@ -158,21 +159,41 @@ async def _is_blocked_async(url: str) -> bool:
 
 
 class _AsyncRateLimiter:
-    """Minimum-gap limiter keyed by host. Asyncio-safe (no threading.Lock)."""
+    """Minimum-gap limiter keyed by host. Asyncio-safe (no threading.Lock).
 
-    def __init__(self, delay: float = 0.0):
+    The effective gap is the larger of the configured ``per_host_delay`` and the
+    host's robots.txt ``Crawl-delay`` (when robots are respected), matching the
+    synchronous :class:`~lazycrawler.ratelimit.HostRateLimiter`.
+    """
+
+    def __init__(self, delay: float = 0.0, robots: Optional["_AsyncRobotsChecker"] = None):
         self._delay = max(0.0, delay)
+        self._robots = robots
         self._next: dict = defaultdict(float)
 
+    async def _delay_for(self, url: str) -> float:
+        delay = self._delay
+        if self._robots is not None:
+            try:
+                cd = await self._robots.crawl_delay(url)
+            except Exception:
+                cd = None
+            if cd:
+                delay = max(delay, float(cd))
+        return delay
+
     async def wait(self, url: str) -> None:
-        if self._delay <= 0:
+        # Resolve the effective delay first (may await robots.txt); the reservation
+        # below has no await, so it stays atomic within the event loop.
+        delay = await self._delay_for(url)
+        if delay <= 0:
             return
         host = get_hostname(url)
         if not host:
             return
         now = time.monotonic()
         nxt = max(now, self._next[host])
-        self._next[host] = nxt + self._delay
+        self._next[host] = nxt + delay
         sleep_for = nxt - now
         if sleep_for > 0:
             log.debug("  async rate-limit: %.2fs for %s", sleep_for, host)
@@ -312,7 +333,12 @@ class _AsyncHTTPClient:
                 enc = None
                 if "charset=" in content_type:
                     enc = content_type.split("charset=")[-1].split(";")[0].strip() or None
-                html = body.decode(enc or "utf-8", errors="replace")
+                try:
+                    html = body.decode(enc or "utf-8", errors="replace")
+                except LookupError:
+                    # Unknown charset token: don't let a good response be retried
+                    # into a fetch_error (parity with HTTPClient._decode).
+                    html = body.decode("utf-8", errors="replace")
                 text = self._extract(html)
                 return _AsyncFetchResult(html=html, text=text, status=status, final_url=current)
         log.warning("async: too many redirects (> %d) for %s", cfg.max_redirects, url)
@@ -337,11 +363,38 @@ class _AsyncHTTPClient:
     async def get_robots(self, url: str) -> Optional[str]:
         try:
             p = urlparse(url)
-            robots_url = f"{p.scheme}://{p.netloc}/robots.txt"
-            session = await self._ensure()
-            async with session.get(robots_url) as resp:
-                if resp.status < 400:
-                    return await resp.text()
+            if p.scheme not in ("http", "https"):
+                return None
+            current = f"{p.scheme}://{p.netloc}/robots.txt"
+            # robots.txt is a live GET too, so follow redirects (http->https and
+            # apex<->www are common for /robots.txt) but re-validate EVERY hop
+            # against the SSRF guard and cap the body - mirroring the manual
+            # redirect loop the sync client / _fetch_once use for pages. Simply
+            # disabling redirects would treat a 301 as an empty robots file and
+            # silently drop robots enforcement for redirecting hosts.
+            for _ in range(self.cfg.max_redirects + 1):
+                if self.cfg.block_private_addresses and await _is_blocked_async(current):
+                    log.warning("async SSRF guard: refusing robots.txt fetch to %s", current)
+                    return None
+                session = await self._ensure()
+                async with session.get(current, allow_redirects=False) as resp:
+                    if resp.status in (301, 302, 303, 307, 308) and resp.headers.get("Location"):
+                        current = urljoin(current, resp.headers["Location"])
+                        continue
+                    if resp.status >= 400:
+                        return None
+                    total = 0
+                    chunks: List[bytes] = []
+                    async for chunk in resp.content.iter_chunked(65536):
+                        if not chunk:
+                            continue
+                        chunks.append(chunk)
+                        total += len(chunk)
+                        if total >= self.cfg.max_html_bytes:
+                            break
+                    return b"".join(chunks)[: self.cfg.max_html_bytes].decode(
+                        "utf-8", errors="replace"
+                    )
         except Exception:
             pass
         return None
@@ -380,6 +433,24 @@ class _AsyncRobotsChecker:
             return rp.can_fetch(self._ua, url)
         except Exception:
             return True
+
+    async def crawl_delay(self, url: str) -> Optional[float]:
+        """robots.txt ``Crawl-delay`` for ``url`` (parsed cache), or None."""
+        try:
+            p = urlparse(url)
+            host = (p.netloc or "").lower()
+        except Exception:
+            return None
+        if not host:
+            return None
+        rp = await self._get(p.scheme or "https", host, url)
+        if rp is None:
+            return None
+        try:
+            cd = rp.crawl_delay(self._ua)
+            return float(cd) if cd is not None else None
+        except Exception:
+            return None
 
     async def _get(self, scheme: str, host: str, original_url: str) -> Optional[RobotFileParser]:
         if host in self._cache:
@@ -473,6 +544,12 @@ class AsyncWebCrawler:
         self.ml_cfg = ml_cfg
         self.db = db
         self.blacklist = list(self.cfg.blacklist)
+        if self.cfg.blacklist_excel:
+            self.blacklist += load_blacklist_from_excel(
+                self.cfg.blacklist_excel,
+                self.cfg.blacklist_excel_sheet,
+                self.cfg.blacklist_excel_column,
+            )
         self._exclude_re = compile_exclude(self.cfg.exclude_patterns)
         self._http = _AsyncHTTPClient(self.http_cfg)
         self._robots: Optional[_AsyncRobotsChecker] = (
@@ -480,7 +557,7 @@ class AsyncWebCrawler:
             if self.cfg.respect_robots
             else None
         )
-        self._rate = _AsyncRateLimiter(self.http_cfg.per_host_delay)
+        self._rate = _AsyncRateLimiter(self.http_cfg.per_host_delay, self._robots)
         # Shared synchronous post-fetch pipeline. robots=None: the async path does
         # robots/rate/SSRF before the fetch, so the pipeline must not redo blocking
         # robots calls. The (synchronous) rate limiter is used only for artifact
@@ -610,6 +687,30 @@ class AsyncWebCrawler:
 
     # -- traversal strategies -------------------------------------------------
 
+    async def _gather_wave(self, st, tasks: list) -> list:
+        """Run a wave of ``_process`` coroutines, isolating per-worker failures so
+        one bad page can't discard the whole crawl.
+
+        Mirrors ``WebCrawler``'s per-worker try/except (crawler.py): under
+        ``strict=False`` (the resilient default) a failing page is logged and
+        treated as yielding no links; under ``strict=True`` the first error is
+        re-raised after the wave settles.
+        """
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        out: list = []
+        first_exc: Optional[BaseException] = None
+        for res in results:
+            if isinstance(res, BaseException):
+                if first_exc is None:
+                    first_exc = res
+                log.warning("async: page processing failed: %s", res)
+                out.append([])
+            else:
+                out.append(res)
+        if first_exc is not None and st.cfg.strict:
+            raise first_exc
+        return out
+
     async def _crawl_bfs(self, st, seeds, executor, workers: int) -> None:
         """Level-by-level BFS (links="pure", or ml with best_first disabled)."""
         frontier: List[Tuple[str, str, Optional[str]]] = [(u, dom, None) for (u, dom) in seeds]
@@ -620,7 +721,7 @@ class AsyncWebCrawler:
                 self._process(st, executor, url, depth, src, dom, sem)
                 for (url, dom, src) in frontier
             ]
-            results = await asyncio.gather(*tasks)
+            results = await self._gather_wave(st, tasks)
             if depth >= st.max_depth:
                 break
             next_frontier: List[Tuple[str, str, Optional[str]]] = []
@@ -651,7 +752,7 @@ class AsyncWebCrawler:
                 self._process(st, executor, url, depth, src, dom, sem)
                 for (_neg, depth, _cnt, url, src, dom) in wave
             ]
-            results = await asyncio.gather(*tasks)
+            results = await self._gather_wave(st, tasks)
             for (_neg, parent_depth, _cnt, parent_url, _src, parent_dom), links in zip(
                 wave, results, strict=False
             ):
@@ -706,13 +807,31 @@ class AsyncWebCrawler:
                 )
                 return []
 
+            # DEDUP level 1: fresh-URL cache (parity with WebCrawler.process_one).
+            # Runs the shared _try_cache in an executor thread (it does blocking DB
+            # reads and, for pure->ml, local enrichment). A hit means no fetch.
+            loop = asyncio.get_event_loop()
+            cached = await loop.run_in_executor(
+                executor, self._run_cache, st, url, depth, source_url
+            )
+            if cached is not None:
+                return cached
+
             await self._rate.wait(url)
             afr = await self._http.fetch(url)
 
             # Robots gate on the post-redirect target (the sync pipeline does this
             # too; we run it on the async path because the pipeline has robots=None).
+            # Skip it when the fetch produced no content: ``final_url`` then holds a
+            # hop the SSRF guard *refused* (or a never-validated redirect-exhaustion
+            # target), and issuing a robots.txt GET against it would defeat the guard.
             final = normalize_url(afr.final_url or url)
-            if final != url and self._robots is not None and not await self._robots.allowed(final):
+            if (
+                afr.status is not None
+                and final != url
+                and self._robots is not None
+                and not await self._robots.allowed(final)
+            ):
                 log.info("async: robots.txt disallows redirect target %s", final)
                 self._emit_status(
                     st,
@@ -737,6 +856,13 @@ class AsyncWebCrawler:
         return self._pipeline.process_fetched(
             st, url, _url_hash(url), depth, source_url, start_domain, res, fr
         )
+
+    def _run_cache(self, st, url, depth, source_url):
+        """Executed in a worker thread: the shared level-1 URL/TTL cache lookup
+        (and cached pure->ml enrichment). Returns links to follow on a hit, else
+        None to signal a cache miss (proceed to fetch)."""
+        res = self._worker_res(st)
+        return self._pipeline._try_cache(st, url, _url_hash(url), depth, source_url, res)
 
     # -- resources ------------------------------------------------------------
 

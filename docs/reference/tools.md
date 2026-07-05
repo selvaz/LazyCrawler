@@ -148,9 +148,9 @@ returns a `session_id`). Reads the cache — no network call. *(Exposed only whe
 get_artifacts(url: str, artifact_type: str = "") -> str
 ```
 
-Return the non-textual artifacts (tables, images, figures, charts) extracted from
+Return the non-textual artifacts (tables, images, charts) extracted from
 an already-crawled page. `artifact_type` filters by `"table"` / `"image"` /
-`"figure"` / `"chart"` / `"svg"` (empty = all). Tables come as Markdown + rows;
+`"chart"` / `"svg"` (empty = all). Tables come as Markdown + rows;
 images/charts as URL + caption (+ a vision summary when enrichment is on). Reads
 the cache — no network call. See the [Artifacts guide](../guides/artifacts.md).
 *(Exposed only when a `db` is configured, and only useful with

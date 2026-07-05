@@ -61,3 +61,29 @@ def test_render_js_falls_back_to_requests(monkeypatch):
     fr = client.fetch("https://spa.example/app")
     assert stub.calls == 1
     assert fr.status == 200 and fr.text and "plain requests body" in fr.text
+
+
+def test_browser_refuses_non_web_schemes(monkeypatch):
+    # Regression: render_js disables the SSRF guard, so the browser must not load
+    # file://, chrome://, etc. (local-file disclosure). The scheme guard rejects
+    # them before any Playwright work.
+    from lazycrawler.browser import BrowserRenderer, _is_web_url
+
+    assert _is_web_url("https://ok.example/x") is True
+    assert _is_web_url("http://ok.example/x") is True
+    assert _is_web_url("file:///etc/passwd") is False
+    assert _is_web_url("chrome://version") is False
+    assert _is_web_url("view-source:https://x") is False
+
+    r = BrowserRenderer()
+
+    def boom(url):
+        raise AssertionError("must not reach Playwright for a non-web scheme")
+
+    monkeypatch.setattr(r, "_render_sync", boom)
+    try:
+        # Non-web schemes are rejected before _render_sync (which would raise).
+        assert r.render("file:///etc/passwd") is None
+        assert r.render("chrome://version") is None
+    finally:
+        r.close()

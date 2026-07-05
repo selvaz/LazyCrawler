@@ -681,7 +681,13 @@ class HTTPClient:
         enc = None
         if "charset=" in content_type:
             enc = content_type.split("charset=")[-1].split(";")[0].strip() or None
-        return body.decode(enc or "utf-8", errors="replace")
+        try:
+            return body.decode(enc or "utf-8", errors="replace")
+        except LookupError:
+            # Unknown/legacy charset token (e.g. charset=x-user-defined, none):
+            # errors="replace" does not suppress LookupError, so a good 200
+            # response would otherwise be retried and lost. Fall back to utf-8.
+            return body.decode("utf-8", errors="replace")
 
     def fetch(
         self,

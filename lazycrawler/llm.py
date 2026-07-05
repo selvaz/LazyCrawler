@@ -274,19 +274,6 @@ class CrawlerLLM:
         )
         try:
             env = selector(user)
-            sel = env.payload if (env.ok and isinstance(env.payload, LinkSelection)) else None
-            idxs = sel.indices if sel else []
-            out: List[Tuple[str, str]] = []
-            for idx in idxs:
-                if isinstance(idx, int) and 1 <= idx <= len(subset):
-                    out.append(subset[idx - 1])
-            log.debug(
-                "  LLM selector: %d candidates -> indices %s -> %d valid",
-                len(subset),
-                (idxs[:10] if idxs else []),
-                len(out),
-            )
-            return out[:max_links]
         except Exception as e:
             log.warning(
                 "LLM select_links failed (%s: %s) - falling back to first %d candidates",
@@ -296,6 +283,38 @@ class CrawlerLLM:
                 exc_info=True,
             )
             return subset[:max_links]
+
+        # A structured-output failure (env.ok False, refusal, truncation, a
+        # non-LinkSelection payload, or a malformed/None envelope from an older
+        # adapter) must fall back to first-N too - otherwise the frontier is
+        # silently emptied and recursion terminates, indistinguishable from a
+        # deliberate "no links". Use getattr so a duck-typed/None env can't raise
+        # AttributeError out here (past the try) and abort the crawl.
+        if (
+            env is None
+            or not getattr(env, "ok", False)
+            or not isinstance(getattr(env, "payload", None), LinkSelection)
+        ):
+            log.warning(
+                "LLM select_links returned no valid selection (ok=%s) - "
+                "falling back to first %d candidates",
+                getattr(env, "ok", None),
+                max_links,
+            )
+            return subset[:max_links]
+
+        idxs = env.payload.indices or []
+        out: List[Tuple[str, str]] = []
+        for idx in idxs:
+            if isinstance(idx, int) and 1 <= idx <= len(subset):
+                out.append(subset[idx - 1])
+        log.debug(
+            "  LLM selector: %d candidates -> indices %s -> %d valid",
+            len(subset),
+            (idxs[:10] if idxs else []),
+            len(out),
+        )
+        return out[:max_links]
 
     def summarize_large(
         self,

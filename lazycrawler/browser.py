@@ -27,10 +27,26 @@ from __future__ import annotations
 import concurrent.futures
 import threading
 from typing import Optional
+from urllib.parse import urlparse
 
 from ._log import log
 
 _WARNED = False
+
+
+def _is_web_url(url: str) -> bool:
+    """True only for http/https URLs.
+
+    Chromium happily loads ``file://``, ``chrome://``, ``view-source:`` etc.
+    When ``render_js`` is on the SSRF guard is disabled (they are mutually
+    exclusive), so the browser is the one fetch primitive that could otherwise
+    read local files or internal pages from an attacker-supplied seed URL. We
+    refuse any non-web scheme here as a hard boundary.
+    """
+    try:
+        return urlparse(url).scheme in ("http", "https")
+    except Exception:
+        return False
 
 
 def playwright_available() -> bool:
@@ -77,6 +93,9 @@ class BrowserRenderer:
         Render ``url`` and return HTML, or None when Playwright is unavailable
         or rendering fails.
         """
+        if not _is_web_url(url):
+            log.warning("browser render: refusing non-http(s) URL %s", url)
+            return None
         return self._executor.submit(self._render_sync, url).result()
 
     def _ensure_session(self) -> bool:
@@ -170,6 +189,9 @@ def _render_sync(
 ) -> Optional[str]:
     """Compatibility helper: render one URL with a short-lived renderer."""
     global _WARNED
+    if not _is_web_url(url):
+        log.warning("browser render: refusing non-http(s) URL %s", url)
+        return None
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:

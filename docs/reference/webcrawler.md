@@ -263,17 +263,21 @@ results = crawler.crawl("https://example.com")
 crawler.close()
 ```
 
-### Blacklist domains or URL patterns
+### Blacklist domains
+
+`blacklist` matches **hostnames** (a host equal to, or a subdomain of, each
+entry). Full URLs or path fragments never match here — use `exclude_patterns`
+for path-based filtering.
 
 ```python
 from lazycrawler.config import CrawlerConfig
 
 cfg = CrawlerConfig(
-    blacklist=[
-        "https://example.com/login",
-        "https://example.com/cart",
-        "ads.example.com",
-    ]
+    # Hostname blacklist: blocks tracker.example.com, ads.example.com, and any
+    # subdomain of them.
+    blacklist=["tracker.example.com", "ads.example.com"],
+    # Path/URL filtering is a separate regex list:
+    exclude_patterns=[r"/login", r"/cart", r"/checkout"],
 )
 ```
 

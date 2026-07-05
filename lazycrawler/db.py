@@ -339,6 +339,16 @@ class CrawlerDB:
         updates = ",".join(f"{c}=excluded.{c}" for c in _PAGE_FIELDS)
 
         with self._lock:
+            # Don't let a transient error emission (fetch_error / robots_blocked /
+            # no_text) clobber a previously successful crawl: if a 'done' row
+            # already exists and the incoming row is an error, preserve the good
+            # content instead of wiping raw_text/clean_text/title. A fresh 'done'
+            # still overwrites, and error-over-error updates normally.
+            if data.get("status") != "done":
+                cur = self.conn.execute("SELECT status FROM pages WHERE url_hash=?", (uh,))
+                existing = cur.fetchone()
+                if existing is not None and existing[0] == "done":
+                    return uh
             self.conn.execute(
                 f"INSERT INTO pages ({','.join(cols)}) VALUES ({placeholders}) "
                 f"ON CONFLICT(url_hash) DO UPDATE SET {updates}",

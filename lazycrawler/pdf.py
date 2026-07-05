@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import re
 import ssl
+from datetime import datetime
 from typing import List, Optional, Tuple, Union
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -69,17 +70,31 @@ def title_from_url(url: str) -> str:
     return name.replace("-", " ").replace("_", " ").strip()
 
 
+def _valid_ymd(y: str, mo: str, d: str) -> Optional[str]:
+    """Return 'YYYY-MM-DD' only if it is a real calendar date, else None."""
+    try:
+        datetime(int(y), int(mo), int(d))
+    except ValueError:
+        return None
+    return f"{y}-{mo}-{d}"
+
+
 def _normalize_pdf_date(value: str) -> Optional[str]:
-    """Normalize a PDF date (e.g. 'D:20260314123000Z') to 'YYYY-MM-DD'."""
+    """Normalize a PDF date (e.g. 'D:20260314123000Z') to 'YYYY-MM-DD'.
+
+    Range-checks month/day so a malformed PDF metadata date like
+    'D:20269999...' does not yield an invalid ISO string ('2026-99-99')
+    persisted to the DB (parity with HTML date parsing, which validates).
+    """
     value = (value or "").strip()
     if not value:
         return None
     m = re.match(r"D:(\d{4})(\d{2})(\d{2})", value)
     if m:
-        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        return _valid_ymd(m.group(1), m.group(2), m.group(3))
     m = re.match(r"(\d{4})-(\d{2})-(\d{2})", value)
     if m:
-        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        return _valid_ymd(m.group(1), m.group(2), m.group(3))
     return None
 
 

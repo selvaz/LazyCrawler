@@ -39,3 +39,9 @@ web_search_gemini_grounded_best_practice_v4.py
 web_search_tool.py
 pipeline_lib/
 blacklist_finance_example.xlsx
+
+# Coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml

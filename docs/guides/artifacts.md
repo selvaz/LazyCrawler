@@ -1,7 +1,7 @@
 # Artifacts (tables, images, charts)
 
 Beyond clean text, LazyCrawler can extract a page's **non-textual content** as
-structured `Artifact` records — **tables, images, figures, charts and inline
+structured `Artifact` records — **tables, images, charts and inline
 SVG** — each kept whole with its caption / surrounding context and provenance.
 Artifacts work on **HTML** and (with the `pdf` extra) on **PDFs**, are persisted
 in a dedicated `artifacts` table, and can be recomposed with the page text into a
@@ -53,7 +53,6 @@ where network/LLM cost lives.
 | **table** | Markdown (`content`) **plus** structured rows (`data`), header↔value preserved. Layout/`role="presentation"`/nested tables are skipped |
 | **image** | absolute `src_url` + `alt` + `<figcaption>` caption + ±N chars of surrounding context (`artifact_context_chars`) |
 | **chart** | images / SVG that *look like* charts (alt/class/markup heuristics, or an SVG with ≥5 drawing primitives) |
-| **figure** | `<figure>` blocks (chart candidates) |
 | **svg** | inline `<svg>` markup captured (capped length) |
 
 Tiny/spacer/logo/tracking/icon images are filtered out via `min_image_dim` and a
@@ -70,7 +69,7 @@ from lazycrawler import Artifact
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `artifact_type` | `str` | `"table"` / `"image"` / `"figure"` / `"chart"` / `"svg"` |
+| `artifact_type` | `str` | `"table"` / `"image"` / `"chart"` / `"svg"` |
 | `position` | `int` | order of appearance on the page |
 | `src_url` | `str \| None` | absolute image URL |
 | `alt` | `str \| None` | `alt` text |
@@ -161,7 +160,7 @@ it) and deserializes `data` / `meta`.
 **Agent tool** — when a DB is attached, `CrawlerTools` exposes `get_artifacts`:
 
 ```python
-get_artifacts(url, artifact_type="")   # "table" | "image" | "figure" | "chart" | "svg" | ""
+get_artifacts(url, artifact_type="")   # "table" | "image" | "chart" | "svg" | ""
 # -> {"url", "found", "artifacts": [{type, caption, summary, src_url, content,
 #                                    data, mime, width, height, stored_bytes}]}
 ```
@@ -216,7 +215,7 @@ a reference + text surrogate (caption / vision description).
 | Parameter | Default | Description |
 |---|---|---|
 | `extract_artifacts` | `False` | Master switch — extract artifacts at all |
-| `artifact_types` | `("table","image","figure","svg","chart")` | Which types to collect |
+| `artifact_types` | `("table","image","chart","svg")` | Which types to collect |
 | `download_artifact_bytes` | `False` | Download image/chart bytes → `sha256` + blob in DB |
 | `max_artifact_bytes` | `5_000_000` | Max image size stored as a blob (larger → keep hash/metadata only) |
 | `min_image_dim` | `48` | Drop images whose declared width/height is below this (filters icons) |

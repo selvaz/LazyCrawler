@@ -23,22 +23,30 @@ _WARNED = False
 
 
 def _resolve_links(html: str, base_url: str) -> str:
-    """Rewrite relative <a href> / <img src> to absolute URLs (best effort)."""
-    if not base_url:
-        return html
+    """Strip <script>/<style>/<noscript> and rewrite relative <a href>/<img src>
+    to absolute URLs (best effort).
+
+    The script/style removal is done here (not via markdownify's ``strip=``) on
+    purpose: in markdownify ``strip`` means "don't convert this tag but keep its
+    text", which would leak raw JavaScript/CSS source into the Markdown. We drop
+    those subtrees outright so their bodies never reach the RAG corpus.
+    """
     try:
         from bs4 import BeautifulSoup
     except Exception:
         return html
     try:
         soup = BeautifulSoup(html, "html.parser")
-        for a in soup.find_all("a", href=True):
-            a["href"] = urljoin(base_url, a["href"])
-        for img in soup.find_all("img", src=True):
-            img["src"] = urljoin(base_url, img["src"])
+        for tag in soup.find_all(["script", "style", "noscript"]):
+            tag.decompose()
+        if base_url:
+            for a in soup.find_all("a", href=True):
+                a["href"] = urljoin(base_url, a["href"])
+            for img in soup.find_all("img", src=True):
+                img["src"] = urljoin(base_url, img["src"])
         return str(soup)
     except Exception:
-        log.debug("markdown: link resolution failed - using raw html", exc_info=True)
+        log.debug("markdown: html preparation failed - using raw html", exc_info=True)
         return html
 
 
@@ -67,7 +75,7 @@ def html_to_markdown(html: str, base_url: str = "") -> str:
         return html_to_text_basic(html)
     try:
         resolved = _resolve_links(html, base_url)
-        md = _md(resolved, heading_style="ATX", strip=["script", "style"])
+        md = _md(resolved, heading_style="ATX")
         return (md or "").strip()
     except Exception:
         log.warning("markdownify failed - falling back to basic strip", exc_info=True)

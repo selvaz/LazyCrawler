@@ -20,6 +20,26 @@ def test_preprocess_strips_noise():
     assert "cookies" not in out.lower()
 
 
+def test_preprocess_keeps_prose_mentioning_boilerplate_terms():
+    # Regression: unanchored terms (gdpr, advertisement, privacy policy) matched
+    # inside real sentences and dropped the whole line.
+    raw = (
+        "The EU handed down a landmark GDPR ruling against the company this week.\n"
+        "Regulators said the advertisement industry must overhaul its data practices.\n"
+        "The firm updated its privacy policy in response to the sweeping decision.\n"
+        "Cookie Settings\n"
+        "Advertisement"
+    )
+    out = preprocess_text(raw)
+    assert "landmark GDPR ruling" in out
+    assert "advertisement industry must overhaul" in out
+    assert "updated its privacy policy" in out
+    # But the short banner/button lines are still removed.
+    assert "Cookie Settings" not in out
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    assert "Advertisement" not in lines
+
+
 def test_extract_links_dedup_and_absolute():
     html = (
         '<a href="/a">A</a><a href="/a">dup</a>'
@@ -64,3 +84,22 @@ def test_published_datetime_from_meta():
 
 def test_published_datetime_none_when_missing():
     assert extract_published_datetime("<html></html>", "https://e.org/x") is None
+
+
+def test_published_datetime_does_not_crash_on_leap_day(monkeypatch):
+    # Regression: the future-date sanity ceiling used now.replace(year=year+2),
+    # which raises ValueError on Feb 29 and killed date extraction (and the page).
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    import lazycrawler.text as text_mod
+
+    class _FrozenLeapDay(_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return _dt(2028, 2, 29, 12, 0, 0, tzinfo=tz or _tz.utc)
+
+    monkeypatch.setattr(text_mod, "datetime", _FrozenLeapDay)
+    html = '<meta property="article:published_time" content="2026-01-15T14:30:00Z">'
+    iso = extract_published_datetime(html, "https://e.org/x")
+    assert iso and iso.startswith("2026-01-15")
