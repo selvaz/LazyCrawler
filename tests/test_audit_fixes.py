@@ -473,6 +473,23 @@ def test_async_process_skips_robots_on_blocked_redirect(monkeypatch):
 
 
 @requires_aiohttp
+def test_async_rate_limiter_honors_robots_crawl_delay():
+    """M-C2: the async rate limiter takes max(per_host_delay, robots Crawl-delay),
+    matching the sync HostRateLimiter."""
+    from lazycrawler.async_crawler import _AsyncRateLimiter
+
+    class _FakeRobots:
+        async def crawl_delay(self, url):
+            return 5.0
+
+    rl = _AsyncRateLimiter(0.0, _FakeRobots())
+    # per_host_delay is 0 but robots says 5s -> effective delay is 5s.
+    assert asyncio.run(rl._delay_for("https://slow.example/x")) == 5.0
+    # Without a robots checker it stays at the configured default.
+    assert asyncio.run(_AsyncRateLimiter(0.0)._delay_for("https://x/y")) == 0.0
+
+
+@requires_aiohttp
 def test_async_strict_false_isolates_worker_failure(monkeypatch):
     """H2: a single page raising in the executor pipeline must not discard the
     whole crawl under strict=False; under strict=True it propagates."""

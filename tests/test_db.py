@@ -41,6 +41,50 @@ def test_upsert_roundtrip_and_json_fields(tmp_db):
     assert row["data"] == {"custom": 42}
 
 
+def test_error_emission_does_not_clobber_done_row(tmp_db):
+    # Regression: a transient fetch_error / robots_blocked re-emission must not
+    # wipe a previously successful crawl's content.
+    u = "https://x.example/keep"
+    tmp_db.upsert_page(_page(u, clean_text="good article body", title="Good"))
+    # A later error emission (no text) for the same URL.
+    tmp_db.upsert_page(
+        {
+            "url": u,
+            "url_hash": url_hash(u),
+            "status": "fetch_error",
+            "mode": "pure",
+            "error": "timeout",
+            "clean_text": None,
+            "raw_text": None,
+            "title": None,
+        }
+    )
+    row = tmp_db.get_page(url_hash(u))
+    assert row["status"] == "done"
+    assert row["clean_text"] == "good article body"
+    assert row["title"] == "Good"
+    # And the fresh-cache lookup still serves it.
+    assert tmp_db.get_fresh_page(u) is not None
+
+
+def test_fresh_done_still_overwrites_and_error_over_error_updates(tmp_db):
+    u = "https://x.example/upd"
+    # First a real error row (no prior success): it should be stored.
+    tmp_db.upsert_page(
+        {"url": u, "url_hash": url_hash(u), "status": "fetch_error", "mode": "pure", "error": "e1"}
+    )
+    assert tmp_db.get_page(url_hash(u))["status"] == "fetch_error"
+    # Error-over-error updates normally.
+    tmp_db.upsert_page(
+        {"url": u, "url_hash": url_hash(u), "status": "robots_blocked", "mode": "pure", "error": "e2"}
+    )
+    assert tmp_db.get_page(url_hash(u))["status"] == "robots_blocked"
+    # A fresh 'done' fully overwrites.
+    tmp_db.upsert_page(_page(u, clean_text="now good"))
+    assert tmp_db.get_page(url_hash(u))["status"] == "done"
+    assert tmp_db.get_page(url_hash(u))["clean_text"] == "now good"
+
+
 def test_links_persisted_and_deserialized(tmp_db):
     u = "https://x.example/withlinks"
     tmp_db.upsert_page(_page(u, links=[["A", "https://x.example/a"], ["B", "https://x.example/b"]]))

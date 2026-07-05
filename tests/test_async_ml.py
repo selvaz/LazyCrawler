@@ -173,6 +173,53 @@ def test_async_persists_session_and_pages(monkeypatch, tmp_path):
         db.close()
 
 
+# -- level-1 cache parity ---------------------------------------------------
+
+
+def test_async_level1_cache_skips_refetch(monkeypatch, tmp_path):
+    # Parity with WebCrawler: a second crawl of the same URL within TTL is served
+    # from the level-1 cache (no re-fetch) and carries from_cache=True.
+    state = _install(monkeypatch)
+    db = CrawlerDB(DBConfig(db_path=str(tmp_path / "async_cache.db")))
+
+    def mk():
+        return AsyncWebCrawler(
+            CrawlerConfig(max_depth=0, respect_robots=False),
+            HTTPConfig(verify_ssl=False, block_private_addresses=False),
+            db=db,
+            ml_cfg=MLConfig(),
+        )
+
+    try:
+        r1 = _run(mk(), SEED)
+        assert r1 and r1[0].status == "done"
+        fetched = state["n"]
+        assert fetched >= 1
+
+        r2 = _run(mk(), SEED)
+        assert r2 and r2[0].from_cache is True
+        assert state["n"] == fetched  # no additional fetch happened
+    finally:
+        db.close()
+
+
+def test_async_blacklist_excel_is_loaded(monkeypatch, tmp_path):
+    # Regression: the async crawler ignored blacklist_excel entirely.
+    import lazycrawler.async_crawler as ac
+
+    monkeypatch.setattr(
+        ac, "load_blacklist_from_excel", lambda path, sheet, col: ["blocked.example"]
+    )
+    crawler = AsyncWebCrawler(
+        CrawlerConfig(respect_robots=False, blacklist_excel="dummy.xlsx"),
+        HTTPConfig(verify_ssl=False, block_private_addresses=False),
+    )
+    try:
+        assert "blocked.example" in crawler.blacklist
+    finally:
+        asyncio.run(crawler.close())
+
+
 # -- input validation -------------------------------------------------------
 
 
