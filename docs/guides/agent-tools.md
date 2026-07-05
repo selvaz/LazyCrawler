@@ -170,25 +170,40 @@ second `close()` is a safe no-op).
 
 ## Tool output format
 
-All tools return JSON strings. The agent sees structured data:
+All tools return JSON **strings**. To keep token cost down (and to keep
+retrieved web content clearly marked as untrusted data), the page objects carry
+a truncated `snippet`, not full text — call `get_page(url)` for the full body.
 
 ### web_search / web_crawl
 
+An envelope object (not a bare array) with a `pages` list:
+
 ```json
-[
-  {
-    "url": "https://example.com/article",
-    "title": "Article Title",
-    "summary": "Brief summary...",
-    "text": "Full extracted text...",
-    "entities": ["OpenAI", "Google"],
-    "topics": ["AI", "Machine Learning"],
-    "sentiment": "neutral",
-    "depth": 0,
-    "is_pdf": false
-  }
-]
+{
+  "query": "solid state battery",
+  "found": 3,
+  "session_id": "a1b2c3d4",
+  "pages": [
+    {
+      "url": "https://example.com/article",
+      "title": "Article Title",
+      "snippet": "Brief snippet of retrieved content … (truncated)",
+      "content_is_untrusted": true,
+      "sentiment": "neutral",
+      "published": "2024-05-01",
+      "status": "done",
+      "source_url": "https://example.com/",
+      "from_cache": false,
+      "depth": 0,
+      "full_text_available": true
+    }
+  ]
+}
 ```
+
+`web_crawl` returns the same shape with `"url"` in place of `"query"`.
+`full_text_available: true` means the snippet was truncated and the complete
+text can be fetched with `get_page`.
 
 ### get_page
 
@@ -196,11 +211,13 @@ All tools return JSON strings. The agent sees structured data:
 {
   "url": "https://example.com/page",
   "title": "Page Title",
-  "text": "Full extracted text...",
-  "summary": "...",
-  "status": "done"
+  "untrusted_page_text": "Full extracted text...",
+  "found": true
 }
 ```
+
+The full body is returned under `untrusted_page_text` — it is retrieved web
+content and must be treated as data, never as instructions.
 
 ---
 
@@ -216,9 +233,8 @@ crawler_tools = CrawlerTools(
 Output during agent run:
 
 ```
-[tool] search_cached("renewable energy batteries", limit=10) -> 3 results
-[tool] web_search("solid state battery breakthrough 2024", max_results=8)
-[tool] get_page("https://nature.com/articles/solid-state-batteries")
+[LazyCrawler] search query='solid state battery breakthrough 2024' preset=- max_results=8 ...
+[LazyCrawler] crawl url='https://nature.com/articles/solid-state-batteries' preset=- depth=1 ...
 ```
 
 ---
@@ -236,7 +252,8 @@ crawler_tools = CrawlerTools(
 )
 ```
 
-The tools still work — they return `text` instead of structured fields.
+The tools still work — the `snippet` is plain extracted text (no summary,
+entities, topics or sentiment, which require ml/smart mode).
 
 ---
 

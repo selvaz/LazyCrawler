@@ -60,6 +60,7 @@ nav:
   - Home: index.md
   - Installation: installation.md
   - Concepts: concepts.md
+  - Comparison: COMPARISON.md
   - Deep Assessment: DEEP_ASSESSMENT.md
   - Reference:
       - WebCrawler: reference/webcrawler.md

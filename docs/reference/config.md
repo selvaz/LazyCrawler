@@ -76,7 +76,7 @@ Controls HTTP client behaviour, timeouts, SSL, polite delays, and JavaScript ren
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `user_agent` | `str` | `"LazyCrawler/0.12 (+...)"` | HTTP User-Agent header (dedicated, not a spoofed browser) |
+| `user_agent` | `str` | `"LazyCrawler/0.14 (+...)"` | HTTP User-Agent header (dedicated, not a spoofed browser) |
 | `timeout_connect` | `int` | `5` | TCP connection timeout (seconds) |
 | `timeout_read` | `int` | `25` | Read timeout (seconds) |
 | `max_retries` | `int` | `4` | Max retry attempts on transient failures |
@@ -87,6 +87,7 @@ Controls HTTP client behaviour, timeouts, SSL, polite delays, and JavaScript ren
 | `pdf_timeout` | `int` | `60` | Timeout for PDF downloads (seconds) |
 | `max_redirects` | `int` | `5` | Max redirect hops; each hop is re-validated by the SSRF guard |
 | `max_html_bytes` / `max_pdf_bytes` / `max_asset_bytes` | `int` | 5MB / 50MB / 5MB | Streamed download caps (memory safety) |
+| `block_private_addresses` | `bool` | `False` | SSRF guard: refuse private/loopback/link-local targets (re-checked on every redirect hop). **Default `True`** in `AsyncWebCrawler` and forced on by `CrawlerTools` unless `enforce_ssrf_guard=False`. Mutually exclusive with `render_js` |
 | `verify_ssl` | `bool` | `True` | Verify SSL certificates. Set `False` for Avast/Zscaler MITM |
 | `ca_bundle` | `str` | `""` | Path to custom CA certificate bundle (PEM) |
 | `render_js` | `bool` | `False` | Use Playwright for JS/SPA rendering |

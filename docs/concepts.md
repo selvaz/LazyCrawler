@@ -73,12 +73,18 @@ By default, `same_domain_only=True` restricts the crawler to the seed's
 `same_host_only=True` for a strict same-hostname rule, or `same_domain_only=False`
 to follow any link.
 
+Domain scope is configured on `CrawlerConfig`, not passed to `crawl()`:
+
 ```python
-# Only follows links within docs.example.com
-crawler.crawl("https://docs.example.com", same_domain_only=True)
+from lazycrawler import WebCrawler, CrawlerConfig
+
+# Only follows links within the seed's registrable site (the default)
+crawler = WebCrawler(CrawlerConfig(same_domain_only=True))
+crawler.crawl("https://docs.example.com")
 
 # Follows any link found
-crawler.crawl("https://example.com", same_domain_only=False)
+crawler = WebCrawler(CrawlerConfig(same_domain_only=False))
+crawler.crawl("https://example.com")
 ```
 
 ---
@@ -99,7 +105,7 @@ Domain filter — remove off-domain links (if same_domain_only=True)
     │  -n_offdom
     │
     ▼
-Exclusion regex — remove /tag/, /author/, /login, /about, /contact, ...
+Exclusion regex — remove /login, /signup, /cart, /checkout, /account, ...
     │  -n_excluded
     │
     ▼
