@@ -34,7 +34,7 @@ documentazione/codice e copertura test disomogenea.
 | Asse | Voto | Motivazione sintetica |
 |---|---|---|
 | **Correttezza** | **A-** | Nessun bug critico trovato; concorrenza gestita con lock e stato per-run; restano edge case minori (validazione modalità assente nel sync, `render_js` che fabbrica status 200, `max_retries=0` silenzioso). |
-| **Sicurezza** | **B+** | Guardia SSRF per-hop, cap di byte, robots, prompt-hardening, no secrets nel repo. Restano: TOCTOU/DNS-rebinding (documentato), fallback PDF via `urllib` fuori dal client condiviso, nessuna allowlist esplicita di schemi URL. |
+| **Sicurezza** | **B+** | Guardia SSRF per-hop, cap di byte, robots, prompt-hardening, no secrets nel repo. Resta come vera esposizione residua solo il TOCTOU/DNS-rebinding sul percorso agente (documentato, A1). Minori: nessuna allowlist esplicita di schemi URL (M3); il fallback PDF via `urllib` è **debito di consistenza non raggiungibile a guardia attiva** (v. B11, declassato in revisione — non è un bypass SSRF sfruttabile). |
 | **Test** | **B** | 221 test, tutti verdi in 6.75s, offline e idiomatici; coverage totale 73% ma con buchi: `browser.py` 34%, `llm.py` 35%, `pdf.py` 54%. |
 | **Documentazione** | **B** | README/docs estesi e in gran parte allineati; drift residuo in `ml.py`/`config.py` (docstring "later phase" su feature già implementate), `ANALYSIS.md` cita file di test inesistenti e un item ROADMAP mai aggiunto. |
 | **Manutenibilità** | **B+** | Architettura pulita, ruff/format al 100%; penalizzano la duplicazione sync/async (robots, rate-limit, client HTTP, traversal) e la tripla copia della versione. |
@@ -110,15 +110,19 @@ arrivano da un LLM. **Impatto**: accesso a servizi interni/metadata in deploymen
 senza egress control. **Mitigazione possibile in-code**: risolvere una volta e
 connettersi all'IP validato (pin del DNS) o usare un connector custom.
 
-**A2 — Fallback PDF scarica via `urllib` fuori dal client condiviso**
-`lazycrawler/pdf.py:118-142` (`fetch_pdf_bytes` con `urlopen`), invocato da
-`_pipeline.py:297-303`. Bypassa: guardia SSRF, retry/backoff, redirect manuali
-validati, proxy della sessione. `urlopen` segue redirect senza ri-validazione.
-Oggi raggiungibile quasi solo via `render_js` (dove la guardia è comunque
-disattivata per mutua esclusione, `http.py:538-545`), quindi rischio residuo
-contenuto — ma è l'unico percorso di rete non uniforme del package. **Impatto**:
-incoerenza dei controlli su un percorso di download; debito tracciato in
-ANALYSIS §5.4 ma **assente da ROADMAP.md** (mai pianificato formalmente).
+**A2 → declassata a B11 in revisione adversariale.**
+Verifica sul codice: il ramo `urllib` (`_pipeline.py:297-303`) è raggiungibile
+solo quando `is_pdf=True` **e** `pdf_bytes` è vuoto; ma la fetch sync popola
+sempre `content` per qualunque risorsa "PDF-like" (`http.py:742-751`), quindi
+l'unico modo per avere `pdf_bytes` vuoto è il percorso `render_js`
+(`http.py:719-722` ritorna html+status senza `content`) — e `render_js` è
+**mutuamente esclusivo** con `block_private_addresses` per costruzione
+(`http.py:538-545`). Ne segue che **a guardia SSRF attiva il ramo `urllib` è
+irraggiungibile**: non c'è alcun bypass SSRF sfruttabile. Resta un debito di
+consistenza (no retry/backoff, no proxy della sessione, percorso di rete non
+uniforme). Impatto reale rivalutato: BASSO. Dettaglio e correzione in **B11**.
+La stessa ANALYSIS §5.4 già lo classificava come "residual exposure minimal";
+l'assessment lo aveva escalato erroneamente ad ALTA.
 
 ### MEDIA
 
@@ -234,6 +238,23 @@ e `_State.cfg/ml_cfg: Any` (`crawler.py:86-87`) nonostante `py.typed` sia
 spedito: i tipi reali (`_State`, `_Res`, `FetchResult`) esistono e sarebbero
 annotabili senza refactoring. Nessun TODO/FIXME nel codice (grep negativo).
 
+**B11 — Fallback PDF via `urllib` fuori dal client condiviso (ex-A2, declassata)**
+`lazycrawler/pdf.py:118-142` (`fetch_pdf_bytes` con `urlopen`), invocato da
+`_pipeline.py:297-303`. Il download avviene fuori da `HTTPClient`, quindi senza
+retry/backoff, senza proxy della sessione e con redirect seguiti da `urlopen`
+senza ri-validazione. **Non è però un bypass SSRF**: il ramo è raggiungibile
+solo con `pdf_bytes` vuoto e `is_pdf=True`, condizione che si verifica unicamente
+sul percorso `render_js` (`http.py:719-722`), il quale è mutuamente esclusivo con
+la guardia SSRF (`http.py:538-545`, `ValueError` a costruzione). A guardia attiva
+il ramo è irraggiungibile; nel percorso `render_js` la guardia è comunque
+disattivata by design e il "proxy" è il browser. È il solo percorso di rete non
+uniforme del package (motivo del rilievo). Doc: debito citato in ANALYSIS §5.4
+ma **assente da ROADMAP.md** (`grep` negativo su pdf/urllib fallback in ROADMAP;
+l'item "Single PDF download" è cosa diversa) → l'affermazione "tracked in
+ROADMAP.md" di ANALYSIS §5.4 è falsa. **Impatto**: consistenza/manutenibilità,
+non sicurezza sfruttabile. La migrazione (Step 1.1) resta utile ma **non è una
+priorità di sicurezza**.
+
 ### CI/CD e packaging (verifica §6 della richiesta)
 
 - `.github/workflows/ci.yml`: lint (ruff check+format), test offline con
@@ -284,7 +305,11 @@ repo; criterio trasversale di completamento: `ruff check . && ruff format
 
 ### Fase 1 — Sicurezza residua (priorità massima)
 
-**Step 1.1 — Migrare il fallback PDF sul client condiviso (A2) — Effort M**
+**Step 1.1 — Migrare il fallback PDF sul client condiviso (ex-A2 → B11) — Effort M**
+> Revisione: NON è un fix di sicurezza (il ramo è irraggiungibile a guardia SSRF
+> attiva, v. B11). Trattarlo come cleanup di consistenza; declassare la priorità
+> rispetto agli Step 1.2 (M3) e 1.3 (A1), che restano gli unici veri item di
+> sicurezza della Fase 1.
 - Cosa: in `lazycrawler/_pipeline.py:295-303`, sostituire la chiamata a
   `_crawler_fn("extract_pdf")(url, ...)` con un download via `res.http`
   (`HTTPClient.fetch_bytes` esiste già, `http.py:780-801`; alzare il cap a
@@ -477,6 +502,88 @@ config/models/presets/prompts/__init__ 100%
 Lint/format (ruff 0.x da venv): `ruff check .` → **All checks passed!**;
 `ruff format --check .` → **42 files already formatted**.
 
-Conteggio test: 222 funzioni `def test_*` in 19 file; nessun TODO/FIXME/XXX nel
+Conteggio test: 222 funzioni `def test_*` distribuite in 18 file `tests/test_*.py`
+(19 `.py` totali in `tests/`, incluso `conftest.py` che non contiene test);
+nessun TODO/FIXME/XXX nel
 codice sorgente o nei test (grep negativo). Working tree git pulito prima e
 dopo l'audit (nessun file del progetto modificato oltre a questo documento).
+
+---
+
+## Nota di revisione (verifica adversariale)
+
+Revisione indipendente svolta **contro il codice reale** (nessun test rieseguito;
+verificata solo la coerenza interna dei numeri). Ogni issue è stata riaperta al
+`file:riga` citato.
+
+### Verificate
+- **ALTA A1** (SSRF TOCTOU/DNS-rebinding): confermata. `is_blocked_address`
+  (`http.py:239-292`) e `_is_blocked_async` (`async_crawler.py:113-153`) risolvono
+  il DNS al check; `requests`/`aiohttp` ri-risolvono al connect. Raggiungibile sul
+  percorso agente (`CrawlerTools`, guardia on di default). Citazioni corrette.
+- **ALTA A2** (fallback PDF via `urllib`): la falla di codice esiste
+  (`pdf.py:118-142` → `_pipeline.py:297-303`) ma la severità era **sbagliata**
+  (v. Corrette).
+- **MEDIE** verificate tutte e sei sul codice: M1 (`crawler.py:229-235` non valida,
+  vs `async_crawler.py:626-631` che fa `ValueError`; degrada a `res.llm.extract_content`
+  su ramo smart `_pipeline.py:397-401,611`), M2 (`http.py:719-722` fabbrica
+  `status=200`; browser scarta la response, `browser.py:130-139`; cache TTL
+  `db.py:263-279`), M3 (nessun check scheme in `http.py:692-716`/`async_crawler.py:281-345`),
+  M4 (`search.py:419-420` non passa `session_id`; `search.py:637` ne genera uno
+  proprio; `tools.py:264,284` restituisce all'agente il proprio `sid`), M5
+  (coerenza numerica coverage: 2647/3640 ≈ 73% ✓), M6 (`_pipeline.py:804-819`
+  e `async_crawler.py:915-928`, `count=False` appende senza bound).
+- **BASSE** verificate a campione e oltre: B1 (divergenza fallback testo
+  `async_crawler.py:347-361` collassa i newline vs `http.py:481-495`), B2
+  (docstring obsolete `ml.py:11-14`/`config.py:362-364` vs estrazione completa
+  `ml.py:456-471`), B3 (ANALYSIS `§3` cita file test inesistenti, `§5.6` "193
+  passed"), B4 (`_pipeline.py:512-537` enrich ritorna `[]`), B5 (`http.py:938-960`
+  chiave robots per host), B6 (`http.py:725` loop vuoto con `max_retries=0`),
+  B7 (versione in 3 punti), B9 (`ml.py:63-82` lock rilasciato tra check e build).
+- **Riferimenti `file:riga`**: verificati a campione ampio, tutti entro ±5 righe
+  (per lo più esatti). Nessuna correzione di citazione necessaria.
+
+### Confermate (invariate)
+CRITICA 0; ALTA **A1**; MEDIE M1–M6; BASSE B1–B10. Il piano §5 è eseguibile: le
+funzioni/righe target (`HTTPClient.fetch_bytes` `http.py:780-801`, fixture
+`stub_fetch` `tests/conftest.py:~55-95`, validazione async `626-631`, `_render_sync`,
+ecc.) esistono e i passi sono attuabili.
+
+### Corrette
+- **A2 declassata da ALTA a BASSA (B11)**. Motivazione dimostrata sul codice: il
+  ramo `urllib` richiede `pdf_bytes` vuoto + `is_pdf`, situazione prodotta solo da
+  `render_js` (`http.py:719-722`), che è **mutuamente esclusivo** con la guardia
+  SSRF (`http.py:538-545`, `ValueError`); con guardia attiva il ramo è
+  **irraggiungibile** → nessun bypass SSRF sfruttabile. È debito di consistenza
+  (no retry/proxy), non sicurezza. L'assessment aveva contraddetto persino la
+  ANALYSIS §5.4 ("residual exposure minimal"). Aggiornati: tabella voti Sicurezza,
+  §3, priorità Step 1.1 (declassata da "massima" a cleanup).
+- **§6 conteggio file test**: "222 funzioni in 19 file" → 222 in **18** file
+  `test_*.py` (il 19° è `conftest.py`, privo di test).
+
+### Eliminate
+Nessuna. Tutte le issue elencate corrispondono a comportamento reale del codice;
+nessun falso positivo da rimuovere. (A2 non è eliminata: è ridimensionata a B11.)
+
+### Aggiunte (caccia attiva: async / cache / browser / ml)
+Nessuna nuova issue CRITICA/ALTA. Riscontri della caccia: (a) il conteggio
+`max_pages` in parallelo è corretto — check+incremento sono atomici sotto
+`st.lock` in `_emit`/`_add_counted` (`_pipeline.py:797-819`), nessun overrun; (b)
+il ramo cache "satisfies" ricorre correttamente con `recurse_from_cache`
+(`_pipeline.py:500-509`), quindi B4 è correttamente circoscritto al solo ramo
+`enrich`; (c) robots parsing e SSRF per-hop async in parità col sync. Nessun
+difetto grave sfuggito individuato.
+
+### Conteggi finali
+| Severità | Prima | Dopo |
+|---|---|---|
+| CRITICA | 0 | 0 |
+| ALTA | 2 (A1, A2) | **1** (A1) |
+| MEDIA | 6 | 6 |
+| BASSA | 10 | **11** (B11 = ex-A2) |
+| **Totale** | 18 | 18 |
+
+Voti confermati (Correttezza A-, Sicurezza B+, Test B, Doc B, Manutenibilità B+):
+il declassamento di A2 non altera i voti — A1 (TOCTOU) resta il tetto della
+Sicurezza; la wording della motivazione Sicurezza è stata corretta per non
+contare A2 come esposizione sfruttabile.
