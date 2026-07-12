@@ -8,6 +8,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-07-12
+
+### Added
+- `CrawlerDB.get_artifacts` gains an optional `content_hash` filter to fetch
+  the artifact(s) matching a specific content hash — the stable join key
+  behind `[[artifact:<hash>]]` anchors and downstream `crawler:<hash>`
+  artifact refs (LazyTools report figures). Additive parameter; existing
+  call sites are unchanged. `content_hash` is unique only per page
+  (`UNIQUE(url_hash, content_hash)`), so combine it with `url_hash`/
+  `session_id` when you need exactly one row.
+
 ## [0.15.0] — 2026-07-12
 
 **Breaking (security): private-network access is now blocked by default**
