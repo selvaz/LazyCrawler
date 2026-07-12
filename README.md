@@ -68,33 +68,40 @@ pip install -e ".[async]"   # aiohttp
 
 ---
 
-## ⚠️ SSRF Guard — read this before accepting URLs from external sources
+## ⚠️ SSRF Guard — read this before crawling localhost/intranet targets
 
-`HTTPConfig.block_private_addresses` is **`False` by default** so that the
-library can crawl localhost, intranets, and internal services without
-configuration. This is the right default for **trusted, developer-controlled**
-URL lists.
+**Since 0.15.0, `HTTPConfig` blocks private/loopback/link-local networks and
+cloud metadata endpoints by default** (`allow_private_networks=False`). This
+is the right default whenever URLs may come from an untrusted source — user
+input, search results, an LLM agent, a third-party API.
 
-**If you accept URLs from any untrusted source** — user input, search results,
-an LLM agent, a third-party API — you **must** enable the SSRF guard:
+**If you deliberately need to crawl localhost, an intranet, or internal
+services**, opt in explicitly:
 
 ```python
 from lazycrawler import WebCrawler, HTTPConfig
 
 crawler = WebCrawler(
-    http_cfg=HTTPConfig(block_private_addresses=True),  # ← required for untrusted URLs
+    http_cfg=HTTPConfig(allow_private_networks=True),  # ← only for trusted, developer-controlled URLs
 )
 ```
 
-Without it, a crafted URL such as `http://169.254.169.254/latest/meta-data/`
-(AWS metadata endpoint) or `http://192.168.1.1/admin` could be fetched by the
-crawler and the response returned to the caller.
+Without opting in, a crafted URL such as
+`http://169.254.169.254/latest/meta-data/` (AWS metadata endpoint) or
+`http://192.168.1.1/admin` is refused rather than fetched.
 
-> **`CrawlerTools`** (the LazyBridge agent wrapper) enables the SSRF guard
-> **automatically** — no action needed when using the agent path.
+> **Upgrading from &lt; 0.15.0?** The default flipped from *allow* to *block*.
+> `HTTPConfig.block_private_addresses` (the old, deprecated field) still
+> works but only the pre-0.15.0 default needs migrating: if you relied on
+> the implicit "private networks reachable" behavior, pass
+> `allow_private_networks=True` explicitly now.
 
-> **`AsyncWebCrawler`** also enables it automatically by default, and (like the
-> sync client) re-validates **every redirect hop**, not just the seed URL.
+> **`CrawlerTools`** (the LazyBridge agent wrapper) always sets the guard
+> explicitly regardless of this default — no action needed when using the
+> agent path.
+
+> **`AsyncWebCrawler`** inherits the same default, and (like the sync client)
+> re-validates **every redirect hop**, not just the seed URL.
 
 > **⚠️ Best-effort, not isolation.** The guard validates the IPs a host resolves
 > to *at check time*, but the actual connection re-resolves the host, so a
@@ -491,15 +498,15 @@ host that 30x-redirects to a private address is blocked too (bounded by
 `HTTPConfig.max_redirects`).
 
 ```python
-HTTPConfig(block_private_addresses=True)   # default OFF for the library
+HTTPConfig()   # default ON since 0.15.0, for the library and CrawlerTools alike
 ```
 
-It is **on by default in `CrawlerTools`** (the agent path) and, by default,
-**cannot be turned off** via `http_cfg` — pass `CrawlerTools(enforce_ssrf_guard=False)`
-to crawl internal hosts (this honors your `HTTPConfig`):
+In `CrawlerTools` (the agent path) it, by default, **cannot be turned off**
+via `http_cfg` — pass `CrawlerTools(enforce_ssrf_guard=False)` to crawl
+internal hosts (this honors your `HTTPConfig`):
 
 ```python
-CrawlerTools(http_cfg=HTTPConfig(block_private_addresses=False),
+CrawlerTools(http_cfg=HTTPConfig(allow_private_networks=True),
              enforce_ssrf_guard=False)   # opt out, deliberately
 ```
 

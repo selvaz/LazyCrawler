@@ -93,7 +93,7 @@ def test_as_tools_exposes_expected_tools(tools):
 
 def test_enforce_ssrf_guard_default_on():
     ct = CrawlerTools(
-        http_cfg=HTTPConfig(block_private_addresses=False, verify_ssl=False), content="pure"
+        http_cfg=HTTPConfig(allow_private_networks=True, verify_ssl=False), content="pure"
     )
     assert ct._crawler.http_cfg.block_private_addresses is True  # forced on
     ct.close()
@@ -101,7 +101,7 @@ def test_enforce_ssrf_guard_default_on():
 
 def test_enforce_ssrf_guard_opt_out():
     ct = CrawlerTools(
-        http_cfg=HTTPConfig(block_private_addresses=False, verify_ssl=False),
+        http_cfg=HTTPConfig(allow_private_networks=True, verify_ssl=False),
         enforce_ssrf_guard=False,
         content="pure",
     )

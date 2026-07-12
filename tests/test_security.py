@@ -18,7 +18,9 @@ def test_render_js_with_ssrf_guard_raises():
 
 
 def test_render_js_alone_is_fine():
-    HTTPClient(HTTPConfig(render_js=True, verify_ssl=False)).close()  # no guard -> ok
+    HTTPClient(
+        HTTPConfig(render_js=True, verify_ssl=False, allow_private_networks=True)
+    ).close()  # no guard -> ok
     HTTPClient(
         HTTPConfig(block_private_addresses=True, verify_ssl=False)
     ).close()  # guard alone -> ok

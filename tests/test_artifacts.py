@@ -275,7 +275,7 @@ def test_pdf_image_only_yields_artifacts(stub_fetch, tmp_db):
             artifact_types=("image",),
             min_image_dim=10,
         ),
-        HTTPConfig(verify_ssl=False, link_delay=0),
+        HTTPConfig(verify_ssl=False, link_delay=0, allow_private_networks=True),
         db=tmp_db,
     ) as c:
         r = c.crawl(u, mode="pure")[0]
