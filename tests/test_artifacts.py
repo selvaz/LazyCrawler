@@ -112,6 +112,10 @@ def test_db_add_and_get_artifacts(tmp_db):
     assert "blob" not in table  # bytes omitted by default
     # type filter
     assert len(tmp_db.get_artifacts(url_hash=uh, artifact_type="image")) == 1
+    # content_hash filter selects exactly one artifact (downstream crawler:<hash> refs)
+    by_hash = tmp_db.get_artifacts(content_hash=table["content_hash"])
+    assert len(by_hash) == 1 and by_hash[0]["content_hash"] == table["content_hash"]
+    assert tmp_db.get_artifacts(content_hash="no-such-hash") == []
 
 
 def test_db_stores_blob_when_requested(tmp_db):
