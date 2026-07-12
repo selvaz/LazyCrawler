@@ -26,7 +26,7 @@ The tell-tale signs: `0 <a> tags`, `no extractable content`.
 ## Setup
 
 ```bash
-pip install "lazycrawler[js]"
+pip install "lazycrawler[js] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"
 playwright install chromium
 ```
 

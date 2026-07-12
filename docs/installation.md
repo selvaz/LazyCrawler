@@ -7,10 +7,14 @@
 
 ## Install
 
+LazyCrawler is distributed from GitHub at an immutable release tag (only
+LazyBridge is on PyPI). Every install uses a `git+` direct reference; add an
+extra in the brackets as needed.
+
 === "Pure mode only"
 
     ```bash
-    pip install lazycrawler
+    pip install "lazycrawler @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"
     ```
 
     Includes: httpx, beautifulsoup4, trafilatura, pydantic, robotparser.
@@ -19,7 +23,7 @@
 === "With LLM (smart mode)"
 
     ```bash
-    pip install "lazycrawler[smart]"
+    pip install "lazycrawler[smart] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"
     ```
 
     Adds: `lazybridge` (multi-provider LLM abstraction).
@@ -27,7 +31,7 @@
 === "Everything"
 
     ```bash
-    pip install "lazycrawler[all]"
+    pip install "lazycrawler[all] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"
     ```
 
     Adds: smart + pdf + search + js + excel + dates.

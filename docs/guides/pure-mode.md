@@ -99,7 +99,7 @@ cfg = CrawlerConfig(
 ### Blacklist from Excel
 
 ```python
-# pip install "lazycrawler[excel]"
+# pip install "lazycrawler[excel] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"
 cfg = CrawlerConfig(
     blacklist_excel="blacklist.xlsx",
     blacklist_excel_sheet="Sheet1",   # None = first sheet

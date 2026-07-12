@@ -45,7 +45,7 @@ Controls traversal depth, page limits, domain filtering, and blacklists.
 | `large_doc_threshold` | `int` | `20_000` | Chars above which smart mode uses map-reduce |
 | `large_doc_chunk_chars` | `int` | `12_000` | Chunk size for map-reduce summarization |
 | `large_doc_max_chunks` | `int` | `12` | Max chunks processed in map-reduce |
-| `emit_markdown` | `bool` | `False` | Render each crawled HTML page to Markdown (`PageResult.markdown`). Requires `pip install lazycrawler[markdown]` |
+| `emit_markdown` | `bool` | `False` | Render each crawled HTML page to Markdown (`PageResult.markdown`). Requires `pip install "lazycrawler[markdown] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"` |
 | `extract_artifacts` | `bool` | `False` | Extract tables, images, charts, SVG as structured `Artifact` records (HTML + PDF). See the [Artifacts guide](../guides/artifacts.md) |
 | `artifact_types` | `tuple` | `("table","image","chart","svg")` | Which artifact types to collect |
 | `download_artifact_bytes` | `bool` | `False` | Download image/chart bytes through the crawler (honors SSL + SSRF guard) → `sha256` + blob in DB |
@@ -87,7 +87,7 @@ Controls HTTP client behaviour, timeouts, SSL, polite delays, and JavaScript ren
 | `pdf_timeout` | `int` | `60` | Timeout for PDF downloads (seconds) |
 | `max_redirects` | `int` | `5` | Max redirect hops; each hop is re-validated by the SSRF guard |
 | `max_html_bytes` / `max_pdf_bytes` / `max_asset_bytes` | `int` | 5MB / 50MB / 5MB | Streamed download caps (memory safety) |
-| `block_private_addresses` | `bool` | `False` | SSRF guard: refuse private/loopback/link-local targets (re-checked on every redirect hop). **Default `True`** in `AsyncWebCrawler` and forced on by `CrawlerTools` unless `enforce_ssrf_guard=False`. Mutually exclusive with `render_js` |
+| `allow_private_networks` | `bool` | `False` | SSRF guard control (`False` = guard ON, the default). When `False`, refuse private/loopback/link-local/cloud-metadata targets (re-checked on every redirect hop). Pass `True` to reach localhost/intranet. Mutually exclusive with `render_js` when the guard is on. The old inverse flag `block_private_addresses` still works but is deprecated |
 | `verify_ssl` | `bool` | `True` | Verify SSL certificates. Set `False` for Avast/Zscaler MITM |
 | `ca_bundle` | `str` | `""` | Path to custom CA certificate bundle (PEM) |
 | `render_js` | `bool` | `False` | Use Playwright for JS/SPA rendering |
@@ -147,7 +147,7 @@ scoring + local structured extraction). See the [ML Mode guide](../guides/ml-mod
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `model` | `str` | `"minishlab/potion-retrieval-32M"` | Model2Vec static-embedding model (semantic scoring + TextRank summary). Shared across workers; needs `pip install lazycrawler[ml]` |
+| `model` | `str` | `"minishlab/potion-retrieval-32M"` | Model2Vec static-embedding model (semantic scoring + TextRank summary). Shared across workers; needs `pip install "lazycrawler[ml] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"` |
 | `w_sem` | `float` | `0.55` | Weight of the **semantic** signal in the link score |
 | `w_lex` | `float` | `0.20` | Weight of the **lexical** (token overlap) signal |
 | `w_struct` | `float` | `0.25` | Weight of the **structural** (URL/anchor) signal |
@@ -165,7 +165,7 @@ crawler = WebCrawler(ml_cfg=MLConfig(model="minishlab/potion-base-8M", w_sem=0.6
 crawler.crawl("https://example.com/", mode="ml", topic="solid-state batteries")
 ```
 
-Needs `pip install lazycrawler[ml]` (scoring + summary) and `lazycrawler[nlp]`
+Needs `pip install "lazycrawler[ml] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"` (scoring + summary) and `lazycrawler[nlp]`
 (YAKE/VADER/spaCy for content). Every layer degrades gracefully if its dep is absent.
 
 ---

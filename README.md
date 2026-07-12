@@ -27,7 +27,7 @@ engine's results (DuckDuckGo, Brave, Tavily, or Gemini grounded) and then crawls
 
 > **Status**: standalone library. LazyCrawler's **LLM-tool interface** is now
 > surfaced through LazyTools as `lazytools.connectors.web.WebTools` (install via
-> `pip install 'lazytoolkit[web]'`) — a thin pass-through over `CrawlerTools`.
+> `pip install "lazytoolkit[web] @ git+https://github.com/selvaz/LazyTools.git@v0.3.2"`) — a thin pass-through over `CrawlerTools`.
 > Only the tool surface is re-exposed; the crawler engine stays here, standalone
 > and unchanged.
 
@@ -280,10 +280,10 @@ results = crawler.crawl("https://example.com/", links="ml", topic="solid-state b
 `links="ml"` scores every candidate link against the topic (semantic via
 [Model2Vec](https://github.com/MinishLab/model2vec) static embeddings + lexical +
 structural) and crawls **best-first** — a score-ordered frontier that works
-sequential **and** parallel. Needs `pip install lazycrawler[ml]`; without it,
+sequential **and** parallel. Needs `pip install "lazycrawler[ml] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"`; without it,
 scoring degrades to lexical+structural (still topic-aware). `content="ml"` fills
 `summary` (TextRank) / `topics` (YAKE) / `entities` (spaCy) / `sentiment` (VADER)
-with **local ML, zero tokens** (`pip install lazycrawler[nlp]`). The killer
+with **local ML, zero tokens** (`pip install "lazycrawler[nlp] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"`). The killer
 pattern: `links="ml"` for breadth + `content="smart"` only on the winners. See the
 [ML mode guide](https://github.com/selvaz/lazycrawler/blob/main/docs/guides/ml-mode.md).
 
@@ -390,7 +390,7 @@ r = crawler.crawl("https://example.com/article", mode="pure")[0]
 print(r.markdown)   # "# Title\n\n- bullet\n\n| col | ... |"
 ```
 
-Needs the `markdown` extra (`pip install lazycrawler[markdown]`); without it the
+Needs the `markdown` extra (`pip install "lazycrawler[markdown] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"`); without it the
 field degrades to a basic text strip instead of failing. PDFs are skipped (no HTML).
 The render is independent of pure/smart — it works in both.
 
@@ -439,7 +439,7 @@ CrawlerConfig(extract_artifacts=True, enrich_artifacts=True)  # + vision LLM (sm
 - `download_artifact_bytes=True` downloads images through the crawler's HTTP
   client (honors SSL + the SSRF guard; the download is streamed and capped by
   `HTTPConfig.max_asset_bytes`), then stores a `sha256` hash + the bytes (only
-  blobs ≤ `max_artifact_bytes` are kept). Needs `pip install lazycrawler[image]`
+  blobs ≤ `max_artifact_bytes` are kept). Needs `pip install "lazycrawler[image] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"`
   for dimensions/format sniffing (Pillow).
 - `enrich_artifacts=True` with `content="smart"` runs a **vision LLM** (via
   LazyBridge) to caption images, read chart trends/data points, and summarize

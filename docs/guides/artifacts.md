@@ -97,7 +97,7 @@ With the `pdf` extra installed, PDFs also yield artifacts:
 - **embedded images** via PyMuPDF (extracted as `blob` bytes with `mime`/dims).
 
 ```python
-# pip install lazycrawler[pdf]
+# pip install "lazycrawler[pdf] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"
 crawler = WebCrawler(CrawlerConfig(max_depth=0, extract_artifacts=True), db=db)
 r = crawler.crawl("https://example.com/whitepaper.pdf", mode="pure")[0]
 tables = [a for a in r.artifacts if a.artifact_type == "table"]
@@ -238,8 +238,8 @@ turns on artifacts + Markdown anchors. See the [Presets guide](presets.md).
 | Feature | Needs | Without it |
 |---|---|---|
 | HTML extraction | `beautifulsoup4` (core) | artifact extraction disabled (logged) |
-| Image dimensions / MIME sniff | `pillow` — `pip install lazycrawler[image]` | dims omitted, MIME from magic bytes only |
-| PDF tables / images | `pip install lazycrawler[pdf]` | PDFs yield no artifacts |
+| Image dimensions / MIME sniff | `pillow` — `pip install "lazycrawler[image] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"` | dims omitted, MIME from magic bytes only |
+| PDF tables / images | `pip install "lazycrawler[pdf] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"` | PDFs yield no artifacts |
 | Vision enrichment | `lazybridge` + a vision model | `enrich_artifacts` has no effect in pure mode |
 
 Nothing hard-fails: a missing optional dependency degrades the relevant layer and

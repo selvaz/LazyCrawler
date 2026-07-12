@@ -67,7 +67,7 @@ honest part most assessments skip.
 | Prior finding | Status in v0.9 |
 |---|---|
 | §4.1 Non-retryable 4xx were retried | ✅ Fixed — permanent 4xx (≠429) return immediately (`http.py` `fetch`, "non-retryable HTTP … giving up") |
-| §4.5 No SSRF guard on the agent path | ✅ Added — `HTTPConfig(block_private_addresses)` + `is_blocked_address` (loopback/RFC-1918/link-local/metadata, fail-closed), **on by default in `CrawlerTools`**. ⚠️ *redirects are not re-checked* (still open, §5) |
+| §4.5 No SSRF guard on the agent path | ✅ Added — `is_blocked_address` (loopback/RFC-1918/link-local/metadata, fail-closed), **on by default** (`allow_private_networks=False` since 0.15.0). Every redirect hop is re-validated |
 | Roadmap #5 Markdown output | ✅ Added — `emit_markdown` → `html_to_markdown` (markdownify, graceful degrade) |
 | §4.7 Doc staleness | ✅ Largely fixed — full mkdocs site (guides for presets, artifacts, markdown-RAG, agent tools; refreshed reference) |
 
@@ -352,9 +352,10 @@ still should not fight crawl4ai/Firecrawl on scale/anti-bot; that is not its pur
 
 **Highest-leverage next steps (in order):**
 
-1. **Publish to PyPI + add CI `codeql`/`release` (and a `boundary` workflow)** — now
-   the #1 gap: the distribution/process maturity lags the (good) code, and the other
-   ecosystem packages already ship this way.
+1. **Release process — done.** LazyCrawler now ships from GitHub at immutable
+   tags with a `release` workflow (wheel + sdist + SHA-256 on the GitHub
+   Release); only LazyBridge is on PyPI, so LazyCrawler is deliberately not
+   published there.
 2. **`ml` Phase 3** — near-duplicate detection (SimHash) + relevance-gated early-stop
    to make the no-LLM research loop genuinely *targeted*.
 3. **Autothrottle + optional proxy** — the remaining hard gap before at-scale or

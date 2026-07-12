@@ -9,7 +9,7 @@ Smart mode uses an LLM (via LazyBridge) to extract structured information from e
 Install the `smart` extra and set your API key:
 
 ```bash
-pip install "lazycrawler[smart]"
+pip install "lazycrawler[smart] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"
 export OPENAI_API_KEY=sk-...   # or ANTHROPIC_API_KEY, GOOGLE_API_KEY, etc.
 ```
 
