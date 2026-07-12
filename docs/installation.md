@@ -4,6 +4,9 @@
 
 - Python **3.10** or later
 - pip
+- **Git** — installs use a `git+` VCS URL, so pip must be able to invoke the
+  `git` executable (pre-installed on most dev machines and CI images; on
+  minimal images add it, e.g. `apt-get install -y git`)
 
 ## Install
 
