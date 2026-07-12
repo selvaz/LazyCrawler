@@ -29,7 +29,7 @@ r = crawler.crawl("https://example.com/article", mode="pure")[0]
 print(r.markdown)   # "# Title\n\n- bullet\n\n| col | ... |"
 ```
 
-- Needs the `markdown` extra (`pip install lazycrawler[markdown]`); without it the
+- Needs the `markdown` extra (`pip install "lazycrawler[markdown] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"`); without it the
   field degrades to a basic text strip instead of failing.
 - PDFs are skipped (no HTML).
 - The render is independent of pure/smart — it works in both.
