@@ -487,7 +487,7 @@ class PagePipeline:
     ) -> Optional[List[Tuple[float, str, str]]]:
         if self.db is None:
             return None
-        row = self.db.get_fresh_page(url)
+        row = self.db.get_fresh_page(url, bypass_cache=st.refresh)
         if not row:
             return None
 
@@ -841,6 +841,7 @@ class PagePipeline:
                 "published_iso": result.published_iso,
                 "content_hash": content_hash,
                 "links": [[a, u] for (a, u) in (candidate_links or [])] or None,
+                "requested_url": result.requested_url,
             }
         )
         if st.session_id:
@@ -910,6 +911,7 @@ class PagePipeline:
             is_pdf=bool(row.get("is_pdf")),
             depth=depth,
             source_url=source_url,
+            requested_url=row.get("requested_url"),
             error=row.get("error"),
             from_cache=from_cache,
             markdown=row.get("markdown"),

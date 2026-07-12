@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS pages (
   content_hash   TEXT,
   extract_json   TEXT,
   links_json     TEXT,
+  requested_url  TEXT,
   crawled_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pages_domain        ON pages(domain);
@@ -171,6 +172,7 @@ _PAGE_FIELDS = [
     "content_hash",
     "extract_json",
     "links_json",
+    "requested_url",
     "crawled_at",
 ]
 
@@ -219,7 +221,7 @@ class CrawlerDB:
 
     # -- Schema versioning / migrations ---------------------------------------
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def _migrate(self) -> None:
         """Apply forward migrations gated by ``PRAGMA user_version`` so each step
@@ -232,6 +234,11 @@ class CrawlerDB:
                     self.conn.execute(f"ALTER TABLE pages ADD COLUMN {col} TEXT")
                 except sqlite3.OperationalError:
                     log.debug("pages.%s already present (no migration needed)", col)
+        if version < 2:
+            try:
+                self.conn.execute("ALTER TABLE pages ADD COLUMN requested_url TEXT")
+            except sqlite3.OperationalError:
+                log.debug("pages.requested_url already present (no migration needed)")
         if version < self.SCHEMA_VERSION:
             self.conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
             self.conn.commit()
@@ -260,13 +267,16 @@ class CrawlerDB:
 
     # -- Dedup level 1: URL + TTL --------------------------------------------
 
-    def get_fresh_page(self, url: str) -> Optional[Dict[str, Any]]:
+    def get_fresh_page(self, url: str, *, bypass_cache: bool = False) -> Optional[Dict[str, Any]]:
         """
         Return the cached page for this URL if it is 'done' and within TTL
         (and force_refresh is False), else None. The caller decides whether the
         cached content satisfies the requested mode.
         """
-        if self.cfg.force_refresh:
+        # ``bypass_cache`` is intentionally per-call.  Agent-facing callers must
+        # never flip ``cfg.force_refresh`` on a shared database because that races
+        # with other crawls using the same cache.
+        if bypass_cache or self.cfg.force_refresh:
             return None
         row = self.get_page(url_hash(url))
         if not row or row.get("status") != "done":
@@ -278,9 +288,9 @@ class CrawlerDB:
             return None
         return row
 
-    def is_fresh(self, url: str) -> bool:
+    def is_fresh(self, url: str, *, bypass_cache: bool = False) -> bool:
         """True if a fresh 'done' page exists for this URL (see get_fresh_page)."""
-        return self.get_fresh_page(url) is not None
+        return self.get_fresh_page(url, bypass_cache=bypass_cache) is not None
 
     # -- Dedup level 2: content_hash -----------------------------------------
 
@@ -403,7 +413,7 @@ class CrawlerDB:
         params: List[Any] = []
         if session_id:
             sql = (
-                "SELECT p.* FROM pages p "
+                "SELECT p.*, e.source_url AS source_url, e.depth AS depth FROM pages p "
                 "JOIN crawl_edges e ON e.url_hash = p.url_hash "
                 "WHERE e.session_id=?"
             )
@@ -463,6 +473,23 @@ class CrawlerDB:
             "pages_done": _count("SELECT COUNT(*) FROM pages WHERE status='done'"),
             "edges": _count("SELECT COUNT(*) FROM crawl_edges"),
         }
+
+    def get_crawl_graph(self, session_id: str, *, limit: int = 200) -> Dict[str, Any]:
+        """Bounded node/edge view of one crawl session's persisted provenance."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT p.url, p.status, e.source_url, e.depth "
+                "FROM crawl_edges e JOIN pages p ON p.url_hash=e.url_hash "
+                "WHERE e.session_id=? ORDER BY e.depth, p.url LIMIT ?",
+                (session_id, max(1, int(limit))),
+            ).fetchall()
+        nodes, edges = [], []
+        for row in rows:
+            d = dict(row)
+            nodes.append({"url": d["url"], "depth": d["depth"], "status": d["status"]})
+            if d.get("source_url"):
+                edges.append({"source_url": d["source_url"], "target_url": d["url"], "depth": d["depth"]})
+        return {"session_id": session_id, "nodes": nodes, "edges": edges}
 
     @staticmethod
     def _row_to_page(row: Dict[str, Any]) -> Dict[str, Any]:

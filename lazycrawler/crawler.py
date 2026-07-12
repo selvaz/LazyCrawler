@@ -82,6 +82,7 @@ class _State:
     topic: str
     session_id: Optional[str]
     schema: Optional[type] = None
+    refresh: bool = False
     max_depth: int = 0
     cfg: Any = None
     ml_cfg: Any = None
@@ -185,6 +186,7 @@ class WebCrawler:
         max_depth: Optional[int] = None,
         overrides: Optional[dict] = None,
         ml_overrides: Optional[dict] = None,
+        refresh: bool = False,
     ) -> List[PageResult]:
         """Crawl a single URL (and its links up to max_depth).
 
@@ -209,6 +211,7 @@ class WebCrawler:
             max_depth=max_depth,
             overrides=overrides,
             ml_overrides=ml_overrides,
+            refresh=refresh,
         )
 
     def crawl_many(
@@ -225,6 +228,7 @@ class WebCrawler:
         max_depth: Optional[int] = None,
         overrides: Optional[dict] = None,
         ml_overrides: Optional[dict] = None,
+        refresh: bool = False,
     ) -> List[PageResult]:
         """Crawl a list of URLs sharing state (visited set, page counter)."""
         content_mode: Mode = content or mode
@@ -239,6 +243,7 @@ class WebCrawler:
             topic=topic,
             session_id=session_id,
             schema=schema,
+            refresh=refresh,
             max_depth=eff_depth,
             cfg=eff_cfg,
             ml_cfg=eff_ml_cfg,

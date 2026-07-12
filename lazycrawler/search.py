@@ -380,6 +380,8 @@ class WebSearch:
         overrides: Optional[dict] = None,
         ml_overrides: Optional[dict] = None,
         timelimit: Optional[str] = None,
+        refresh: bool = False,
+        schema: Optional[type] = None,
     ) -> dict:
         """
         Run search + crawl.
@@ -429,6 +431,8 @@ class WebSearch:
                 overrides,
                 ml_overrides,
                 eff_timelimit,
+                refresh,
+                schema,
             )
         elif engine == "tavily":
             results = self._run_tavily(
@@ -441,6 +445,8 @@ class WebSearch:
                 overrides,
                 ml_overrides,
                 eff_timelimit,
+                refresh,
+                schema,
             )
         else:
             results = self._run_duckduckgo(
@@ -453,6 +459,8 @@ class WebSearch:
                 overrides,
                 ml_overrides,
                 eff_timelimit,
+                refresh,
+                schema,
             )
 
         pages_found = sum(1 for r in results if r.status == "done")
@@ -478,6 +486,8 @@ class WebSearch:
         overrides=None,
         ml_overrides=None,
         timelimit=None,
+        refresh=False,
+        schema=None,
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
         scfg = self.search_cfg
@@ -504,6 +514,8 @@ class WebSearch:
             source="search:duckduckgo",
             overrides=overrides,
             ml_overrides=ml_overrides,
+            refresh=refresh,
+            schema=schema,
         )
 
     # -- Brave Search: URLs -> crawl ------------------------------------------
@@ -519,6 +531,8 @@ class WebSearch:
         overrides=None,
         ml_overrides=None,
         timelimit=None,
+        refresh=False,
+        schema=None,
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
         scfg = self.search_cfg
@@ -545,6 +559,8 @@ class WebSearch:
             source="search:brave",
             overrides=overrides,
             ml_overrides=ml_overrides,
+            refresh=refresh,
+            schema=schema,
         )
 
     # -- Tavily Search: URLs -> crawl -----------------------------------------
@@ -560,6 +576,8 @@ class WebSearch:
         overrides=None,
         ml_overrides=None,
         timelimit=None,
+        refresh=False,
+        schema=None,
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
         scfg = self.search_cfg
@@ -585,6 +603,8 @@ class WebSearch:
             source="search:tavily",
             overrides=overrides,
             ml_overrides=ml_overrides,
+            refresh=refresh,
+            schema=schema,
         )
 
     # -- Gemini grounded (answer mode) ----------------------------------------
