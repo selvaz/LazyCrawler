@@ -253,6 +253,7 @@ def get_artifacts(
     url_hash: str | None = None,
     session_id: str | None = None,
     artifact_type: str | None = None,
+    content_hash: str | None = None,
     include_blob: bool = False,
     limit: int = 0,
 ) -> list[dict]
@@ -262,10 +263,20 @@ Retrieve a page's (or a whole session's) artifacts — tables, images, charts, S
 `data`/`meta` are deserialized; the raw `blob` is dropped unless `include_blob=True`.
 See the [Artifacts guide](../guides/artifacts.md).
 
+`content_hash` filters by the stable content join key (the same hash in
+`[[artifact:<hash>]]` anchors and downstream `crawler:<hash>` artifact refs).
+It is unique only per page (`UNIQUE(url_hash, content_hash)`), so the same
+image/table across several pages matches one row per page — some possibly
+without a downloaded `blob`. Pair it with `url_hash` to guarantee a single
+row (`session_id` only narrows to that session — a session that crawled the
+same content on two pages still returns both). When resolving a bare
+`crawler:<hash>`, pick a match that actually carries bytes.
+
 ```python
 from lazycrawler.http import url_hash
 arts = db.get_artifacts(url_hash=url_hash("https://example.com/report"))
 tables = db.get_artifacts(session_id="run-1", artifact_type="table")
+one = db.get_artifacts(content_hash="9f8e…", include_blob=True)  # by content hash
 ```
 
 ---
