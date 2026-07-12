@@ -22,7 +22,9 @@ class _StubRenderer:
 
 
 def test_render_js_uses_browser_html(monkeypatch):
-    client = HTTPClient(HTTPConfig(render_js=True, min_text_chars=10, verify_ssl=False))
+    client = HTTPClient(
+        HTTPConfig(render_js=True, min_text_chars=10, verify_ssl=False, allow_private_networks=True)
+    )
     stub = _StubRenderer(_RENDERED)
     monkeypatch.setattr(client, "_browser_renderer", lambda: stub)
 
@@ -36,7 +38,9 @@ def test_render_js_uses_browser_html(monkeypatch):
 
 
 def test_render_js_falls_back_to_requests(monkeypatch):
-    client = HTTPClient(HTTPConfig(render_js=True, min_text_chars=10, verify_ssl=False))
+    client = HTTPClient(
+        HTTPConfig(render_js=True, min_text_chars=10, verify_ssl=False, allow_private_networks=True)
+    )
     stub = _StubRenderer(None)  # browser unavailable / failed
     monkeypatch.setattr(client, "_browser_renderer", lambda: stub)
 

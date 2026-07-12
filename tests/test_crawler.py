@@ -121,7 +121,8 @@ def test_webcrawler_context_manager_closes(stub_fetch, monkeypatch):
     monkeypatch.setattr(http_mod.HTTPClient, "release", counting_release)
     stub_fetch()
     with WebCrawler(
-        CrawlerConfig(max_depth=0, respect_robots=False), HTTPConfig(verify_ssl=False)
+        CrawlerConfig(max_depth=0, respect_robots=False),
+        HTTPConfig(verify_ssl=False, allow_private_networks=True),
     ) as c:
         c.crawl(U, mode="pure")
         assert c._http._session is not None  # session alive while in use
@@ -160,7 +161,7 @@ def test_parallel_dedup_and_fk(stub_fetch, tmp_db):
         CrawlerConfig(
             max_depth=1, max_pages=50, max_links_per_level=20, max_workers=6, respect_robots=False
         ),
-        HTTPConfig(verify_ssl=False, link_delay=0),
+        HTTPConfig(verify_ssl=False, link_delay=0, allow_private_networks=True),
         db=tmp_db,
     )
     res = c.crawl(seed, mode="pure", session_id="par")
@@ -183,7 +184,7 @@ def test_recurse_from_cache(stub_fetch, tmp_db):
     # cold run: depth 1, follows the link -> seed + child fetched and stored
     cold = WebCrawler(
         CrawlerConfig(max_depth=1, max_pages=20, respect_robots=False, recurse_from_cache=True),
-        HTTPConfig(verify_ssl=False, link_delay=0),
+        HTTPConfig(verify_ssl=False, link_delay=0, allow_private_networks=True),
         db=tmp_db,
     )
     r_cold = cold.crawl(seed, mode="pure", session_id="cold")
@@ -196,7 +197,7 @@ def test_recurse_from_cache(stub_fetch, tmp_db):
     # reached (from stored links), and the child is itself cached -> no new fetch.
     warm = WebCrawler(
         CrawlerConfig(max_depth=1, max_pages=20, respect_robots=False, recurse_from_cache=True),
-        HTTPConfig(verify_ssl=False, link_delay=0),
+        HTTPConfig(verify_ssl=False, link_delay=0, allow_private_networks=True),
         db=tmp_db,
     )
     r_warm = warm.crawl(seed, mode="pure", session_id="warm")
@@ -214,14 +215,14 @@ def test_cache_hit_terminal_without_recurse(stub_fetch, tmp_db):
     # cold run populates cache (default recurse_from_cache=False)
     c1 = WebCrawler(
         CrawlerConfig(max_depth=1, respect_robots=False),
-        HTTPConfig(verify_ssl=False, link_delay=0),
+        HTTPConfig(verify_ssl=False, link_delay=0, allow_private_networks=True),
         db=tmp_db,
     )
     c1.crawl(seed, mode="pure", session_id="a")
     c1.close()
     c2 = WebCrawler(
         CrawlerConfig(max_depth=1, respect_robots=False),
-        HTTPConfig(verify_ssl=False, link_delay=0),
+        HTTPConfig(verify_ssl=False, link_delay=0, allow_private_networks=True),
         db=tmp_db,
     )
     r = c2.crawl(seed, mode="pure", session_id="b")

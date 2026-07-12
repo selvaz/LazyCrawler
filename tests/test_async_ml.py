@@ -73,7 +73,7 @@ def _crawler(**cfg):
     base.update(cfg)
     return AsyncWebCrawler(
         CrawlerConfig(**base),
-        HTTPConfig(verify_ssl=False, block_private_addresses=False),
+        HTTPConfig(verify_ssl=False, allow_private_networks=True),
         ml_cfg=MLConfig(),
     )
 
@@ -154,7 +154,7 @@ def test_async_persists_session_and_pages(monkeypatch, tmp_path):
     try:
         crawler = AsyncWebCrawler(
             CrawlerConfig(max_depth=1, max_pages=5, respect_robots=False),
-            HTTPConfig(verify_ssl=False, block_private_addresses=False),
+            HTTPConfig(verify_ssl=False, allow_private_networks=True),
             db=db,
             ml_cfg=MLConfig(),
         )
@@ -185,7 +185,7 @@ def test_async_level1_cache_skips_refetch(monkeypatch, tmp_path):
     def mk():
         return AsyncWebCrawler(
             CrawlerConfig(max_depth=0, respect_robots=False),
-            HTTPConfig(verify_ssl=False, block_private_addresses=False),
+            HTTPConfig(verify_ssl=False, allow_private_networks=True),
             db=db,
             ml_cfg=MLConfig(),
         )
@@ -212,7 +212,7 @@ def test_async_blacklist_excel_is_loaded(monkeypatch, tmp_path):
     )
     crawler = AsyncWebCrawler(
         CrawlerConfig(respect_robots=False, blacklist_excel="dummy.xlsx"),
-        HTTPConfig(verify_ssl=False, block_private_addresses=False),
+        HTTPConfig(verify_ssl=False, allow_private_networks=True),
     )
     try:
         assert "blocked.example" in crawler.blacklist

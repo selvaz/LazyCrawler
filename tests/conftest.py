@@ -101,7 +101,11 @@ def make_crawler():
     def _make(db=None, http_cfg=None, **cfg):
         base = dict(max_depth=0, max_pages=20, respect_robots=False)
         base.update(cfg)
-        hc = http_cfg or HTTPConfig(verify_ssl=False, link_delay=0)
+        # *.example is a non-resolving reserved TLD (RFC 2606): with the SSRF
+        # guard on by default (0.15.0+) it would fail-closed as unresolvable.
+        # These fixtures test crawler mechanics against mocked fetch, not the
+        # guard itself, so private-network access is explicitly allowed.
+        hc = http_cfg or HTTPConfig(verify_ssl=False, link_delay=0, allow_private_networks=True)
         c = WebCrawler(CrawlerConfig(**base), hc, db=db)
         crawlers.append(c)
         return c
