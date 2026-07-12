@@ -7,7 +7,7 @@ LazyCrawler automatically detects and extracts text from PDF files encountered d
 ## Setup
 
 ```bash
-pip install "lazycrawler[pdf] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"
+pip install "lazycrawler[pdf] @ git+https://github.com/selvaz/LazyCrawler.git"
 ```
 
 Installs: `pymupdf` (primary), `pypdf` (fallback), `pdfplumber` (tables).

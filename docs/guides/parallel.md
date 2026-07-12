@@ -166,4 +166,4 @@ asyncio.run(main())
 - `content="ml"` fills `summary` / `topics` / `entities` / `sentiment` locally.
 - Pass a `db=CrawlerDB(...)` to persist sessions/pages/edges/artifacts.
 
-Install the extras you need: `pip install "lazycrawler[async,ml,nlp] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"`.
+Install the extras you need: `pip install "lazycrawler[async,ml,nlp] @ git+https://github.com/selvaz/LazyCrawler.git"`.
