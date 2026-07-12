@@ -583,11 +583,22 @@ class CrawlerDB:
         url_hash: Optional[str] = None,
         session_id: Optional[str] = None,
         artifact_type: Optional[str] = None,
+        content_hash: Optional[str] = None,
         include_blob: bool = False,
         limit: int = 0,
     ) -> List[Dict[str, Any]]:
         """Artifacts for a page (url_hash) or a whole session, optionally by type.
 
+        ``content_hash`` filters by the stable content join key
+        ([[artifact:<hash>]] anchors, downstream ``crawler:<hash>`` refs).
+        It is unique only per page (``UNIQUE(url_hash, content_hash)``) and is
+        derived from element content/URL, not the page — so the *same* image
+        or table appearing on several crawled pages yields one row per page,
+        all with the same hash (and the same underlying content) but possibly
+        differing in caption/context, and in whether ``blob`` was downloaded.
+        Combine with ``url_hash``/``session_id`` when you need exactly one row;
+        a consumer resolving a bare ``crawler:<hash>`` should pick a row that
+        actually carries bytes rather than assume a single match.
         ``blob`` (raw image bytes) is dropped unless ``include_blob=True``.
         """
         params: List[Any] = []
@@ -605,6 +616,9 @@ class CrawlerDB:
         if artifact_type:
             sql += " AND a.artifact_type=?"
             params.append(artifact_type)
+        if content_hash:
+            sql += " AND a.content_hash=?"
+            params.append(content_hash)
         sql += " ORDER BY a.url_hash, a.position"
         if limit:
             sql += " LIMIT ?"
