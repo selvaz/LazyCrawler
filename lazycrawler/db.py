@@ -488,7 +488,9 @@ class CrawlerDB:
             d = dict(row)
             nodes.append({"url": d["url"], "depth": d["depth"], "status": d["status"]})
             if d.get("source_url"):
-                edges.append({"source_url": d["source_url"], "target_url": d["url"], "depth": d["depth"]})
+                edges.append(
+                    {"source_url": d["source_url"], "target_url": d["url"], "depth": d["depth"]}
+                )
         return {"session_id": session_id, "nodes": nodes, "edges": edges}
 
     @staticmethod

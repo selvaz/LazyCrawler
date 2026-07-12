@@ -69,7 +69,15 @@ def test_schema_registry_rejects_unknown_and_non_smart():
     tools = _tools(schemas={"financial_article": FinancialArticle})
     try:
         assert json.loads(tools.list_schemas())["schemas"] == [{"name": "financial_article"}]
-        assert json.loads(tools.web_crawl("https://e.org/a", schema="missing"))["error"]["code"] == "UNKNOWN_SCHEMA"
-        assert json.loads(tools.web_crawl("https://e.org/a", schema="financial_article"))["error"]["code"] == "SCHEMA_REQUIRES_SMART"
+        assert (
+            json.loads(tools.web_crawl("https://e.org/a", schema="missing"))["error"]["code"]
+            == "UNKNOWN_SCHEMA"
+        )
+        assert (
+            json.loads(tools.web_crawl("https://e.org/a", schema="financial_article"))["error"][
+                "code"
+            ]
+            == "SCHEMA_REQUIRES_SMART"
+        )
     finally:
         tools.close()
