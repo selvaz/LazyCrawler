@@ -403,6 +403,21 @@ def test_async_render_js_is_disabled():
     assert crawler.http_cfg.block_private_addresses is True
 
 
+@requires_aiohttp
+def test_async_forces_guard_even_when_caller_opted_out():
+    """The async crawler forces the SSRF guard on regardless of what the caller
+    passed. Regression: forcing it via the deprecated block_private_addresses
+    flag through dataclasses.replace was silently undone by __post_init__ (which
+    treats the copied allow_private_networks as authoritative), leaving
+    AsyncWebCrawler able to reach private/metadata hosts when the caller had
+    explicitly set allow_private_networks=True."""
+    from lazycrawler.async_crawler import AsyncWebCrawler
+
+    crawler = AsyncWebCrawler(http_cfg=HTTPConfig(allow_private_networks=True))
+    assert crawler.http_cfg.block_private_addresses is True
+    assert crawler.http_cfg.allow_private_networks is False
+
+
 # =============================================================================
 # Deep-audit round 3 — async parity: robots SSRF, strict isolation
 # =============================================================================
