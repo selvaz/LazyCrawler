@@ -22,6 +22,7 @@ Typical use:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import List, Literal, Optional
 
@@ -246,6 +247,7 @@ class HTTPConfig:
     browser_timeout_ms : int
         Per-page navigation timeout for the browser (milliseconds).
     block_private_addresses : bool
+        **Deprecated** since 0.14.1 — use ``allow_private_networks`` instead.
         SSRF guard. If True, refuse to fetch URLs that resolve to loopback,
         link-local, private (RFC-1918), reserved, multicast or unspecified
         addresses, plus ``localhost`` / ``*.local`` / cloud metadata endpoints
@@ -254,6 +256,16 @@ class HTTPConfig:
         ON by default because an agent may pass arbitrary URLs. Redirects are
         re-validated per hop (a public host redirecting to a private one IS
         blocked), bounded by ``max_redirects``.
+    allow_private_networks : bool | None
+        SSRF guard, new name (inverse polarity of ``block_private_addresses``).
+        ``True`` = the guard is OFF, private/loopback/link-local/cloud-metadata
+        targets are reachable. ``False`` = the guard is ON. Leave unset
+        (``None``, the default) to keep today's behavior (guard OFF) while
+        migrating — a ``DeprecationWarning`` is emitted either way, because
+        **LazyCrawler 0.15.0 flips the default to blocked** (``False``). Pass
+        this explicitly (either value) to silence the warning and pin your
+        intended behavior across the 0.15.0 upgrade. Takes precedence over
+        ``block_private_addresses`` when both are set.
     """
 
     user_agent: str = "LazyCrawler/0.14 (+https://github.com/selvaz/lazycrawler)"
@@ -276,6 +288,35 @@ class HTTPConfig:
     browser_wait_until: str = "domcontentloaded"
     browser_timeout_ms: int = 30000
     block_private_addresses: bool = False
+    allow_private_networks: Optional[bool] = None
+
+    def __post_init__(self) -> None:
+        if self.allow_private_networks is not None:
+            # New API is authoritative; keep the deprecated field in sync for
+            # any code (internal or downstream) still reading it directly.
+            self.block_private_addresses = not self.allow_private_networks
+        elif self.block_private_addresses:
+            warnings.warn(
+                "HTTPConfig(block_private_addresses=True) is deprecated since "
+                "LazyCrawler 0.14.1 and will be removed after the 0.15.0 "
+                "default flip. Use HTTPConfig(allow_private_networks=False) "
+                "instead (same effect: SSRF guard ON).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.allow_private_networks = False
+        else:
+            warnings.warn(
+                "HTTPConfig() currently allows requests to private/loopback/"
+                "link-local networks and cloud metadata endpoints by default. "
+                "LazyCrawler 0.15.0 will block them by default. Pass "
+                "allow_private_networks=True now to keep this behavior "
+                "explicitly, or allow_private_networks=False to opt into the "
+                "new default early.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.allow_private_networks = True
 
 
 # =============================================================================

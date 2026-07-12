@@ -1,0 +1,106 @@
+name: release
+
+# Publish a GitHub Release on a version tag (``v0.14.1`` etc.).
+#
+# Distribution model: only LazyBridge lives on PyPI. lazycrawler is
+# distributed exclusively via GitHub — immutable tags plus wheel/sdist
+# attached to the GitHub Release with SHA-256 checksums.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package + offline test extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[pdf,search,excel,dates,markdown,image,nlp,async,domains,dev]"
+      - name: Lint (ruff)
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Tests (pytest, offline)
+        run: pytest -m "not integration" -q
+
+  build:
+    name: build + verify artifacts
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify tag matches package version
+        run: |
+          TAG="${GITHUB_REF##*/}"
+          TAG_VERSION="${TAG#v}"
+          PKG_VERSION=$(python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          if [ "${TAG_VERSION}" != "${PKG_VERSION}" ]; then
+            echo "tag ${TAG_VERSION} does not match pyproject version ${PKG_VERSION}"
+            exit 1
+          fi
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          twine check dist/*
+      - name: Install wheel in clean venv + import smoke
+        run: |
+          python -m venv /tmp/wheel-smoke
+          /tmp/wheel-smoke/bin/pip install --upgrade pip
+          /tmp/wheel-smoke/bin/pip install dist/*.whl
+          /tmp/wheel-smoke/bin/python -c "import lazycrawler; print('lazycrawler OK')"
+      - name: Generate SHA-256 checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Upload distribution artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  release:
+    name: publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download distribution artefacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Create GitHub Release with artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body: |
+            Install (GitHub-only distribution — lazycrawler is not on PyPI):
+
+            ```
+            pip install "lazycrawler @ git+https://github.com/selvaz/LazyCrawler.git@${{ github.ref_name }}"
+            ```
+
+            Or download the wheel below and verify it against `SHA256SUMS.txt`.
