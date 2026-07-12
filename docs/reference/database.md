@@ -267,9 +267,10 @@ See the [Artifacts guide](../guides/artifacts.md).
 `[[artifact:<hash>]]` anchors and downstream `crawler:<hash>` artifact refs).
 It is unique only per page (`UNIQUE(url_hash, content_hash)`), so the same
 image/table across several pages matches one row per page — some possibly
-without a downloaded `blob`. Combine it with `url_hash`/`session_id` for a
-single row, or, when resolving a bare `crawler:<hash>`, pick a match that
-actually carries bytes.
+without a downloaded `blob`. Pair it with `url_hash` to guarantee a single
+row (`session_id` only narrows to that session — a session that crawled the
+same content on two pages still returns both). When resolving a bare
+`crawler:<hash>`, pick a match that actually carries bytes.
 
 ```python
 from lazycrawler.http import url_hash
