@@ -33,9 +33,11 @@ Requirements
 
 SSRF guard
 ----------
-``block_private_addresses=True`` is **the default** in the async crawler because
-its primary use case is high-throughput crawling of external URLs. Pass
-``block_private_addresses=False`` explicitly for internal/intranet crawling.
+The SSRF guard is **always forced on** by the async crawler (its primary use
+case is high-throughput crawling of external URLs) — it is enabled even if the
+caller passes ``allow_private_networks=True``. For internal/intranet crawling,
+use the sync ``WebCrawler`` with ``HTTPConfig(allow_private_networks=True)``
+instead.
 
 Usage
 -----
@@ -45,8 +47,7 @@ Usage
 
     async def main():
         cfg = CrawlerConfig(max_depth=1, max_pages=50)
-        http_cfg = HTTPConfig(block_private_addresses=True)
-        async with AsyncWebCrawler(cfg, http_cfg) as crawler:
+        async with AsyncWebCrawler(cfg) as crawler:  # SSRF guard always on
             results = await crawler.crawl("https://example.com/", topic="python")
             for r in results:
                 print(r.status, r.url, len(r.text or ""))
@@ -537,8 +538,14 @@ class AsyncWebCrawler:
             log.warning("AsyncWebCrawler does not render JS - ignoring render_js=True")
             raw_http = replace(raw_http, render_js=False)
         if not raw_http.block_private_addresses:
-            self.http_cfg = replace(raw_http, block_private_addresses=True)
-            log.debug("AsyncWebCrawler: block_private_addresses enabled by default")
+            # Force the guard on via the authoritative NEW flag. Using the
+            # deprecated block_private_addresses here would be silently undone
+            # by HTTPConfig.__post_init__: replace() copies the already-set
+            # allow_private_networks, which __post_init__ treats as
+            # authoritative and would flip block back to False — leaving the
+            # async crawler able to reach private/metadata hosts.
+            self.http_cfg = replace(raw_http, allow_private_networks=False)
+            log.debug("AsyncWebCrawler: SSRF guard enabled by default")
         else:
             self.http_cfg = raw_http
         self.ml_cfg = ml_cfg
