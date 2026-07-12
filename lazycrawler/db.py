@@ -589,8 +589,16 @@ class CrawlerDB:
     ) -> List[Dict[str, Any]]:
         """Artifacts for a page (url_hash) or a whole session, optionally by type.
 
-        ``content_hash`` selects one specific artifact — it is the stable join
-        key ([[artifact:<hash>]] anchors, downstream ``crawler:<hash>`` refs).
+        ``content_hash`` filters by the stable content join key
+        ([[artifact:<hash>]] anchors, downstream ``crawler:<hash>`` refs).
+        It is unique only per page (``UNIQUE(url_hash, content_hash)``) and is
+        derived from element content/URL, not the page — so the *same* image
+        or table appearing on several crawled pages yields one row per page,
+        all with the same hash (and the same underlying content) but possibly
+        differing in caption/context, and in whether ``blob`` was downloaded.
+        Combine with ``url_hash``/``session_id`` when you need exactly one row;
+        a consumer resolving a bare ``crawler:<hash>`` should pick a row that
+        actually carries bytes rather than assume a single match.
         ``blob`` (raw image bytes) is dropped unless ``include_blob=True``.
         """
         params: List[Any] = []
