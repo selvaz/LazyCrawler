@@ -39,7 +39,7 @@ LazyCrawler fetches pages, extracts text and follows links. In **smart** mode an
 === "ML mode (no-LLM)"
 
     ```python
-    # pip install "lazycrawler[ml,nlp] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"   — local ML, zero tokens
+    # pip install "lazycrawler[ml,nlp] @ git+https://github.com/selvaz/LazyCrawler.git"   — local ML, zero tokens
     from lazycrawler import WebCrawler, CrawlerConfig
 
     crawler = WebCrawler(CrawlerConfig(max_depth=1, max_pages=20))

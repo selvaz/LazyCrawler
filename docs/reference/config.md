@@ -45,7 +45,7 @@ Controls traversal depth, page limits, domain filtering, and blacklists.
 | `large_doc_threshold` | `int` | `20_000` | Chars above which smart mode uses map-reduce |
 | `large_doc_chunk_chars` | `int` | `12_000` | Chunk size for map-reduce summarization |
 | `large_doc_max_chunks` | `int` | `12` | Max chunks processed in map-reduce |
-| `emit_markdown` | `bool` | `False` | Render each crawled HTML page to Markdown (`PageResult.markdown`). Requires `pip install "lazycrawler[markdown] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"` |
+| `emit_markdown` | `bool` | `False` | Render each crawled HTML page to Markdown (`PageResult.markdown`). Requires `pip install "lazycrawler[markdown] @ git+https://github.com/selvaz/LazyCrawler.git"` |
 | `extract_artifacts` | `bool` | `False` | Extract tables, images, charts, SVG as structured `Artifact` records (HTML + PDF). See the [Artifacts guide](../guides/artifacts.md) |
 | `artifact_types` | `tuple` | `("table","image","chart","svg")` | Which artifact types to collect |
 | `download_artifact_bytes` | `bool` | `False` | Download image/chart bytes through the crawler (honors SSL + SSRF guard) → `sha256` + blob in DB |
@@ -147,7 +147,7 @@ scoring + local structured extraction). See the [ML Mode guide](../guides/ml-mod
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `model` | `str` | `"minishlab/potion-retrieval-32M"` | Model2Vec static-embedding model (semantic scoring + TextRank summary). Shared across workers; needs `pip install "lazycrawler[ml] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"` |
+| `model` | `str` | `"minishlab/potion-retrieval-32M"` | Model2Vec static-embedding model (semantic scoring + TextRank summary). Shared across workers; needs `pip install "lazycrawler[ml] @ git+https://github.com/selvaz/LazyCrawler.git"` |
 | `w_sem` | `float` | `0.55` | Weight of the **semantic** signal in the link score |
 | `w_lex` | `float` | `0.20` | Weight of the **lexical** (token overlap) signal |
 | `w_struct` | `float` | `0.25` | Weight of the **structural** (URL/anchor) signal |
@@ -165,7 +165,7 @@ crawler = WebCrawler(ml_cfg=MLConfig(model="minishlab/potion-base-8M", w_sem=0.6
 crawler.crawl("https://example.com/", mode="ml", topic="solid-state batteries")
 ```
 
-Needs `pip install "lazycrawler[ml] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"` (scoring + summary) and `lazycrawler[nlp]`
+Needs `pip install "lazycrawler[ml] @ git+https://github.com/selvaz/LazyCrawler.git"` (scoring + summary) and `lazycrawler[nlp]`
 (YAKE/VADER/spaCy for content). Every layer degrades gracefully if its dep is absent.
 
 ---

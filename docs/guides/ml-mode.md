@@ -108,8 +108,8 @@ pure-python fallback, never an error.
 ## Install
 
 ```bash
-pip install "lazycrawler[ml] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"      # link scoring + TextRank summary (model2vec + numpy)
-pip install "lazycrawler[nlp] @ git+https://github.com/selvaz/LazyCrawler.git@v0.15.0"     # content: YAKE keyphrases, VADER sentiment, spaCy NER
+pip install "lazycrawler[ml] @ git+https://github.com/selvaz/LazyCrawler.git"      # link scoring + TextRank summary (model2vec + numpy)
+pip install "lazycrawler[nlp] @ git+https://github.com/selvaz/LazyCrawler.git"     # content: YAKE keyphrases, VADER sentiment, spaCy NER
 python -m spacy download en_core_web_sm   # optional: spaCy entity model
 ```
 
