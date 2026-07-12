@@ -197,12 +197,15 @@ class CrawlerTools:
 
     @staticmethod
     def _with_ssrf_guard(http_cfg: Optional[HTTPConfig], enforce: bool = True) -> HTTPConfig:
+        # Always set allow_private_networks explicitly (never rely on
+        # HTTPConfig's unset-default) so the agent path never trips its own
+        # migration DeprecationWarning.
         if not enforce:
-            return http_cfg if http_cfg is not None else HTTPConfig()
+            return http_cfg if http_cfg is not None else HTTPConfig(allow_private_networks=True)
         if http_cfg is None:
-            return HTTPConfig(block_private_addresses=True)
+            return HTTPConfig(allow_private_networks=False)
         if not http_cfg.block_private_addresses:
-            return dataclasses.replace(http_cfg, block_private_addresses=True)
+            return dataclasses.replace(http_cfg, allow_private_networks=False)
         return http_cfg
 
     def _say(self, message: str) -> None:
