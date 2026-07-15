@@ -91,12 +91,52 @@ from .ratelimit import HostRateLimiter
 
 Mode = Literal["pure", "ml"]
 
+# aiohttp's own connector module builds a module-level default SSL context at
+# IMPORT time (``_SSL_CONTEXT_VERIFIED = _make_ssl_context(True)`` in
+# aiohttp/connector.py), which calls ``ssl.create_default_context()`` with no
+# explicit CA source. On Windows that walks the OS certificate store; a single
+# corrupted entry there (a known, fairly common failure mode — stale/duplicate
+# certs, corporate MITM proxies, etc.) makes the *whole store* unreadable and
+# raises ``ssl.SSLError`` before any lazycrawler code runs, which the
+# ``except ImportError`` below does not catch. Point the stdlib's
+# default-cert loading at certifi's bundle instead — ``create_default_context``
+# skips ``load_default_certs()`` entirely when a ``cafile`` is supplied, so
+# this bypasses the broken store lookup rather than fixing it. Callers who
+# already pass their own ``cafile``/``capath``/``cadata`` are unaffected
+# (``setdefault`` only fills the gap); this does not change which CAs aiohttp
+# trusts when the store is healthy — certifi is the same public bundle
+# ``requests`` already relies on elsewhere in this ecosystem.
+try:
+    import ssl as _ssl
+
+    import certifi
+
+    _orig_create_default_context = _ssl.create_default_context
+
+    def _create_default_context_with_certifi_fallback(*args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("cafile", certifi.where())
+        return _orig_create_default_context(*args, **kwargs)
+
+    _ssl.create_default_context = _create_default_context_with_certifi_fallback
+except ImportError:  # pragma: no cover - certifi ships with requests/aiohttp's own deps
+    pass
+
 try:
     import aiohttp
 
     _AIOHTTP_OK = True
-except ImportError:
+except (ImportError, OSError) as _aiohttp_import_error:
+    # ssl.SSLError subclasses OSError; caught broadly here (rather than
+    # importing ssl just to name it) so any environment-specific TLS/store
+    # failure during aiohttp's own import degrades to sync-only crawling
+    # instead of taking down the whole lazycrawler package import.
     _AIOHTTP_OK = False
+    log.warning(
+        "aiohttp unavailable (%s: %s) — async crawling disabled, "
+        "falling back to the synchronous WebCrawler.",
+        type(_aiohttp_import_error).__name__,
+        _aiohttp_import_error,
+    )
 
 try:
     import trafilatura  # type: ignore
