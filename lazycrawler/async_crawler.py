@@ -101,42 +101,54 @@ Mode = Literal["pure", "ml"]
 # ``except ImportError`` below does not catch. Point the stdlib's
 # default-cert loading at certifi's bundle instead — ``create_default_context``
 # skips ``load_default_certs()`` entirely when a ``cafile`` is supplied, so
-# this bypasses the broken store lookup rather than fixing it. Callers who
-# already pass their own ``cafile``/``capath``/``cadata`` are unaffected
-# (``setdefault`` only fills the gap); this does not change which CAs aiohttp
-# trusts when the store is healthy — certifi is the same public bundle
-# ``requests`` already relies on elsewhere in this ecosystem.
-try:
-    import ssl as _ssl
-
-    import certifi
-
-    _orig_create_default_context = _ssl.create_default_context
-
-    def _create_default_context_with_certifi_fallback(*args: Any, **kwargs: Any) -> Any:
-        kwargs.setdefault("cafile", certifi.where())
-        return _orig_create_default_context(*args, **kwargs)
-
-    _ssl.create_default_context = _create_default_context_with_certifi_fallback
-except ImportError:  # pragma: no cover - certifi ships with requests/aiohttp's own deps
-    pass
-
+# this bypasses the broken store lookup rather than fixing it. The patch is
+# applied only for the duration of ``import aiohttp`` below and restored
+# immediately after (in a ``finally``), so it never widens TLS trust defaults
+# for the rest of the host process — other code calling
+# ``ssl.create_default_context()`` (e.g. with a private ``capath``) is
+# unaffected before or after this import.
 try:
     import aiohttp
 
     _AIOHTTP_OK = True
 except (ImportError, OSError) as _aiohttp_import_error:
-    # ssl.SSLError subclasses OSError; caught broadly here (rather than
-    # importing ssl just to name it) so any environment-specific TLS/store
-    # failure during aiohttp's own import degrades to sync-only crawling
-    # instead of taking down the whole lazycrawler package import.
     _AIOHTTP_OK = False
     log.warning(
-        "aiohttp unavailable (%s: %s) — async crawling disabled, "
-        "falling back to the synchronous WebCrawler.",
+        "aiohttp unavailable (%s: %s), retrying with a certifi CA fallback "
+        "in case the OS certificate store is corrupt...",
         type(_aiohttp_import_error).__name__,
         _aiohttp_import_error,
     )
+    try:
+        import ssl as _ssl
+
+        import certifi
+
+        _orig_create_default_context = _ssl.create_default_context
+
+        def _create_default_context_with_certifi_fallback(*args: Any, **kwargs: Any) -> Any:
+            kwargs.setdefault("cafile", certifi.where())
+            return _orig_create_default_context(*args, **kwargs)
+
+        _ssl.create_default_context = _create_default_context_with_certifi_fallback
+        try:
+            import aiohttp
+
+            _AIOHTTP_OK = True
+        finally:
+            _ssl.create_default_context = _orig_create_default_context
+    except (ImportError, OSError) as _retry_error:
+        # ssl.SSLError subclasses OSError; caught broadly here (rather than
+        # importing ssl just to name it) so any environment-specific TLS/store
+        # failure during aiohttp's own import degrades to sync-only crawling
+        # instead of taking down the whole lazycrawler package import.
+        _AIOHTTP_OK = False
+        log.warning(
+            "aiohttp still unavailable after certifi fallback (%s: %s) — "
+            "async crawling disabled, falling back to the synchronous WebCrawler.",
+            type(_retry_error).__name__,
+            _retry_error,
+        )
 
 try:
     import trafilatura  # type: ignore
