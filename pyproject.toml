@@ -59,7 +59,9 @@ ml = ["model2vec>=0.3", "numpy>=1.24"]
 #  entities fall back to a regex extractor.)
 nlp = ["yake>=0.4", "vaderSentiment>=3.3", "spacy>=3.7"]
 # Async high-throughput crawling (pure mode) without GIL-bound threading.
-async = ["aiohttp>=3.9"]
+# certifi backs the CA-bundle fallback in async_crawler.py (a corrupted OS
+# certificate store must not crash aiohttp's own module-level SSL context).
+async = ["aiohttp>=3.9", "certifi"]
 # Accurate registrable-domain (eTLD+1) scope via the public suffix list. Without
 # it, same_domain_only falls back to a small built-in multi-part-suffix heuristic.
 domains = ["tldextract>=5"]
