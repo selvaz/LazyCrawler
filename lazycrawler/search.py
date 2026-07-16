@@ -126,7 +126,8 @@ def search_ddg_urls(
             if _i < len(_verify_chain) - 1:
                 log.warning(
                     "DuckDuckGo search failed (%s: %s); retrying with certifi CA bundle",
-                    type(e).__name__, e,
+                    type(e).__name__,
+                    e,
                 )
                 continue
             log.warning("DuckDuckGo search failed (%s: %s)", type(e).__name__, e, exc_info=True)
