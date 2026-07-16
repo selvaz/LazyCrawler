@@ -40,8 +40,10 @@ dependencies = [
 smart = ["lazybridge>=0.9; python_version >= '3.11'"]
 # PDF extraction (remote): PyMuPDF primary, pypdf fallback, pdfplumber tables.
 pdf = ["pymupdf>=1.23", "pypdf>=4.0", "pdfplumber>=0.10"]
-# WebSearch via DuckDuckGo.
-search = ["ddgs>=2.0"]
+# WebSearch via DuckDuckGo. certifi backs the CA-bundle fallback in
+# search_ddg_urls (ddgs builds its own SSL context; a corrupted OS certificate
+# store must not silently zero out search results).
+search = ["ddgs>=2.0", "certifi"]
 # JavaScript rendering (SPAs) via a headless browser.
 js = ["playwright>=1.40"]
 # Domain blacklist from an Excel file.

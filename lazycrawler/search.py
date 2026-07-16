@@ -91,29 +91,61 @@ def search_ddg_urls(
 
     results: List[str] = []
     seen: set = set()
-    try:
-        with DDGS() as ddgs_client:
+
+    def _fetch(verify: Optional[str]) -> list:
+        # ``verify`` is a CA-bundle path or None (OS default trust store).
+        try:
+            client = DDGS(verify=verify) if verify is not None else DDGS()
+        except TypeError:
+            # older ddgs/duckduckgo_search without a ``verify`` kwarg
+            client = DDGS()
+        with client as ddgs_client:
             try:
-                hits = ddgs_client.text(query, **text_kwargs)
+                return list(ddgs_client.text(query, **text_kwargs))
             except TypeError:
                 # older ddgs/duckduckgo_search without some kwargs
                 log.debug("ddgs.text rejected extra kwargs - retrying with basics", exc_info=True)
-                hits = ddgs_client.text(query, max_results=fetch_n)
-            for r in hits:
-                href = (r.get("href") or "").strip()
-                if not href or not href.startswith(("http://", "https://")):
-                    continue
-                norm = normalize_url(href)
-                if is_excluded_url(norm) or is_blacklisted_domain(norm, blacklist):
-                    continue
-                if norm in seen:
-                    continue
-                seen.add(norm)
-                results.append(norm)
-                if len(results) >= max_results:
-                    break
-    except Exception as e:
-        log.warning("DuckDuckGo search failed (%s: %s)", type(e).__name__, e, exc_info=True)
+                return list(ddgs_client.text(query, max_results=fetch_n))
+
+    # Try the OS trust store first; on any failure retry with the certifi CA
+    # bundle. ddgs builds its own SSL context (ddgs.http_client2), so a corrupt
+    # Windows cert store raises ssl.SSLError there before the request runs — the
+    # aiohttp-scoped certifi fallback (LazyCrawler #39) does not cover it.
+    hits: list = []
+    try:
+        import certifi
+
+        _verify_chain = (None, certifi.where())
+    except ImportError:
+        _verify_chain = (None,)
+    for _i, _verify in enumerate(_verify_chain):
+        try:
+            hits = _fetch(_verify)
+            break
+        except Exception as e:
+            if _i < len(_verify_chain) - 1:
+                log.warning(
+                    "DuckDuckGo search failed (%s: %s); retrying with certifi CA bundle",
+                    type(e).__name__,
+                    e,
+                )
+                continue
+            log.warning("DuckDuckGo search failed (%s: %s)", type(e).__name__, e, exc_info=True)
+            hits = []
+
+    for r in hits:
+        href = (r.get("href") or "").strip()
+        if not href or not href.startswith(("http://", "https://")):
+            continue
+        norm = normalize_url(href)
+        if is_excluded_url(norm) or is_blacklisted_domain(norm, blacklist):
+            continue
+        if norm in seen:
+            continue
+        seen.add(norm)
+        results.append(norm)
+        if len(results) >= max_results:
+            break
     return results
 
 
