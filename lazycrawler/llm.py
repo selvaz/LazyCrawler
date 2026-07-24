@@ -162,7 +162,8 @@ class CrawlerLLM:
         if self._vision is None:
             model = self.cfg.vision_model or self.cfg.model
             self._vision = self._Agent(
-                engine=self._engine(model, ARTIFACT_VISION_SYSTEM), output=ArtifactVision,
+                engine=self._engine(model, ARTIFACT_VISION_SYSTEM),
+                output=ArtifactVision,
                 session=self.cfg.session,
             )
         return self._vision
@@ -211,7 +212,8 @@ class CrawlerLLM:
         """
         sys = build_link_selection_system(topic, max_links)
         return self._Agent(
-            engine=self._engine(self.cfg.model, sys), output=LinkSelection,
+            engine=self._engine(self.cfg.model, sys),
+            output=LinkSelection,
             session=self.cfg.session,
         )
 

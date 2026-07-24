@@ -19,6 +19,7 @@ Usage:
     python send_telegram_news_report.py --session-id news_20260723_070000
     python send_telegram_news_report.py --dry-run
 """
+
 from __future__ import annotations
 
 import argparse
@@ -72,32 +73,41 @@ def _split_text(text: str, max_bytes: int) -> list[str]:
     return parts or [text]
 
 
-def send_document(client: TelegramClient, *, chat_id: str, filename: str,
-                   content: bytes, caption: str) -> None:
-    client.send_document(chat_id=chat_id, document=content, filename=filename,
-                          caption=caption[:1024])
+def send_document(
+    client: TelegramClient, *, chat_id: str, filename: str, content: bytes, caption: str
+) -> None:
+    client.send_document(
+        chat_id=chat_id, document=content, filename=filename, caption=caption[:1024]
+    )
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Send the news-monitor report via Telegram")
     p.add_argument("--session-id", help="Defaults to the latest session found in reports/news/")
-    p.add_argument("--dry-run", action="store_true", help="Resolve files and print, but do not send")
+    p.add_argument(
+        "--dry-run", action="store_true", help="Resolve files and print, but do not send"
+    )
     args = p.parse_args()
 
     session_id = args.session_id or _latest_session_id()
     if not session_id:
-        print(f"No news report found in {REPORT_DIR}; run make_news_report.py first.", file=sys.stderr)
+        print(
+            f"No news report found in {REPORT_DIR}; run make_news_report.py first.", file=sys.stderr
+        )
         return 1
 
     digest_path = REPORT_DIR / f"news_digest_{session_id}.md"
     cost_path = REPORT_DIR / f"news_cost_{session_id}.md"
     region_paths = _region_reports(session_id)
     if not region_paths:
-        print(f"No news_full_{session_id}_*.md files found; run make_news_report.py first.", file=sys.stderr)
+        print(
+            f"No news_full_{session_id}_*.md files found; run make_news_report.py first.",
+            file=sys.stderr,
+        )
         return 1
 
     region_counts = {
-        rp.stem[len(f"news_full_{session_id}_"):]: rp.read_text(encoding="utf-8").count("\n---\n")
+        rp.stem[len(f"news_full_{session_id}_") :]: rp.read_text(encoding="utf-8").count("\n---\n")
         for rp in region_paths
     }
     n_articles = sum(region_counts.values())
@@ -113,13 +123,17 @@ def main() -> int:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
-        print("Telegram not configured: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.", file=sys.stderr)
+        print(
+            "Telegram not configured: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.", file=sys.stderr
+        )
         return 2
 
     with TelegramClient.from_token(token) as client:
         if digest_path.exists():
             send_document(
-                client, chat_id=chat_id, filename=digest_path.name,
+                client,
+                chat_id=chat_id,
+                filename=digest_path.name,
                 content=digest_path.read_bytes(),
                 caption=f"News digest | {session_id} | {n_articles} articles crawled",
             )
@@ -135,7 +149,7 @@ def main() -> int:
             print(f"Sent Telegram message: {cost_path.name}")
 
         for region_path in region_paths:
-            region = region_path.stem[len(f"news_full_{session_id}_"):]
+            region = region_path.stem[len(f"news_full_{session_id}_") :]
             region_text = region_path.read_text(encoding="utf-8")
             parts = _split_text(region_text, MAX_PART_BYTES)
             for i, part in enumerate(parts, start=1):
@@ -145,8 +159,11 @@ def main() -> int:
                 if len(parts) > 1:
                     caption = f"{region} {i}/{len(parts)} | {session_id}"
                 send_document(
-                    client, chat_id=chat_id, filename=filename,
-                    content=part.encode("utf-8"), caption=caption,
+                    client,
+                    chat_id=chat_id,
+                    filename=filename,
+                    content=part.encode("utf-8"),
+                    caption=caption,
                 )
                 print(f"Sent Telegram document: {filename}")
 

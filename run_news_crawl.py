@@ -15,6 +15,7 @@ Usage:
     python run_news_crawl.py --ml-max-items 40 --smart-max-items 12
     python run_news_crawl.py --sources "bbc,forexlive"   # testing subset
 """
+
 from __future__ import annotations
 
 import argparse
@@ -75,14 +76,24 @@ def _feed_items(url: str, max_items: int) -> list[tuple[str, str]]:
 def main() -> int:
     p = argparse.ArgumentParser(description="Crawl the news-monitor source list")
     p.add_argument("--db", default=str(DEFAULT_DB), help="Dedicated SQLite DB path")
-    p.add_argument("--ml-max-items", type=int, default=40,
-                   help="Max items per ml-mode (no-LLM) source per run (exhaustive-ish; "
-                        "most feeds return fewer than this anyway)")
-    p.add_argument("--smart-max-items", type=int, default=12,
-                   help="Max items per smart-mode (DeepSeek) source per run -- LLM cost cap")
+    p.add_argument(
+        "--ml-max-items",
+        type=int,
+        default=40,
+        help="Max items per ml-mode (no-LLM) source per run (exhaustive-ish; "
+        "most feeds return fewer than this anyway)",
+    )
+    p.add_argument(
+        "--smart-max-items",
+        type=int,
+        default=12,
+        help="Max items per smart-mode (DeepSeek) source per run -- LLM cost cap",
+    )
     p.add_argument("--session-id", help="Override session id (default: timestamped)")
-    p.add_argument("--sources", help="Comma-separated case-insensitive name substrings "
-                                      "to limit the run to (testing)")
+    p.add_argument(
+        "--sources",
+        help="Comma-separated case-insensitive name substrings to limit the run to (testing)",
+    )
     args = p.parse_args()
 
     session_id = args.session_id or f"news_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
@@ -137,7 +148,8 @@ def main() -> int:
             t0 = time.time()
             try:
                 results = crawler.crawl(
-                    link, mode=source.mode,
+                    link,
+                    mode=source.mode,
                     topic=f"{source.category} | {source.region} | {source.name}",
                     session_id=session_id,
                 )
@@ -146,8 +158,10 @@ def main() -> int:
                 if status == "done":
                     totals[source.mode] += 1
                     url_meta[r.url] = {
-                        "name": source.name, "category": source.category,
-                        "region": source.region, "lang": source.lang,
+                        "name": source.name,
+                        "category": source.category,
+                        "region": source.region,
+                        "lang": source.lang,
                     }
                 else:
                     totals["errors"] += 1
@@ -162,8 +176,10 @@ def main() -> int:
     meta_path = REPORT_DIR / f"{session_id}_meta.json"
     meta_path.write_text(json.dumps(url_meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"\nSession {session_id}: ml={totals['ml']} smart={totals['smart']} "
-          f"errors={totals['errors']} feeds_failed={totals['feeds_failed']}")
+    print(
+        f"\nSession {session_id}: ml={totals['ml']} smart={totals['smart']} "
+        f"errors={totals['errors']} feeds_failed={totals['feeds_failed']}"
+    )
     print(f"SESSION_ID={session_id}")
     return 0
 

@@ -32,6 +32,7 @@ Usage:
     python make_news_report.py --session-id news_20260723_070000
     python make_news_report.py --no-digest   # full report only, skip DeepSeek
 """
+
 from __future__ import annotations
 
 import argparse
@@ -144,10 +145,12 @@ def _fmt_index_entry(i: int, p: dict) -> str:
 
 def build_region_report(region: str, pages: list[dict], session_id: str) -> str:
     parts = [
-        f"# News crawl - {region} - {session_id}", "",
+        f"# News crawl - {region} - {session_id}",
+        "",
         f"Generated: {datetime.now().isoformat(timespec='seconds')} | {len(pages)} articles",
         "",
-        "## Index", "",
+        "## Index",
+        "",
     ]
     for i, p in enumerate(pages, start=1):
         parts.append(_fmt_index_entry(i, p))
@@ -204,12 +207,13 @@ def generate_index_summaries(pages: list[dict], cost_session=None) -> None:
     class Summaries(BaseModel):
         summaries: list[str]
 
-    agent = Agent(model=DIGEST_MODEL, name="news_index_summarizer",
-                  session=cost_session, output=Summaries)
+    agent = Agent(
+        model=DIGEST_MODEL, name="news_index_summarizer", session=cost_session, output=Summaries
+    )
 
     chunk_size = 40
     for start in range(0, len(targets), chunk_size):
-        chunk = targets[start:start + chunk_size]
+        chunk = targets[start : start + chunk_size]
         numbered = "\n".join(
             f"{i + 1}. TITLE: {p.get('title') or '(untitled)'}\n"
             f"   TEXT: {(p.get('clean_text') or '')[:1200]}"
@@ -233,7 +237,10 @@ def generate_index_summaries(pages: list[dict], cost_session=None) -> None:
         if not (env.ok and isinstance(env.payload, Summaries)):
             continue
         summaries = env.payload.summaries
-        for p, summary in zip(chunk, summaries):
+        # strict=False: a length mismatch (the model returning too few/many
+        # items) degrades to "some articles keep their original summary"
+        # rather than crashing the whole report.
+        for p, summary in zip(chunk, summaries, strict=False):
             if summary:
                 p["summary"] = summary
 
@@ -272,7 +279,11 @@ def _usage_from_cost_db(cost_db_path: Path) -> dict:
     for (payload_json,) in rows:
         p = json.loads(payload_json)
         name = p.get("agent_name") or "unknown"
-        in_tok, out_tok, cost = p.get("input_tokens") or 0, p.get("output_tokens") or 0, p.get("cost_usd") or 0.0
+        in_tok, out_tok, cost = (
+            p.get("input_tokens") or 0,
+            p.get("output_tokens") or 0,
+            p.get("cost_usd") or 0.0,
+        )
         total["input_tokens"] += in_tok
         total["output_tokens"] += out_tok
         total["cost_usd"] += cost
@@ -290,7 +301,8 @@ def build_cost_report(session_id: str, n_articles: int, n_smart: int, cost_db_pa
     summary = _usage_from_cost_db(cost_db_path)
     total = summary["total"]
     lines = [
-        f"# News crawl - run cost - {session_id}", "",
+        f"# News crawl - run cost - {session_id}",
+        "",
         f"Generated: {datetime.now().isoformat(timespec='seconds')}",
         f"Articles: {n_articles} total ({n_smart} via DeepSeek smart-mode, "
         f"{n_articles - n_smart} via no-LLM ml-mode)",
@@ -298,7 +310,8 @@ def build_cost_report(session_id: str, n_articles: int, n_smart: int, cost_db_pa
         f"**Total cost: ${total['cost_usd']:.4f}** "
         f"({total['input_tokens']:,} input tokens, {total['output_tokens']:,} output tokens)",
         "",
-        "## By agent", "",
+        "## By agent",
+        "",
         "| Agent | Input tokens | Output tokens | Cost (USD) |",
         "|---|---|---|---|",
     ]
@@ -309,8 +322,10 @@ def build_cost_report(session_id: str, n_articles: int, n_smart: int, cost_db_pa
         )
     if n_articles:
         lines.append("")
-        lines.append(f"Average per article (crawl + index summary + digest share): "
-                     f"${total['cost_usd'] / n_articles:.5f}")
+        lines.append(
+            f"Average per article (crawl + index summary + digest share): "
+            f"${total['cost_usd'] / n_articles:.5f}"
+        )
     return "\n".join(lines)
 
 
@@ -318,8 +333,9 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Build the news-monitor digest + full report")
     p.add_argument("--db", default=str(DEFAULT_DB))
     p.add_argument("--session-id", help="Defaults to the latest news_crawl session")
-    p.add_argument("--no-digest", action="store_true",
-                   help="Skip the DeepSeek digest (full report only)")
+    p.add_argument(
+        "--no-digest", action="store_true", help="Skip the DeepSeek digest (full report only)"
+    )
     args = p.parse_args()
 
     db = CrawlerDB(DBConfig(db_path=args.db))
@@ -349,7 +365,9 @@ def main() -> int:
     by_region = _group_by_region(pages)
     for region, region_pages in sorted(by_region.items()):
         region_path = REPORT_DIR / f"news_full_{session_id}_{region}.md"
-        region_path.write_text(build_region_report(region, region_pages, session_id), encoding="utf-8")
+        region_path.write_text(
+            build_region_report(region, region_pages, session_id), encoding="utf-8"
+        )
         print(f"Full report [{region}]: {region_path} ({len(region_pages)} articles)")
 
     if not args.no_digest:
