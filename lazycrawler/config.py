@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 # =============================================================================
 # CrawlerConfig
@@ -358,6 +358,14 @@ class LLMConfig:
         Characters of page excerpt sent to the LLM for link selection.
     max_candidates_to_llm : int
         Maximum candidate links passed to the LLM for selection.
+    session : lazybridge.session.Session | None
+        Optional LazyBridge Session to attach to every internally-built Agent
+        (content extraction, link selection, topic expansion, large-doc
+        summary, vision, table). Pass one backed by a persistent
+        ``db=`` path to recover per-run cost/token totals afterward via
+        ``session.usage_summary()`` -- this is the only way to get smart-mode
+        cost out of the crawler, since ``PageResult`` itself carries no
+        cost/usage fields.
     """
 
     model: str = "gpt-4o-mini"
@@ -367,6 +375,7 @@ class LLMConfig:
     request_timeout: float = 120.0
     max_links_excerpt_chars: int = 3_000
     max_candidates_to_llm: int = 80
+    session: Optional[Any] = None
 
 
 # =============================================================================

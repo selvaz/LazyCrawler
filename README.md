@@ -688,6 +688,62 @@ HTTPConfig(verify_ssl=False)
 
 ---
 
+## News-monitor pipeline (financial + geopolitical)
+
+A ready-to-run application built on top of the crawler: 3x/day, it pulls a
+curated, VPS-accessibility-checked list of ~35 RSS/Atom/RDF feeds (financial
+wires, central banks, major geopolitical outlets, and local-language regional
+sources), crawls every item, and sends a report to Telegram — no LLM for the
+English-language sources (`content="ml"`: TextRank summary, YAKE topics,
+spaCy entities, VADER sentiment), DeepSeek (`content="smart"`) only for the
+local-language sources where the English-tuned ml pipeline would degrade.
+
+```
+news_sources.py                       curated source list (name, feed url, category, region, lang, mode)
+run_news_crawl.py                     fetches every feed, crawls each item, persists to a dedicated SQLite DB
+make_news_report.py                   builds a full report per geographic region + a DeepSeek executive digest
+send_telegram_news_report.py          sends the digest + per-region reports + a per-run cost report to Telegram
+run_news_crawl_with_telegram.ps1      wrapper chaining the three scripts above (what the scheduled tasks run)
+setup_scheduler.ps1                   registers the 3 daily Windows scheduled tasks
+setup_first_run.ps1                   interactive bootstrap: installs deps, prompts for API keys, smoke-tests
+```
+
+### First-run setup (new machine)
+
+```powershell
+git clone https://github.com/selvaz/LazyCrawler.git
+cd LazyCrawler
+powershell -ExecutionPolicy Bypass -File .\setup_first_run.ps1 -ConfigureScheduler
+```
+
+Prompts for `DEEPSEEK_API_KEY`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`
+(persisted as User environment variables — press Enter to skip any of them),
+installs LazyCrawler + the `smart`/`ml`/`nlp`/`news` extras, LazyBridge and
+LazyTools (from a local sibling checkout if present, else PyPI/GitHub), the
+spaCy English model, runs the test suite, and — if a DeepSeek key is set — a
+small 4-article smoke test so you can see real output before trusting the
+schedule. `-ConfigureScheduler` registers the 3 daily tasks; see
+`setup_scheduler.ps1` for the exact times and the Pacific/local-timezone math
+behind them (rerun without it, then run `setup_scheduler.ps1` directly, if
+you want to tune the times first).
+
+Each per-run report includes, per region, an **index** (title, source, news
+type, and a DeepSeek-written 2-4 sentence English summary for every article
+regardless of the source's own language) followed by the **full articles**
+in their original language — see [`examples/news_reports/`](examples/news_reports/)
+for real sample output (digest, per-region report, cost report).
+
+### Per-run cost
+
+Every LLM call (smart-mode extraction, index summaries, the digest) is
+tracked through a `lazybridge.session.Session` and rolled up into
+`news_cost_<session>.md` — typically **$0.15-0.30 per run** / **$0.50-0.75
+per day** (3 runs) on `deepseek-v4-flash`, dominated by smart-mode
+extraction for the local-language sources; see
+[`examples/news_reports/news_cost.md`](examples/news_reports/news_cost.md).
+
+---
+
 ## Notes
 
 - **PyMuPDF absent** → PDFs degrade (pypdf, then no text). Install

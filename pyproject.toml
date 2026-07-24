@@ -67,9 +67,12 @@ async = ["aiohttp>=3.9", "certifi"]
 # Accurate registrable-domain (eTLD+1) scope via the public suffix list. Without
 # it, same_domain_only falls back to a small built-in multi-part-suffix heuristic.
 domains = ["tldextract>=5"]
+# The news-monitor pipeline (run_news_crawl.py / news_sources.py at the repo
+# root, not part of the lazycrawler package itself): RSS/Atom/RDF parsing.
+news = ["feedparser>=6.0"]
 # Everything. Self-referential so it can never drift from the extras above.
 all = [
-    "lazycrawler[smart,pdf,search,js,excel,dates,markdown,image,ml,nlp,async,domains]",
+    "lazycrawler[smart,pdf,search,js,excel,dates,markdown,image,ml,nlp,async,domains,news]",
 ]
 # Development: tests, coverage, lint/format, build & publish tooling.
 dev = [

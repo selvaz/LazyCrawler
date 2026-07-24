@@ -17,6 +17,11 @@ venv/
 *.db-shm
 *.db-journal
 
+# ── News-monitor pipeline runtime output (per-run reports/logs; see
+#    examples/news_reports/ for a tracked sample instead) ────────────────────
+/reports/
+/logs/
+
 # ── Secrets / config ─────────────────────────────────────────────────────────
 .env
 *.env

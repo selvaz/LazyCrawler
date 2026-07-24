@@ -124,6 +124,8 @@ class CrawlerLLM:
             self._clean = self._Agent(
                 engine=self._engine(self.cfg.model, CONTENT_EXTRACTION_SYSTEM),
                 output=PageExtract,
+                session=self.cfg.session,
+                name="lazycrawler_smart_extract",
             )
         return self._clean
 
@@ -134,32 +136,43 @@ class CrawlerLLM:
             agent = self._Agent(
                 engine=self._engine(self.cfg.model, CUSTOM_EXTRACTION_SYSTEM),
                 output=schema,
+                session=self.cfg.session,
             )
             self._schema_agents[schema] = agent
         return agent
 
     def _topic_agent(self):
         if self._topic is None:
-            self._topic = self._Agent(engine=self._engine(self.cfg.model, TOPIC_EXPANSION_SYSTEM))
+            self._topic = self._Agent(
+                engine=self._engine(self.cfg.model, TOPIC_EXPANSION_SYSTEM),
+                session=self.cfg.session,
+            )
         return self._topic
 
     def _summary_agent(self):
         if self._summary is None:
             model = self.cfg.large_doc_model or self.cfg.model
-            self._summary = self._Agent(engine=self._engine(model, LARGE_DOC_SUMMARY_SYSTEM))
+            self._summary = self._Agent(
+                engine=self._engine(model, LARGE_DOC_SUMMARY_SYSTEM),
+                session=self.cfg.session,
+            )
         return self._summary
 
     def _vision_agent(self):
         if self._vision is None:
             model = self.cfg.vision_model or self.cfg.model
             self._vision = self._Agent(
-                engine=self._engine(model, ARTIFACT_VISION_SYSTEM), output=ArtifactVision
+                engine=self._engine(model, ARTIFACT_VISION_SYSTEM), output=ArtifactVision,
+                session=self.cfg.session,
             )
         return self._vision
 
     def _table_agent(self):
         if self._table is None:
-            self._table = self._Agent(engine=self._engine(self.cfg.model, ARTIFACT_TABLE_SYSTEM))
+            self._table = self._Agent(
+                engine=self._engine(self.cfg.model, ARTIFACT_TABLE_SYSTEM),
+                session=self.cfg.session,
+            )
         return self._table
 
     def enrich_artifact(self, artifact) -> None:
@@ -197,7 +210,10 @@ class CrawlerLLM:
         start of a run.
         """
         sys = build_link_selection_system(topic, max_links)
-        return self._Agent(engine=self._engine(self.cfg.model, sys), output=LinkSelection)
+        return self._Agent(
+            engine=self._engine(self.cfg.model, sys), output=LinkSelection,
+            session=self.cfg.session,
+        )
 
     # -- operations -----------------------------------------------------------
 
