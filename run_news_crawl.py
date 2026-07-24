@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import calendar
 import json
 import sys
 import time
@@ -57,8 +58,22 @@ def _console_safe(s: str) -> str:
     return s.encode(enc, "replace").decode(enc)
 
 
-def _feed_items(url: str, max_items: int) -> list[tuple[str, str]]:
-    """(title, link) pairs from a feed, feed order (newest-first), capped."""
+def _entry_age_hours(entry) -> float | None:
+    """Hours since the entry's own published/updated date, or None if the
+    feed doesn't supply a parseable one (feedparser's *_parsed fields are
+    already normalized to UTC struct_time)."""
+    st = entry.get("published_parsed") or entry.get("updated_parsed")
+    if not st:
+        return None
+    return (time.time() - calendar.timegm(st)) / 3600.0
+
+
+def _feed_items(
+    url: str, max_items: int, max_age_hours: float
+) -> tuple[list[tuple[str, str]], int]:
+    """(title, link) pairs from a feed, newest-first, capped at max_items --
+    returns (items, n_skipped_as_too_old). An entry with no parseable date is
+    kept (the feed itself is inherently a "recent" listing; we can't tell)."""
     body = _FEED_HTTP.get_text(url)
     if not body:
         raise RuntimeError("could not fetch feed body")
@@ -66,11 +81,19 @@ def _feed_items(url: str, max_items: int) -> list[tuple[str, str]]:
     if parsed.bozo and not parsed.entries:
         raise RuntimeError(f"unparseable feed: {parsed.bozo_exception}")
     items = []
-    for entry in parsed.entries[:max_items]:
+    skipped_old = 0
+    for entry in parsed.entries:
+        if len(items) >= max_items:
+            break
         link = entry.get("link")
-        if link:
-            items.append((entry.get("title", "") or "", link))
-    return items
+        if not link:
+            continue
+        age = _entry_age_hours(entry)
+        if age is not None and age > max_age_hours:
+            skipped_old += 1
+            continue
+        items.append((entry.get("title", "") or "", link))
+    return items, skipped_old
 
 
 def main() -> int:
@@ -88,6 +111,13 @@ def main() -> int:
         type=int,
         default=12,
         help="Max items per smart-mode (DeepSeek) source per run -- LLM cost cap",
+    )
+    p.add_argument(
+        "--max-age-hours",
+        type=float,
+        default=36.0,
+        help="Skip feed items older than this (today-or-yesterday, with slack for "
+        "timezones/feed lag). An item with no parseable feed date is kept.",
     )
     p.add_argument("--session-id", help="Override session id (default: timestamped)")
     p.add_argument(
@@ -132,18 +162,20 @@ def main() -> int:
     # every article to a different domain (investinglive.com).
     url_meta: dict[str, dict] = {}
 
-    totals = {"ml": 0, "smart": 0, "errors": 0, "feeds_failed": 0}
+    totals = {"ml": 0, "smart": 0, "errors": 0, "feeds_failed": 0, "skipped_old": 0}
     for source in sources:
         max_items = args.ml_max_items if source.mode == "ml" else args.smart_max_items
         try:
-            items = _feed_items(source.url, max_items)
+            items, skipped_old = _feed_items(source.url, max_items, args.max_age_hours)
         except Exception as exc:
             print(f"[{source.name}] feed fetch failed: {exc}", file=sys.stderr)
             totals["feeds_failed"] += 1
             continue
+        totals["skipped_old"] += skipped_old
 
         crawler = ml_crawler if source.mode == "ml" else smart_crawler
-        print(f"[{source.name}] {len(items)} item(s), mode={source.mode}")
+        old_note = f", {skipped_old} skipped (too old)" if skipped_old else ""
+        print(f"[{source.name}] {len(items)} item(s){old_note}, mode={source.mode}")
         for title, link in items:
             t0 = time.time()
             try:
@@ -178,7 +210,8 @@ def main() -> int:
 
     print(
         f"\nSession {session_id}: ml={totals['ml']} smart={totals['smart']} "
-        f"errors={totals['errors']} feeds_failed={totals['feeds_failed']}"
+        f"errors={totals['errors']} feeds_failed={totals['feeds_failed']} "
+        f"skipped_old={totals['skipped_old']} (max_age_hours={args.max_age_hours})"
     )
     print(f"SESSION_ID={session_id}")
     return 0
