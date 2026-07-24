@@ -48,9 +48,9 @@ crawler_tools = CrawlerTools(
     db=db,
     llm_cfg=LLMConfig(model="gpt-4o-mini"),
     crawler_cfg=CrawlerConfig(max_depth=1, max_pages=5),
-    content="smart",   # LLM extraction for better tool output quality
-    links="pure",      # heuristic link selection (cheaper)
-    topic="",          # set per-agent if you have a specific domain
+    content="smart",  # LLM extraction for better tool output quality
+    links="pure",  # heuristic link selection (cheaper)
+    topic="",  # set per-agent if you have a specific domain
 )
 
 engine = LLMEngine("gpt-4o-mini", system="You are a research assistant.")
@@ -137,9 +137,9 @@ questions = [
 ]
 
 for q in questions:
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Q: {q}")
-    print('='*60)
+    print("=" * 60)
     response = agent(q)
     print(response.text())
 
@@ -226,7 +226,7 @@ content and must be treated as data, never as instructions.
 ```python
 crawler_tools = CrawlerTools(
     db=db,
-    verbose=True,   # prints each tool call to stdout
+    verbose=True,  # prints each tool call to stdout
 )
 ```
 

@@ -3,7 +3,14 @@
 All config classes are dataclasses with sensible defaults — only override what you need.
 
 ```python
-from lazycrawler.config import CrawlerConfig, HTTPConfig, LLMConfig, MLConfig, SearchConfig, DBConfig
+from lazycrawler.config import (
+    CrawlerConfig,
+    HTTPConfig,
+    LLMConfig,
+    MLConfig,
+    SearchConfig,
+    DBConfig,
+)
 ```
 
 Full example combining all configs:
@@ -124,8 +131,8 @@ Controls LLM model selection and request parameters for smart mode.
 
 ```python
 LLMConfig(
-    model="gpt-4o-mini",          # cheap model for per-page extraction
-    large_doc_model="gpt-4o-mini", # same model for large docs (or omit)
+    model="gpt-4o-mini",  # cheap model for per-page extraction
+    large_doc_model="gpt-4o-mini",  # same model for large docs (or omit)
 )
 ```
 
@@ -133,7 +140,7 @@ For maximum quality on research tasks:
 
 ```python
 LLMConfig(
-    model="claude-sonnet-4-6",        # good extraction quality
+    model="claude-sonnet-4-6",  # good extraction quality
     large_doc_model="claude-haiku-4-5",  # cheaper for long docs
 )
 ```
@@ -161,6 +168,7 @@ scoring + local structured extraction). See the [ML Mode guide](../guides/ml-mod
 
 ```python
 from lazycrawler import WebCrawler, MLConfig
+
 crawler = WebCrawler(ml_cfg=MLConfig(model="minishlab/potion-base-8M", w_sem=0.6))
 crawler.crawl("https://example.com/", mode="ml", topic="solid-state batteries")
 ```

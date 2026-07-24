@@ -21,6 +21,7 @@ The extracted object is stored in `PageResult.data`.
 ```python
 from pydantic import BaseModel, Field
 
+
 class Article(BaseModel):
     headline: str = Field(description="Article headline or title")
     author: str = Field(description="Author full name, or empty string if not found")
@@ -45,8 +46,8 @@ crawler = WebCrawler(llm_cfg=llm_cfg)
 
 results = crawler.crawl(
     "https://techcrunch.com",
-    content="smart",   # must be smart
-    schema=Article,    # your Pydantic model
+    content="smart",  # must be smart
+    schema=Article,  # your Pydantic model
 )
 crawler.close()
 ```
@@ -78,13 +79,17 @@ from pydantic import BaseModel, Field
 from lazycrawler import WebCrawler
 from lazycrawler.config import LLMConfig, CrawlerConfig
 
+
 class Product(BaseModel):
     name: str = Field(description="Product name or title")
-    price: str = Field(description="Price with currency symbol (e.g. '$29.99'), or empty if not found")
+    price: str = Field(
+        description="Price with currency symbol (e.g. '$29.99'), or empty if not found"
+    )
     sku: str = Field(description="Product SKU or model number, or empty string")
     description: str = Field(description="Short product description, 1–2 sentences")
     in_stock: bool = Field(description="True if the product appears to be in stock")
     rating: str = Field(description="Customer rating (e.g. '4.5/5'), or empty string")
+
 
 llm_cfg = LLMConfig(model="gpt-4o-mini")
 crawler = WebCrawler(
@@ -101,6 +106,7 @@ for r in results:
 
 # Export to CSV
 import csv
+
 with open("products.csv", "w", newline="", encoding="utf-8") as f:
     w = csv.writer(f)
     w.writerow(["name", "price", "sku", "in_stock", "rating"])
@@ -116,6 +122,7 @@ with open("products.csv", "w", newline="", encoding="utf-8") as f:
 from pydantic import BaseModel, Field
 from typing import List
 
+
 class JobListing(BaseModel):
     title: str = Field(description="Job title")
     company: str = Field(description="Company name")
@@ -125,6 +132,7 @@ class JobListing(BaseModel):
     experience_level: str = Field(description="Junior, Mid-level, Senior, or Lead")
     skills: List[str] = Field(description="Required technical skills (list of strings)")
     summary: str = Field(description="2-sentence job summary")
+
 
 crawler = WebCrawler(llm_cfg=LLMConfig(model="gpt-4o-mini"))
 results = crawler.crawl("https://jobs.example.com/", content="smart", schema=JobListing)
@@ -146,14 +154,18 @@ for r in results:
 from pydantic import BaseModel, Field
 from typing import List
 
+
 class NewsArticle(BaseModel):
     headline: str = Field(description="News article headline")
     subheadline: str = Field(description="Subtitle or lead paragraph, or empty string")
     author: str = Field(description="Author name(s), or 'Staff' if unnamed")
     published_date: str = Field(description="Publication date in ISO format YYYY-MM-DD, or empty")
-    section: str = Field(description="News section: Politics, Economy, Science, Tech, Sport, World, etc.")
+    section: str = Field(
+        description="News section: Politics, Economy, Science, Tech, Sport, World, etc."
+    )
     key_facts: List[str] = Field(description="3–5 key factual claims from the article")
     sentiment: str = Field(description="'positive', 'neutral', or 'negative' tone of the article")
+
 
 crawler = WebCrawler(llm_cfg=LLMConfig(model="claude-haiku-4-5"))
 results = crawler.crawl("https://bbc.com/news", content="smart", schema=NewsArticle)
@@ -180,8 +192,11 @@ results = crawler.crawl("https://shop.example.com", content="smart", schema=Prod
 
 # Retrieve later
 import json, sqlite3
+
 with sqlite3.connect("products.db") as con:
-    rows = con.execute("SELECT url, extract_json FROM pages WHERE extract_json IS NOT NULL").fetchall()
+    rows = con.execute(
+        "SELECT url, extract_json FROM pages WHERE extract_json IS NOT NULL"
+    ).fetchall()
     for url, json_str in rows:
         data = json.loads(json_str)
         print(url, data.get("name"), data.get("price"))

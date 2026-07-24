@@ -26,9 +26,9 @@ from lazycrawler.config import DBConfig
 
 cfg = DBConfig(
     db_path="lazycrawler.db",  # file path; ":memory:" for in-memory
-    ttl_hours=24.0,            # cache TTL; page is fresh within this window
-    force_refresh=False,       # True = ignore TTL, always re-fetch
-    enable_fts=True,           # enable FTS5 full-text search index
+    ttl_hours=24.0,  # cache TTL; page is fresh within this window
+    force_refresh=False,  # True = ignore TTL, always re-fetch
+    enable_fts=True,  # enable FTS5 full-text search index
 )
 ```
 
@@ -274,6 +274,7 @@ same content on two pages still returns both). When resolving a bare
 
 ```python
 from lazycrawler.http import url_hash
+
 arts = db.get_artifacts(url_hash=url_hash("https://example.com/report"))
 tables = db.get_artifacts(session_id="run-1", artifact_type="table")
 one = db.get_artifacts(content_hash="9f8e…", include_blob=True)  # by content hash

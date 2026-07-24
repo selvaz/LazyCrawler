@@ -19,7 +19,7 @@ r = crawler.crawl("https://example.com/report", mode="pure")[0]
 for a in r.artifacts:
     print(a.artifact_type, "—", a.caption or a.alt or a.src_url)
     if a.artifact_type == "table":
-        print(a.content)   # Markdown table; a.data = structured rows
+        print(a.content)  # Markdown table; a.data = structured rows
 ```
 
 ---
@@ -36,9 +36,9 @@ turn on:
 | **Vision** | `enrich_artifacts=True` (+ `content="smart"`) | one vision-LLM call per artifact (capped) | image captions, chart trend/data extraction, table summaries via LazyBridge |
 
 ```python
-CrawlerConfig(extract_artifacts=True)                              # reference only
-CrawlerConfig(extract_artifacts=True, download_artifact_bytes=True) # + sha256 + bytes
-CrawlerConfig(extract_artifacts=True, enrich_artifacts=True)        # + vision LLM (smart)
+CrawlerConfig(extract_artifacts=True)  # reference only
+CrawlerConfig(extract_artifacts=True, download_artifact_bytes=True)  # + sha256 + bytes
+CrawlerConfig(extract_artifacts=True, enrich_artifacts=True)  # + vision LLM (smart)
 ```
 
 Pure extraction is deterministic and offline; the *bytes* and *vision* layers are
@@ -121,16 +121,15 @@ tables. It is capped by `max_artifacts_to_enrich` and can use a dedicated model:
 from lazycrawler.config import LLMConfig
 
 crawler = WebCrawler(
-    CrawlerConfig(extract_artifacts=True, enrich_artifacts=True,
-                  max_artifacts_to_enrich=8),
+    CrawlerConfig(extract_artifacts=True, enrich_artifacts=True, max_artifacts_to_enrich=8),
     llm_cfg=LLMConfig(model="gpt-4o-mini", vision_model="gpt-4o"),
     db=db,
 )
 r = crawler.crawl("https://example.com/report", content="smart")[0]
 for a in r.artifacts:
-    print(a.artifact_type, a.summary)        # vision caption / table summary
+    print(a.artifact_type, a.summary)  # vision caption / table summary
     if a.artifact_type == "chart":
-        print(a.data)                        # extracted data points
+        print(a.data)  # extracted data points
 ```
 
 Enrichment uses `blob` when present, else `src_url`. An image the model decides is
@@ -160,7 +159,7 @@ it) and deserializes `data` / `meta`.
 **Agent tool** — when a DB is attached, `CrawlerTools` exposes `get_artifacts`:
 
 ```python
-get_artifacts(url, artifact_type="")   # "table" | "image" | "chart" | "svg" | ""
+get_artifacts(url, artifact_type="")  # "table" | "image" | "chart" | "svg" | ""
 # -> {"url", "found", "artifacts": [{type, caption, summary, src_url, content,
 #                                    data, mime, width, height, stored_bytes}]}
 ```
@@ -182,8 +181,7 @@ content lives in `artifacts`.
 
 ```python
 crawler = WebCrawler(
-    CrawlerConfig(extract_artifacts=True, emit_markdown=True,
-                  markdown_artifact_anchors=True),
+    CrawlerConfig(extract_artifacts=True, emit_markdown=True, markdown_artifact_anchors=True),
     db=db,
 )
 r = crawler.crawl("https://example.com/report", mode="pure")[0]
@@ -198,10 +196,10 @@ summary.
 ```python
 from lazycrawler import render_for_rag
 
-doc = render_for_rag(r)                       # from a PageResult
+doc = render_for_rag(r)  # from a PageResult
 # or from the DB later:
-row  = db.get_page(url_hash("https://example.com/report"))
-doc  = render_for_rag(row, artifacts=db.get_artifacts(url_hash=row["url_hash"]))
+row = db.get_page(url_hash("https://example.com/report"))
+doc = render_for_rag(row, artifacts=db.get_artifacts(url_hash=row["url_hash"]))
 ```
 
 This is the multi-vector pattern: embed the artifact **summary** for retrieval,

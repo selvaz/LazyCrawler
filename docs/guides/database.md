@@ -111,7 +111,9 @@ for p in pages:
 import sqlite3
 
 with sqlite3.connect("my.db") as con:
-    rows = con.execute("SELECT session_id, created_at, seed FROM sessions ORDER BY created_at DESC").fetchall()
+    rows = con.execute(
+        "SELECT session_id, created_at, seed FROM sessions ORDER BY created_at DESC"
+    ).fetchall()
 for row in rows:
     print(f"  {row[0]}: {row[2]} @ {row[1]}")
 ```
@@ -133,9 +135,9 @@ for h in hits:
 FTS5 supports phrase search and prefix search:
 
 ```python
-db.search_text('"climate change"')          # exact phrase
-db.search_text('climate change policy')     # all three words
-db.search_text('clim*')                     # prefix match
+db.search_text('"climate change"')  # exact phrase
+db.search_text("climate change policy")  # all three words
+db.search_text("clim*")  # prefix match
 ```
 
 ---

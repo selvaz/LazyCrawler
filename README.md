@@ -15,11 +15,11 @@ There are **two independent knobs** (content / links), each taking one of
 `mode` is a shortcut that sets both; `content=` / `links=` override either one:
 
 ```python
-crawl(url, mode="pure")                       # no LLM
-crawl(url, mode="ml",    topic="...")         # local ML, no LLM, zero tokens
-crawl(url, mode="smart")                       # LLM (content + links)
-crawl(url, content="smart", links="ml")        # LLM extraction, semantic frontier for free
-crawl(url, content="pure",  links="smart")     # no summary, LLM picks the links
+crawl(url, mode="pure")  # no LLM
+crawl(url, mode="ml", topic="...")  # local ML, no LLM, zero tokens
+crawl(url, mode="smart")  # LLM (content + links)
+crawl(url, content="smart", links="ml")  # LLM extraction, semantic frontier for free
+crawl(url, content="pure", links="smart")  # no summary, LLM picks the links
 ```
 
 **WebSearch is a derivation of WebCrawler**: it seeds itself from a search
@@ -82,7 +82,9 @@ services**, opt in explicitly:
 from lazycrawler import WebCrawler, HTTPConfig
 
 crawler = WebCrawler(
-    http_cfg=HTTPConfig(allow_private_networks=True),  # ← only for trusted, developer-controlled URLs
+    http_cfg=HTTPConfig(
+        allow_private_networks=True
+    ),  # ← only for trusted, developer-controlled URLs
 )
 ```
 
@@ -137,7 +139,7 @@ from lazycrawler import WebCrawler, CrawlerConfig, CrawlerDB, DBConfig, LLMConfi
 db = CrawlerDB(DBConfig(db_path="crawl.db", ttl_hours=12))
 crawler = WebCrawler(
     CrawlerConfig(max_depth=2, max_pages=20),
-    llm_cfg=LLMConfig(model="claude-haiku-4-5"),   # switch provider = change the string
+    llm_cfg=LLMConfig(model="claude-haiku-4-5"),  # switch provider = change the string
     db=db,
 )
 results = crawler.crawl(
@@ -148,7 +150,7 @@ results = crawler.crawl(
 )
 # follow-up queries on the DB
 pages = db.get_pages(session_id="energy_2026")
-hits  = db.search_text("photovoltaic")     # full-text (FTS5)
+hits = db.search_text("photovoltaic")  # full-text (FTS5)
 db.close()
 ```
 
@@ -239,7 +241,7 @@ follow no links at all (depth 0). Custom presets set it via
 `CrawlPreset(max_links_per_level=...)`.
 
 ```python
-agent("...")   # the model: list_presets() -> web_search(q, preset="deep_research")
+agent("...")  # the model: list_presets() -> web_search(q, preset="deep_research")
 ```
 
 Presets apply **per call** (the shared `CrawlerConfig` is never mutated, so
@@ -253,9 +255,14 @@ crawler_tools = CrawlerTools(
     db=db,
     presets={  # merged on top of the built-in catalog (same key = override)
         "headlines": CrawlPreset(
-            name="headlines", description="Front-page scan, last 24h",
-            content="smart", links="pure", max_depth=0, max_results=20,
-            timelimit="d", cost="medium",
+            name="headlines",
+            description="Front-page scan, last 24h",
+            content="smart",
+            links="pure",
+            max_depth=0,
+            max_results=20,
+            timelimit="d",
+            cost="medium",
         ),
     },
 )
@@ -272,8 +279,10 @@ crawler_tools = CrawlerTools(
 crawling with **local machine learning, zero LLM tokens**:
 
 ```python
-crawler = WebCrawler(CrawlerConfig(max_depth=2, max_pages=30),
-                     ml_cfg=MLConfig(model="minishlab/potion-retrieval-32M"))
+crawler = WebCrawler(
+    CrawlerConfig(max_depth=2, max_pages=30),
+    ml_cfg=MLConfig(model="minishlab/potion-retrieval-32M"),
+)
 results = crawler.crawl("https://example.com/", links="ml", topic="solid-state batteries")
 ```
 
@@ -293,10 +302,10 @@ Every LLM call goes through LazyBridge. To switch provider just change the
 `model` string — the provider is inferred automatically:
 
 ```python
-LLMConfig(model="gpt-4o-mini")             # OpenAI
-LLMConfig(model="claude-haiku-4-5")        # Anthropic
+LLMConfig(model="gpt-4o-mini")  # OpenAI
+LLMConfig(model="claude-haiku-4-5")  # Anthropic
 LLMConfig(model="gemini-3-flash-preview")  # Google
-LLMConfig(model="deepseek-chat")           # DeepSeek
+LLMConfig(model="deepseek-chat")  # DeepSeek
 
 # dedicated (cheaper) model for large-document summarization:
 LLMConfig(model="claude-sonnet-4-6", large_doc_model="claude-haiku-4-5")
@@ -335,6 +344,7 @@ import asyncio
 from lazycrawler import CrawlerConfig, HTTPConfig, MLConfig
 from lazycrawler.async_crawler import AsyncWebCrawler
 
+
 async def main():
     cfg = CrawlerConfig(max_depth=2, max_pages=50, max_workers=8)
     async with AsyncWebCrawler(cfg, HTTPConfig(), ml_cfg=MLConfig()) as crawler:
@@ -344,6 +354,7 @@ async def main():
         )
     for r in results:
         print(r.status, r.mode, r.url, (r.summary or "")[:80])
+
 
 asyncio.run(main())
 ```
@@ -357,13 +368,15 @@ fields (`title`/`summary`/`clean_text`/`entities`/`topics`) are mapped when pres
 ```python
 from pydantic import BaseModel, Field
 
+
 class Article(BaseModel):
     headline: str = Field(default="", description="the main headline")
     author: str = Field(default="", description="author if present")
     key_points: list[str] = Field(default_factory=list, description="3-5 takeaways")
 
+
 results = crawler.crawl("https://example.com/post", content="smart", schema=Article)
-print(results[0].data)   # {'headline': ..., 'author': ..., 'key_points': [...]}
+print(results[0].data)  # {'headline': ..., 'author': ..., 'key_points': [...]}
 ```
 
 ## JavaScript rendering (optional)
@@ -371,7 +384,7 @@ print(results[0].data)   # {'headline': ..., 'author': ..., 'key_points': [...]}
 For SPAs / client-rendered pages, route fetches through a headless browser:
 
 ```python
-HTTPConfig(render_js=True)   # requires: pip install playwright && playwright install chromium
+HTTPConfig(render_js=True)  # requires: pip install playwright && playwright install chromium
 ```
 
 Falls back to plain requests if Playwright is unavailable. The browser context is
@@ -387,7 +400,7 @@ It lands on `PageResult.markdown` and is persisted alongside the page.
 ```python
 crawler = WebCrawler(CrawlerConfig(max_depth=0, emit_markdown=True))
 r = crawler.crawl("https://example.com/article", mode="pure")[0]
-print(r.markdown)   # "# Title\n\n- bullet\n\n| col | ... |"
+print(r.markdown)  # "# Title\n\n- bullet\n\n| col | ... |"
 ```
 
 Needs the `markdown` extra (`pip install "lazycrawler[markdown] @ git+https://github.com/selvaz/LazyCrawler.git"`); without it the
@@ -406,7 +419,7 @@ r = crawler.crawl("https://example.com/report", mode="pure")[0]
 for a in r.artifacts:
     print(a.artifact_type, "—", a.caption or a.alt or a.src_url)
     if a.artifact_type == "table":
-        print(a.content)   # Markdown table; a.data = structured rows
+        print(a.content)  # Markdown table; a.data = structured rows
 ```
 
 What you get per type (best-practice driven):
@@ -428,10 +441,9 @@ table (FK to the page, deduped per `content_hash`) and reachable via
 agent tool `get_artifacts(url)`.
 
 ```python
-CrawlerConfig(extract_artifacts=True)                    # reference-only (cheap)
-CrawlerConfig(extract_artifacts=True,
-              download_artifact_bytes=True)              # also fetch image bytes
-                                                         #   -> sha256 + blob in DB
+CrawlerConfig(extract_artifacts=True)  # reference-only (cheap)
+CrawlerConfig(extract_artifacts=True, download_artifact_bytes=True)  # also fetch image bytes
+#   -> sha256 + blob in DB
 CrawlerConfig(extract_artifacts=True, enrich_artifacts=True)  # + vision LLM (smart)
 ```
 
@@ -461,8 +473,7 @@ the heavy/structured content lives in `artifacts`.
 
 ```python
 crawler = WebCrawler(
-    CrawlerConfig(extract_artifacts=True, emit_markdown=True,
-                  markdown_artifact_anchors=True),
+    CrawlerConfig(extract_artifacts=True, emit_markdown=True, markdown_artifact_anchors=True),
     db=db,
 )
 r = crawler.crawl("https://example.com/report", mode="pure")[0]
@@ -477,10 +488,10 @@ summary.
 ```python
 from lazycrawler import render_for_rag
 
-doc = render_for_rag(r)                       # from a PageResult
+doc = render_for_rag(r)  # from a PageResult
 # or from the DB later:
-row  = db.get_page(url_hash("https://example.com/report"))
-doc  = render_for_rag(row, artifacts=db.get_artifacts(url_hash=row["url_hash"]))
+row = db.get_page(url_hash("https://example.com/report"))
+doc = render_for_rag(row, artifacts=db.get_artifacts(url_hash=row["url_hash"]))
 ```
 
 This is the multi-vector pattern: embed the artifact **summary** for retrieval,
@@ -498,7 +509,7 @@ host that 30x-redirects to a private address is blocked too (bounded by
 `HTTPConfig.max_redirects`).
 
 ```python
-HTTPConfig()   # default ON since 0.15.0, for the library and CrawlerTools alike
+HTTPConfig()  # default ON since 0.15.0, for the library and CrawlerTools alike
 ```
 
 In `CrawlerTools` (the agent path) it, by default, **cannot be turned off**
@@ -506,8 +517,9 @@ via `http_cfg` — pass `CrawlerTools(enforce_ssrf_guard=False)` to crawl
 internal hosts (this honors your `HTTPConfig`):
 
 ```python
-CrawlerTools(http_cfg=HTTPConfig(allow_private_networks=True),
-             enforce_ssrf_guard=False)   # opt out, deliberately
+CrawlerTools(
+    http_cfg=HTTPConfig(allow_private_networks=True), enforce_ssrf_guard=False
+)  # opt out, deliberately
 ```
 
 Downloads are also **streamed and size-capped** (`HTTPConfig.max_html_bytes` /
@@ -544,14 +556,14 @@ Lifecycle methods are **not exposed as tools**, so the LLM can only call
 ```python
 crawler_tools = CrawlerTools(db=db, llm_cfg=LLMConfig(model="claude-haiku-4-5"))
 agent = Agent(engine=engine, tools=crawler_tools.as_tools())
-agent("Research solid-state batteries.")   # no close() anywhere; sockets freed per call
+agent("Research solid-state batteries.")  # no close() anywhere; sockets freed per call
 ```
 
 `close()` / `with` remain available for **deterministic** full teardown (they
 release immediately and are idempotent — a second `close()` is a safe no-op):
 
 ```python
-with WebCrawler(CrawlerConfig(max_depth=1)) as crawler:   # optional, deterministic
+with WebCrawler(CrawlerConfig(max_depth=1)) as crawler:  # optional, deterministic
     results = crawler.crawl("https://example.com/", mode="pure")
 ```
 
@@ -564,8 +576,8 @@ HTTP client (so it honors `verify_ssl` / `ca_bundle`), and a
 missing/unreachable robots.txt means "allow".
 
 ```python
-CrawlerConfig(respect_robots=True)    # default
-CrawlerConfig(respect_robots=False)   # ignore robots.txt (your own/authorized sites)
+CrawlerConfig(respect_robots=True)  # default
+CrawlerConfig(respect_robots=False)  # ignore robots.txt (your own/authorized sites)
 ```
 
 Politeness has three layers: a global `HTTPConfig.link_delay` between sequential
@@ -586,16 +598,16 @@ stderr at INFO.
 import logging
 from lazycrawler import set_log_level
 
-set_log_level(logging.WARNING)   # quieter (errors/warnings only)
-set_log_level(logging.DEBUG)     # verbose (best-effort failures too)
-logging.getLogger("lazycrawler").handlers.clear()   # take full control
+set_log_level(logging.WARNING)  # quieter (errors/warnings only)
+set_log_level(logging.DEBUG)  # verbose (best-effort failures too)
+logging.getLogger("lazycrawler").handlers.clear()  # take full control
 ```
 
 For fail-fast instead of resilient crawling, use **strict mode** — per-page /
 per-worker exceptions then propagate instead of being logged-and-skipped:
 
 ```python
-CrawlerConfig(strict=True)   # raise on the first page/worker error
+CrawlerConfig(strict=True)  # raise on the first page/worker error
 ```
 
 ---

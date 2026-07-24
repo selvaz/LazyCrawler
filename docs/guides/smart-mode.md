@@ -82,7 +82,7 @@ LLM extracts structured content, but links are selected heuristically. Saves ~40
 results = crawler.crawl(
     "https://arxiv.org",
     content="smart",  # LLM extraction
-    links="pure",     # heuristic link selection
+    links="pure",  # heuristic link selection
     topic="reinforcement learning from human feedback",
 )
 ```
@@ -98,8 +98,8 @@ The LLM picks which links to follow based on the topic, but content extraction r
 ```python
 results = crawler.crawl(
     "https://wikipedia.org/wiki/Machine_learning",
-    content="pure",    # plain text extraction
-    links="smart",     # LLM picks next pages
+    content="pure",  # plain text extraction
+    links="smart",  # LLM picks next pages
     topic="deep learning architectures and transformers",
 )
 
@@ -118,7 +118,9 @@ The `topic` parameter is passed to the LLM to guide link selection and content c
 results = crawler.crawl(url, mode="smart", topic="technology")
 
 # Specific — much better
-results = crawler.crawl(url, mode="smart", topic="electric vehicle battery technology and charging infrastructure")
+results = crawler.crawl(
+    url, mode="smart", topic="electric vehicle battery technology and charging infrastructure"
+)
 ```
 
 ---
@@ -127,7 +129,7 @@ results = crawler.crawl(url, mode="smart", topic="electric vehicle battery techn
 
 ```python
 for r in results:
-    if r.summary:     # only set in smart mode
+    if r.summary:  # only set in smart mode
         print(r.summary)
     if r.entities:
         for e in r.entities:

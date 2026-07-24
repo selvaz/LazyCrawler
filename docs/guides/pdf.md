@@ -118,9 +118,7 @@ for r in results:
 ## Crawl a site that links to PDFs
 
 ```python
-crawler = WebCrawler(
-    crawler_cfg=CrawlerConfig(max_depth=2, max_pages=30)
-)
+crawler = WebCrawler(crawler_cfg=CrawlerConfig(max_depth=2, max_pages=30))
 # LazyCrawler follows links normally; when a link points to a PDF, it extracts it
 results = crawler.crawl("https://research.example.com/publications/")
 crawler.close()

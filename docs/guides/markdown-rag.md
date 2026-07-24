@@ -26,7 +26,7 @@ from lazycrawler import WebCrawler, CrawlerConfig
 
 crawler = WebCrawler(CrawlerConfig(max_depth=0, emit_markdown=True))
 r = crawler.crawl("https://example.com/article", mode="pure")[0]
-print(r.markdown)   # "# Title\n\n- bullet\n\n| col | ... |"
+print(r.markdown)  # "# Title\n\n- bullet\n\n| col | ... |"
 ```
 
 - Needs the `markdown` extra (`pip install "lazycrawler[markdown] @ git+https://github.com/selvaz/LazyCrawler.git"`); without it the
@@ -53,7 +53,7 @@ crawler = WebCrawler(
         max_depth=0,
         emit_markdown=True,
         extract_artifacts=True,
-        markdown_artifact_anchors=True,   # <- the key flag
+        markdown_artifact_anchors=True,  # <- the key flag
     ),
     db=db,
 )
@@ -89,7 +89,7 @@ image reference, or vision summary.
 ```python
 from lazycrawler import render_for_rag
 
-doc = render_for_rag(r)            # from a PageResult (uses r.artifacts)
+doc = render_for_rag(r)  # from a PageResult (uses r.artifacts)
 ```
 
 ```text
@@ -134,9 +134,9 @@ document long after the crawl, from the cache:
 ```python
 from lazycrawler.http import url_hash
 
-row  = db.get_page(url_hash("https://example.com/report"))
+row = db.get_page(url_hash("https://example.com/report"))
 arts = db.get_artifacts(url_hash=row["url_hash"])
-doc  = render_for_rag(row, artifacts=arts)
+doc = render_for_rag(row, artifacts=arts)
 ```
 
 `render_for_rag` works whether or not anchoring was enabled at crawl time — when it
@@ -168,7 +168,8 @@ from lazycrawler import WebCrawler, CrawlerConfig, CrawlerDB, DBConfig, render_f
 db = CrawlerDB(DBConfig(db_path="rag.db"))
 crawler = WebCrawler(
     CrawlerConfig(
-        max_depth=1, max_pages=20,
+        max_depth=1,
+        max_pages=20,
         emit_markdown=True,
         extract_artifacts=True,
         markdown_artifact_anchors=True,

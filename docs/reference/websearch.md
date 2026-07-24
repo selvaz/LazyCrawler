@@ -60,9 +60,9 @@ Run a web search and optionally crawl the result pages.
 
 ```python
 {
-    "query": str,        # original query
-    "topic": str,        # expanded topic (if expand_topic=True)
-    "engine": str,       # "duckduckgo", "brave", "tavily", or "gemini"
+    "query": str,  # original query
+    "topic": str,  # expanded topic (if expand_topic=True)
+    "engine": str,  # "duckduckgo", "brave", "tavily", or "gemini"
     "pages_found": int,  # number of PageResult objects with status="done"
     "results": list[PageResult],
 }
@@ -82,7 +82,7 @@ cfg = SearchConfig(
     engine="duckduckgo",
     n_results=10,
     region="us-en",
-    timelimit="w",      # past week
+    timelimit="w",  # past week
     safesearch="moderate",
 )
 
@@ -90,7 +90,7 @@ cfg = SearchConfig(
 cfg = SearchConfig(
     engine="brave",
     n_results=10,
-    brave_api_key="YOUR_KEY",   # or set BRAVE_API_KEY env var
+    brave_api_key="YOUR_KEY",  # or set BRAVE_API_KEY env var
     region="us-en",
     timelimit="w",
 )

@@ -29,7 +29,7 @@ from lazycrawler.config import CrawlerConfig
 
 crawler = WebCrawler(
     crawler_cfg=CrawlerConfig(
-        max_depth=3,    # follow links 3 hops from seed
+        max_depth=3,  # follow links 3 hops from seed
         max_pages=100,  # stop after 100 pages total
         max_links_per_level=10,  # follow at most 10 links per page
     )
@@ -70,7 +70,7 @@ crawler.close()
 from lazycrawler.config import HTTPConfig
 
 http_cfg = HTTPConfig(
-    link_delay=2.0,   # wait 2 seconds between page fetches
+    link_delay=2.0,  # wait 2 seconds between page fetches
     max_retries=3,
 )
 crawler = WebCrawler(http_cfg=http_cfg)
@@ -90,8 +90,8 @@ cfg = CrawlerConfig(
         "https://example.com/login",
         "https://example.com/cart",
         "https://example.com/checkout",
-        "ads.example.com",          # whole domain
-        "tracking.example.com",     # whole domain
+        "ads.example.com",  # whole domain
+        "tracking.example.com",  # whole domain
     ]
 )
 ```
@@ -102,8 +102,8 @@ cfg = CrawlerConfig(
 # pip install "lazycrawler[excel] @ git+https://github.com/selvaz/LazyCrawler.git"
 cfg = CrawlerConfig(
     blacklist_excel="blacklist.xlsx",
-    blacklist_excel_sheet="Sheet1",   # None = first sheet
-    blacklist_excel_column="A",       # None = first column
+    blacklist_excel_sheet="Sheet1",  # None = first sheet
+    blacklist_excel_column="A",  # None = first column
 )
 ```
 
@@ -167,7 +167,8 @@ output = [
         "status": r.status,
         "text": r.text,
     }
-    for r in results if r.status == "done"
+    for r in results
+    if r.status == "done"
 ]
 with open("results.json", "w", encoding="utf-8") as f:
     json.dump(output, f, ensure_ascii=False, indent=2)

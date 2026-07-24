@@ -209,11 +209,13 @@ from pydantic import BaseModel, Field
 from lazycrawler import WebCrawler
 from lazycrawler.config import LLMConfig
 
+
 class Article(BaseModel):
     headline: str = Field(description="Article headline")
     author: str = Field(description="Author name or empty string")
     published: str = Field(description="Publication date (ISO or empty)")
     body_summary: str = Field(description="2-sentence summary of the article body")
+
 
 llm_cfg = LLMConfig(model="gpt-4o-mini")
 crawler = WebCrawler(llm_cfg=llm_cfg)

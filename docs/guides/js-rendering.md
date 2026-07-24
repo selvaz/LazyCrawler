@@ -68,7 +68,7 @@ Controls when Playwright considers the page "ready":
 http_cfg = HTTPConfig(
     render_js=True,
     browser_wait_until="networkidle",  # wait for all AJAX to finish
-    browser_timeout_ms=45000,           # longer timeout for slow sites
+    browser_timeout_ms=45000,  # longer timeout for slow sites
 )
 ```
 

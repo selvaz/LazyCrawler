@@ -105,15 +105,23 @@ tools = CrawlerTools(
         "headlines": CrawlPreset(
             name="headlines",
             description="Front-page scan: smart extraction, last 24h, no link-following.",
-            content="smart", links="pure", max_depth=0, max_results=20,
-            timelimit="d", cost="medium",
+            content="smart",
+            links="pure",
+            max_depth=0,
+            max_results=20,
+            timelimit="d",
+            cost="medium",
         ),
         # retune a built-in (same key overrides it)
         "deep_research": CrawlPreset(
             name="deep_research",
             description="Deeper research: follow more links from each source.",
-            content="smart", links="smart", max_depth=2, max_pages=40,
-            max_links_per_level=40, cost="high",
+            content="smart",
+            links="smart",
+            max_depth=2,
+            max_pages=40,
+            max_links_per_level=40,
+            cost="high",
         ),
     },
 )

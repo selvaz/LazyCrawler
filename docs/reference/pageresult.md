@@ -104,13 +104,15 @@ with open("results.csv", "w", newline="", encoding="utf-8") as f:
     writer = csv.DictWriter(f, fieldnames=["url", "title", "depth", "status", "text"])
     writer.writeheader()
     for r in results:
-        writer.writerow({
-            "url": r.url,
-            "title": r.title or "",
-            "depth": r.depth,
-            "status": r.status,
-            "text": (r.text or "")[:500],
-        })
+        writer.writerow(
+            {
+                "url": r.url,
+                "title": r.title or "",
+                "depth": r.depth,
+                "status": r.status,
+                "text": (r.text or "")[:500],
+            }
+        )
 ```
 
 ### Custom schema — accessing data
@@ -118,10 +120,12 @@ with open("results.csv", "w", newline="", encoding="utf-8") as f:
 ```python
 from pydantic import BaseModel, Field
 
+
 class Product(BaseModel):
     name: str = Field(description="Product name")
     price: str = Field(description="Price with currency symbol")
     description: str = Field(description="Short product description")
+
 
 results = crawler.crawl("https://shop.example.com", content="smart", schema=Product)
 

@@ -9,9 +9,9 @@ statistics — zero LLM tokens, zero API calls**:
 > **[ML Models & Theory](ml-models.md)**.
 
 ```python
-crawl(url, links="ml",  topic="...")   # best-first frontier scored by relevance
-crawl(url, content="ml")               # structured extraction without an LLM
-crawl(url, mode="ml")                  # both
+crawl(url, links="ml", topic="...")  # best-first frontier scored by relevance
+crawl(url, content="ml")  # structured extraction without an LLM
+crawl(url, mode="ml")  # both
 ```
 
 It sits in the same two-knob design as `smart`, so you can mix tiers — e.g. use
@@ -98,7 +98,7 @@ and statistics instead of an LLM, so it costs **no tokens**:
 r = WebCrawler(ml_cfg=MLConfig(summary_sentences=4, keyphrase_topk=8)).crawl(
     "https://example.com/article", content="ml"
 )[0]
-print(r.summary, r.topics, r.entities, r.sentiment)   # filled, zero tokens
+print(r.summary, r.topics, r.entities, r.sentiment)  # filled, zero tokens
 ```
 
 Tune via `MLConfig(summary_sentences=…, keyphrase_topk=…, sentiment=…, use_spacy_ner=…)`.

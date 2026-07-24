@@ -24,13 +24,13 @@ from lazycrawler.config import CrawlerConfig, HTTPConfig
 
 crawler = WebCrawler(
     crawler_cfg=CrawlerConfig(
-        max_workers=4,     # 4 concurrent fetchers
+        max_workers=4,  # 4 concurrent fetchers
         max_depth=2,
         max_pages=60,
         max_links_per_level=15,
     ),
     http_cfg=HTTPConfig(
-        link_delay=1.0,    # each thread waits 1s between its own fetches
+        link_delay=1.0,  # each thread waits 1s between its own fetches
     ),
 )
 results = crawler.crawl("https://example.com", mode="pure")
@@ -64,7 +64,7 @@ To be conservative:
 
 ```python
 CrawlerConfig(max_workers=2)
-HTTPConfig(link_delay=2.0)   # 2 workers × 0.5 req/s each = 1 req/s
+HTTPConfig(link_delay=2.0)  # 2 workers × 0.5 req/s each = 1 req/s
 ```
 
 ---
@@ -122,9 +122,7 @@ seeds = [
     "https://site-c.com",
 ]
 
-crawler = WebCrawler(
-    crawler_cfg=CrawlerConfig(max_workers=3, max_pages=90, max_depth=1)
-)
+crawler = WebCrawler(crawler_cfg=CrawlerConfig(max_workers=3, max_pages=90, max_depth=1))
 results = crawler.crawl_many(seeds, mode="pure")
 crawler.close()
 
@@ -150,6 +148,7 @@ import asyncio
 from lazycrawler import CrawlerConfig, HTTPConfig, MLConfig
 from lazycrawler.async_crawler import AsyncWebCrawler
 
+
 async def main():
     cfg = CrawlerConfig(max_depth=2, max_pages=50, max_workers=8)
     async with AsyncWebCrawler(cfg, HTTPConfig(), ml_cfg=MLConfig()) as crawler:
@@ -157,6 +156,7 @@ async def main():
             "https://example.com/", mode="ml", topic="solid-state batteries"
         )
     return results
+
 
 asyncio.run(main())
 ```
