@@ -107,3 +107,32 @@ def test_enforce_ssrf_guard_opt_out():
     )
     assert ct._crawler.http_cfg.block_private_addresses is False  # honored
     ct.close()
+
+
+class TestDbResolution:
+    """No db= given must never silently mean 'a fresh, always-empty cache with no
+    indication' -- LAZYCRAWLER_NEWS_DB is honored, and the :memory: fallback logs
+    a clear warning instead of staying silent."""
+
+    def test_no_db_and_no_env_warns_and_falls_back_to_memory(self, monkeypatch, caplog):
+        monkeypatch.delenv("LAZYCRAWLER_NEWS_DB", raising=False)
+        with caplog.at_level("WARNING"):
+            ct = CrawlerTools(content="pure")
+        assert ct.db.cfg.db_path == ":memory:"
+        assert any("always-empty" in r.message for r in caplog.records)
+        ct.close()
+
+    def test_env_var_honored_when_no_db_given(self, monkeypatch, tmp_path, caplog):
+        env_path = str(tmp_path / "from_env.db")
+        monkeypatch.setenv("LAZYCRAWLER_NEWS_DB", env_path)
+        with caplog.at_level("WARNING"):
+            ct = CrawlerTools(content="pure")
+        assert ct.db.cfg.db_path == env_path
+        assert not any("always-empty" in r.message for r in caplog.records)
+        ct.close()
+
+    def test_explicit_db_still_wins_over_env(self, monkeypatch, tmp_db, tmp_path):
+        monkeypatch.setenv("LAZYCRAWLER_NEWS_DB", str(tmp_path / "from_env.db"))
+        ct = CrawlerTools(db=tmp_db, content="pure")
+        assert ct.db is tmp_db
+        ct.close()

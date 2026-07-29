@@ -12,6 +12,7 @@
 # ============================================================================
 param(
     [string]$Python = "C:\ProgramData\spyder-6\python.exe",
+    [string]$NewsDbPath = "news.db",
     [switch]$SkipInstall,
     [switch]$SkipTests,
     [switch]$SkipSmokeTest,
@@ -56,6 +57,14 @@ if (!(Test-Path $Python)) {
         throw "Python not found. Install Python 3.11+ (LazyBridge/smart-mode requires it) or pass -Python C:\path\python.exe"
     }
 }
+
+if (!(Split-Path -Path $NewsDbPath -IsAbsolute)) {
+    $NewsDbPath = Join-Path $Root $NewsDbPath
+}
+[Environment]::SetEnvironmentVariable("LAZYCRAWLER_NEWS_DB", $NewsDbPath, "User")
+Set-Item -Path Env:LAZYCRAWLER_NEWS_DB -Value $NewsDbPath
+Write-Host "LAZYCRAWLER_NEWS_DB=$NewsDbPath"
+Write-Host "(Anyone constructing CrawlerTools()/WebTools() with no explicit db= -- this repo's own scripts, LazyTools' MCP 'web' provider -- now reads/writes this same cache instead of risking a silent, always-empty ':memory:' db.)"
 
 Read-OptionalSecret "DeepSeek API key (smart-mode local-language sources + index summaries + digest)" "DEEPSEEK_API_KEY"
 Read-OptionalSecret "Telegram bot token" "TELEGRAM_BOT_TOKEN"

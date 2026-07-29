@@ -22,9 +22,13 @@ Typical use:
 
 from __future__ import annotations
 
+import logging
+import os
 import warnings
 from dataclasses import dataclass, field
 from typing import Any, List, Literal, Optional
+
+_log = logging.getLogger(__name__)
 
 # =============================================================================
 # CrawlerConfig
@@ -529,3 +533,25 @@ class DBConfig:
     ttl_hours: float = 24.0
     force_refresh: bool = False
     enable_fts: bool = True
+
+
+# =============================================================================
+# News/page-cache DB path resolution
+# =============================================================================
+
+
+def resolve_news_db_path(explicit: Optional[str] = None) -> Optional[str]:
+    """The ONE place that decides which cache DB a caller should use.
+
+    Precedence: ``explicit`` arg -> ``LAZYCRAWLER_NEWS_DB`` env var -> ``None``.
+
+    Returns ``None`` (not a path) when nothing is configured -- the caller
+    (``CrawlerTools``) is the one that decides what "unconfigured" means, and
+    it must NOT silently mean "open a fresh, always-empty :memory: db with no
+    warning" the way it used to. A caller resolving to ``None`` here should
+    either skip the feature that needs it, or fall back to ``:memory:``
+    itself while logging a clear warning -- never fail silently.
+    """
+    if explicit:
+        return explicit
+    return os.environ.get("LAZYCRAWLER_NEWS_DB") or None
