@@ -37,16 +37,27 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional
 
-from .config import CrawlerConfig, DBConfig, HTTPConfig, LLMConfig, MLConfig, SearchConfig
+from .config import (
+    CrawlerConfig,
+    DBConfig,
+    HTTPConfig,
+    LLMConfig,
+    MLConfig,
+    SearchConfig,
+    resolve_news_db_path,
+)
 from .crawler import WebCrawler
 from .db import CrawlerDB
 from .http import normalize_url, url_hash
 from .presets import CrawlPreset, resolve_presets
 from .search import WebSearch
+
+_log = logging.getLogger(__name__)
 
 # Per-page snippet length in tool results (full text via get_page()).
 _SNIPPET_CHARS = 500
@@ -172,7 +183,19 @@ class CrawlerTools:
         verbose: bool = False,
     ):
         self._owns_db = db is None
-        self.db = db or CrawlerDB(DBConfig(db_path=":memory:"))
+        if db is not None:
+            self.db = db
+        else:
+            resolved = resolve_news_db_path()
+            if resolved is None:
+                _log.warning(
+                    "CrawlerTools: no db= given and LAZYCRAWLER_NEWS_DB is not set -- opening a "
+                    "fresh, always-empty ':memory:' cache. search_cached/get_page will find nothing "
+                    "ever crawled elsewhere. Set LAZYCRAWLER_NEWS_DB or pass db= explicitly if you "
+                    "meant to read the real cache."
+                )
+                resolved = ":memory:"
+            self.db = CrawlerDB(DBConfig(db_path=resolved))
         self.content = content
         self.links = links
         self.topic = topic
