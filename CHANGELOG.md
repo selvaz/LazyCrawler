@@ -8,6 +8,22 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-07-29
+
+### Added
+- `resolve_news_db_path()` in `lazycrawler.config`: the one canonical
+  resolution chain (`explicit` -> `LAZYCRAWLER_NEWS_DB` env -> `None`) for
+  the news cache db path, so callers (and `CrawlerTools`) don't each grow
+  their own copy. `CrawlerTools` now warns instead of silently falling back
+  to an always-empty `:memory:` db when nothing resolves.
+- News-monitor pipeline: financial + geopolitical crawl, digest, Telegram
+  delivery, with a `--max-age-hours` option to skip stale feed items.
+
+### Fixed
+- Certificate verification falls back to the certifi CA bundle when the
+  Windows cert store is corrupt or the `ddgs` search path's own store is
+  unavailable (#39, #40).
+
 ## [0.16.0] — 2026-07-12
 
 ### Added
