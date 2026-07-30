@@ -58,12 +58,21 @@ if (!(Test-Path $Python)) {
     }
 }
 
-if (!(Split-Path -Path $NewsDbPath -IsAbsolute)) {
-    $NewsDbPath = Join-Path $Root $NewsDbPath
+# Idempotent like Read-OptionalSecret below: a plain rerun (no -NewsDbPath
+# passed) must keep whatever's already set, not silently recompute it from
+# the "news.db" default and overwrite a deliberately-configured path.
+$existingNewsDb = [Environment]::GetEnvironmentVariable("LAZYCRAWLER_NEWS_DB", "User")
+if ($PSBoundParameters.ContainsKey("NewsDbPath") -or -not $existingNewsDb) {
+    if (!(Split-Path -Path $NewsDbPath -IsAbsolute)) {
+        $NewsDbPath = Join-Path $Root $NewsDbPath
+    }
+    [Environment]::SetEnvironmentVariable("LAZYCRAWLER_NEWS_DB", $NewsDbPath, "User")
+    Set-Item -Path Env:LAZYCRAWLER_NEWS_DB -Value $NewsDbPath
+    Write-Host "LAZYCRAWLER_NEWS_DB=$NewsDbPath"
+} else {
+    Set-Item -Path Env:LAZYCRAWLER_NEWS_DB -Value $existingNewsDb
+    Write-Host "Keeping existing LAZYCRAWLER_NEWS_DB=$existingNewsDb"
 }
-[Environment]::SetEnvironmentVariable("LAZYCRAWLER_NEWS_DB", $NewsDbPath, "User")
-Set-Item -Path Env:LAZYCRAWLER_NEWS_DB -Value $NewsDbPath
-Write-Host "LAZYCRAWLER_NEWS_DB=$NewsDbPath"
 Write-Host "(Anyone constructing CrawlerTools()/WebTools() with no explicit db= -- this repo's own scripts, LazyTools' MCP 'web' provider -- now reads/writes this same cache instead of risking a silent, always-empty ':memory:' db.)"
 
 Read-OptionalSecret "DeepSeek API key (smart-mode local-language sources + index summaries + digest)" "DEEPSEEK_API_KEY"
