@@ -45,6 +45,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from lazycrawler import CrawlerDB, DBConfig  # noqa: E402
+from operations_integration import finish as finish_operations  # noqa: E402
+from operations_integration import register_file, start as start_operations  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DB = ROOT / "news.db"
@@ -350,6 +352,12 @@ def main() -> int:
         print(f"Session {session_id}: no 'done' pages found.", file=sys.stderr)
         return 1
 
+    catalog, operations_run_id = start_operations(
+        "crawler_news_report",
+        parameters={"session_id": session_id, "no_digest": args.no_digest},
+        source_db=args.db,
+    )
+
     meta = _load_meta(session_id)
     pages = _enrich(pages, meta)
 
@@ -369,12 +377,14 @@ def main() -> int:
             build_region_report(region, region_pages, session_id), encoding="utf-8"
         )
         print(f"Full report [{region}]: {region_path} ({len(region_pages)} articles)")
+        register_file(catalog, operations_run_id, region_path, kind="report", role=f"full-{region}")
 
     if not args.no_digest:
         digest_text = build_digest(pages, cost_session=cost_session)
         digest_path = REPORT_DIR / f"news_digest_{session_id}.md"
         digest_path.write_text(digest_text, encoding="utf-8")
         print(f"Digest: {digest_path}")
+        register_file(catalog, operations_run_id, digest_path, kind="report", role="digest")
 
     cost_session.close()
     n_smart = sum(1 for p in pages if p.get("mode") == "smart")
@@ -382,8 +392,10 @@ def main() -> int:
     cost_path = REPORT_DIR / f"news_cost_{session_id}.md"
     cost_path.write_text(cost_text, encoding="utf-8")
     print(f"Cost report: {cost_path}")
+    register_file(catalog, operations_run_id, cost_path, kind="report", role="cost")
 
     print(f"SESSION_ID={session_id}")
+    finish_operations(catalog, operations_run_id, ok=True)
     return 0
 
 

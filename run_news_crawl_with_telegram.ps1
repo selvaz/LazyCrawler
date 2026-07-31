@@ -31,6 +31,8 @@ function Import-PersistedEnvVar($Name) {
 Import-PersistedEnvVar "TELEGRAM_BOT_TOKEN"
 Import-PersistedEnvVar "TELEGRAM_CHAT_ID"
 Import-PersistedEnvVar "DEEPSEEK_API_KEY"
+Import-PersistedEnvVar "LAZYTOOLS_OPERATIONS_DB"
+Import-PersistedEnvVar "LAZYTOOLS_ARTIFACTS_DIR"
 
 Write-Host "[$(Get-Date -Format s)] Starting news crawl: $($CrawlArgs -join ' ')"
 $crawlOutput = & $Python (Join-Path $Root 'run_news_crawl.py') @CrawlArgs 2>&1 | Tee-Object -Variable crawlOutputVar
