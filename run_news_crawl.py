@@ -32,9 +32,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from lazycrawler import CrawlerConfig, CrawlerDB, DBConfig, LLMConfig, WebCrawler  # noqa: E402
 from lazycrawler.http import HTTPClient  # noqa: E402
-from operations_integration import finish as finish_operations  # noqa: E402
-from operations_integration import register_file, register_json, start as start_operations  # noqa: E402
 from news_sources import SOURCES  # noqa: E402
+from operations_integration import finish as finish_operations  # noqa: E402
+from operations_integration import register_file, register_json  # noqa: E402
+from operations_integration import start as start_operations
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DB = ROOT / "news.db"
@@ -131,9 +132,13 @@ def main() -> int:
     session_id = args.session_id or f"news_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     catalog, operations_run_id = start_operations(
         "crawler_news_crawl",
-        parameters={"session_id": session_id, "ml_max_items": args.ml_max_items,
-                    "smart_max_items": args.smart_max_items, "max_age_hours": args.max_age_hours,
-                    "sources": args.sources},
+        parameters={
+            "session_id": session_id,
+            "ml_max_items": args.ml_max_items,
+            "smart_max_items": args.smart_max_items,
+            "max_age_hours": args.max_age_hours,
+            "sources": args.sources,
+        },
         source_db=args.db,
     )
 
@@ -217,12 +222,17 @@ def main() -> int:
     meta_path = REPORT_DIR / f"{session_id}_meta.json"
     meta_path.write_text(json.dumps(url_meta, ensure_ascii=False, indent=2), encoding="utf-8")
     register_file(catalog, operations_run_id, meta_path, kind="result", role="crawl-metadata")
-    register_json(catalog, operations_run_id, "crawl-summary.json", {
-        "session_id": session_id,
-        "totals": totals,
-        "max_age_hours": args.max_age_hours,
-        "source_db": str(Path(args.db).resolve()),
-    })
+    register_json(
+        catalog,
+        operations_run_id,
+        "crawl-summary.json",
+        {
+            "session_id": session_id,
+            "totals": totals,
+            "max_age_hours": args.max_age_hours,
+            "source_db": str(Path(args.db).resolve()),
+        },
+    )
 
     print(
         f"\nSession {session_id}: ml={totals['ml']} smart={totals['smart']} "
@@ -230,7 +240,9 @@ def main() -> int:
         f"skipped_old={totals['skipped_old']} (max_age_hours={args.max_age_hours})"
     )
     print(f"SESSION_ID={session_id}")
-    finish_operations(catalog, operations_run_id, ok=totals["errors"] == 0 and totals["feeds_failed"] == 0)
+    finish_operations(
+        catalog, operations_run_id, ok=totals["errors"] == 0 and totals["feeds_failed"] == 0
+    )
     return 0
 
 

@@ -46,7 +46,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from lazycrawler import CrawlerDB, DBConfig  # noqa: E402
 from operations_integration import finish as finish_operations  # noqa: E402
-from operations_integration import register_file, start as start_operations  # noqa: E402
+from operations_integration import register_file  # noqa: E402
+from operations_integration import start as start_operations
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DB = ROOT / "news.db"
