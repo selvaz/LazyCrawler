@@ -359,6 +359,19 @@ def main() -> int:
         source_db=args.db,
     )
 
+    try:
+        return _build_reports(args, session_id, pages, catalog, operations_run_id)
+    except Exception as exc:
+        # generate_index_summaries/build_region_report/build_digest/
+        # build_cost_report can each raise (provider/API failure, report or
+        # cost-DB write failure) after the run was already registered --
+        # without this, that failure leaves the catalog reporting the run as
+        # "running" forever.
+        finish_operations(catalog, operations_run_id, ok=False, error=str(exc))
+        raise
+
+
+def _build_reports(args, session_id, pages, catalog, operations_run_id) -> int:
     meta = _load_meta(session_id)
     pages = _enrich(pages, meta)
 

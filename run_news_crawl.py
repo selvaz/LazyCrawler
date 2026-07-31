@@ -142,6 +142,19 @@ def main() -> int:
         source_db=args.db,
     )
 
+    try:
+        return _run_crawl(args, session_id, catalog, operations_run_id)
+    except Exception as exc:
+        # Per-source/per-article failures already degrade into the totals
+        # counters below and never reach here. This only catches something
+        # breaking outside that loop (DB/crawler setup, report/metadata
+        # write) after the run was already registered -- without this, that
+        # failure leaves the catalog reporting the run as "running" forever.
+        finish_operations(catalog, operations_run_id, ok=False, error=str(exc))
+        raise
+
+
+def _run_crawl(args, session_id, catalog, operations_run_id) -> int:
     # A LazyBridge Session, backed by its own small SQLite event log, attached
     # to every smart-mode agent LazyCrawler builds internally (via
     # LLMConfig.session). PageResult carries no cost/usage fields, so this is
