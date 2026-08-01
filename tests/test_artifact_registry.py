@@ -22,7 +22,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-pytest.importorskip("lazytools", reason="artifact registry wraps the optional lazytools.registry module")
+pytest.importorskip(
+    "lazytools", reason="artifact registry wraps the optional lazytools.registry module"
+)
 
 from lazytools.registry import search_artifacts  # noqa: E402
 
