@@ -8,6 +8,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `make_news_report.py` registers its per-region full reports and its
+  digest into LazyTools' shared artifact catalog (`CRAWLER_ARTIFACTS_DB`,
+  optional/best-effort) — searchable by `kind` (`report`/`digest`), a
+  `daily` cadence tag, and `region:<name>` tags.
+
 ## [0.17.0] — 2026-07-29
 
 ### Added
