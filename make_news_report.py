@@ -37,13 +37,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 import sys
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from artifact_registry import register_report_artifact  # noqa: E402
 from lazycrawler import CrawlerDB, DBConfig  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
@@ -254,6 +257,94 @@ def build_digest(pages: list[dict], cost_session=None) -> str:
     return env.text()
 
 
+def _digest_preview(digest_text: str, max_chars: int = 300) -> str:
+    """A cheap-to-read summary for the digest's artifact record: its first
+    non-empty, non-heading paragraph, truncated. Falls back to a truncated
+    whole-text preview if every line looks like a heading/blank."""
+    for para in digest_text.split("\n\n"):
+        line = para.strip()
+        if line and not line.startswith("#"):
+            return line[:max_chars]
+    return digest_text.strip()[:max_chars]
+
+
+_HEADER_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.MULTILINE)
+
+
+def _digest_themes(digest_text: str) -> list[str]:
+    """The digest's theme names, in the order it presents them.
+
+    DIGEST_PROMPT asks the model to "group items by theme ... use headers
+    per theme", so a cheap regex parse of the digest's own markdown section
+    headers recovers the theme names directly -- no extra LLM call needed
+    just for the artifact record.
+    """
+    return [h.strip(" *") for h in _HEADER_RE.findall(digest_text) if h.strip(" *")]
+
+
+def _digest_summary(digest_text: str, n_articles: int) -> str:
+    """Keyword-dense summary for the digest artifact.
+
+    Leads with the actual theme names the digest is grouped by -- the
+    single highest-value search term here, since "what themes were covered
+    on date X" is the natural query and content is never full-text
+    searched. Falls back to a plain text preview if no headers were found
+    (e.g. the model didn't use markdown headers this run).
+    """
+    themes = _digest_themes(digest_text)
+    if themes:
+        return f"Executive digest of {n_articles} articles grouped by theme: " + ", ".join(themes)
+    return _digest_preview(digest_text)
+
+
+def _region_summary(region: str, region_pages: list[dict]) -> str:
+    """Keyword-dense summary for one region's full-report artifact.
+
+    Built entirely from data already computed while assembling the report
+    (source names and topics already attached to each page by ``_enrich``/
+    crawl-time extraction) -- no extra computation just for the artifact
+    record.
+    """
+    topic_counts: Counter[str] = Counter()
+    for p in region_pages:
+        topic_counts.update(p.get("topics") or [])
+    source_counts = Counter(p.get("source_name") or p.get("domain") for p in region_pages)
+    source_counts.pop(None, None)
+
+    parts = [f"{len(region_pages)} articles for region {region}"]
+    top_topics = [t for t, _ in topic_counts.most_common(3)]
+    if top_topics:
+        parts.append("top topics: " + ", ".join(top_topics))
+    top_sources = [s for s, _ in source_counts.most_common(3)]
+    if top_sources:
+        parts.append("top sources: " + ", ".join(top_sources))
+    return "; ".join(parts)
+
+
+def _register_region_artifact(
+    session_id: str, region: str, region_pages: list[dict], region_path: Path
+) -> None:
+    register_report_artifact(
+        kind="report",
+        title=f"News full report {session_id} ({region})",
+        summary=_region_summary(region, region_pages),
+        tags=["daily", f"region:{region}"],
+        content_uri=str(region_path),
+    )
+
+
+def _register_digest_artifact(
+    session_id: str, digest_text: str, digest_path: Path, n_articles: int
+) -> None:
+    register_report_artifact(
+        kind="digest",
+        title=f"News digest {session_id}",
+        summary=_digest_summary(digest_text, n_articles),
+        tags=["daily", "digest"],
+        content_uri=str(digest_path),
+    )
+
+
 def _usage_from_cost_db(cost_db_path: Path) -> dict:
     """Aggregate token usage/cost straight from the cost DB's raw ``events``
     table instead of ``Session.usage_summary()``: that method scopes its
@@ -369,12 +460,14 @@ def main() -> int:
             build_region_report(region, region_pages, session_id), encoding="utf-8"
         )
         print(f"Full report [{region}]: {region_path} ({len(region_pages)} articles)")
+        _register_region_artifact(session_id, region, region_pages, region_path)
 
     if not args.no_digest:
         digest_text = build_digest(pages, cost_session=cost_session)
         digest_path = REPORT_DIR / f"news_digest_{session_id}.md"
         digest_path.write_text(digest_text, encoding="utf-8")
         print(f"Digest: {digest_path}")
+        _register_digest_artifact(session_id, digest_text, digest_path, len(pages))
 
     cost_session.close()
     n_smart = sum(1 for p in pages if p.get("mode") == "smart")
