@@ -8,11 +8,26 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-08-02
+
 ### Added
 - `make_news_report.py` registers its per-region full reports and its
   digest into LazyTools' shared artifact catalog (`CRAWLER_ARTIFACTS_DB`,
   optional/best-effort) — searchable by `kind` (`report`/`digest`), a
   `daily` cadence tag, and `region:<name>` tags.
+- `setup_first_run.ps1` prompts for `BRAVE_API_KEY`/`TAVILY_API_KEY` (the
+  search tool's backends) and `CRAWLER_ARTIFACTS_DB` (this repo's artifact
+  catalog), previously invisible to this installer.
+
+### Fixed
+- `run_news_crawl_with_telegram.ps1` (what the 3 scheduled tasks actually
+  run) never reloaded `CRAWLER_ARTIFACTS_DB` from the persisted
+  environment — on a Task Scheduler launch, `make_news_report.py`'s
+  artifact registration would silently no-op with it looking unset.
+- `setup_first_run.ps1` persisted a typed `CRAWLER_ARTIFACTS_DB` path
+  verbatim; a relative path now resolves to an absolute one (matching
+  `LAZYCRAWLER_NEWS_DB`'s existing handling), so it means the same file
+  regardless of which repo's working directory reads it later.
 
 ## [0.17.0] — 2026-07-29
 
