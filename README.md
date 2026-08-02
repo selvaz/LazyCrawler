@@ -728,9 +728,12 @@ cd LazyCrawler
 powershell -ExecutionPolicy Bypass -File .\setup_first_run.ps1 -ConfigureScheduler
 ```
 
-Prompts for `DEEPSEEK_API_KEY`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`
-(persisted as User environment variables — press Enter to skip any of them),
-installs LazyCrawler + the `smart`/`ml`/`nlp`/`news` extras, LazyBridge and
+Prompts for `DEEPSEEK_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
+`BRAVE_API_KEY`/`TAVILY_API_KEY` (the search tool's backends), and
+`CRAWLER_ARTIFACTS_DB` (this repo's artifact catalog, shared cross-repo via
+LazyTools' registry — not a secret, a file path; press Enter to skip any of
+them and configure later). All are persisted as User environment variables.
+Installs LazyCrawler + the `smart`/`ml`/`nlp`/`news` extras, LazyBridge and
 LazyTools (from a local sibling checkout if present, else PyPI/GitHub), the
 spaCy English model, runs the test suite, and — if a DeepSeek key is set — a
 small 4-article smoke test so you can see real output before trusting the
