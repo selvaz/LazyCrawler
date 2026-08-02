@@ -42,6 +42,32 @@ function Read-OptionalSecret($Prompt, $ExistingLabel) {
     }
 }
 
+function Read-OptionalPath($Prompt, $ExistingLabel) {
+    # Like Read-OptionalSecret, but for a filesystem path shared across
+    # repos via the registry (LAZYCRAWLER_NEWS_DB above uses the same
+    # normalization): a relative path must resolve to the same absolute
+    # location no matter which repo's working directory resolves it, or
+    # different processes end up writing to separate, silently-diverging
+    # catalogs.
+    $current = [Environment]::GetEnvironmentVariable($ExistingLabel, "User")
+    if ($current) {
+        $answer = Read-Host "$Prompt already set. Press Enter to keep it, or paste a new value"
+    } else {
+        $answer = Read-Host "$Prompt (press Enter to skip)"
+    }
+    $value = if ($answer) { $answer } else { $current }
+    if ($value) {
+        if (!(Split-Path -Path $value -IsAbsolute)) {
+            $value = Join-Path $Root $value
+        }
+        [Environment]::SetEnvironmentVariable($ExistingLabel, $value, "User")
+        Set-Item -Path "Env:$ExistingLabel" -Value $value
+        Write-Host "$ExistingLabel=$value"
+    } else {
+        Write-Host "Skipping $ExistingLabel."
+    }
+}
+
 Write-Host ""
 Write-Host "LazyCrawler news-monitor first-run setup"
 Write-Host "Repo: $Root"
@@ -78,6 +104,9 @@ Write-Host "(Anyone constructing CrawlerTools()/WebTools() with no explicit db= 
 Read-OptionalSecret "DeepSeek API key (smart-mode local-language sources + index summaries + digest)" "DEEPSEEK_API_KEY"
 Read-OptionalSecret "Telegram bot token" "TELEGRAM_BOT_TOKEN"
 Read-OptionalSecret "Telegram chat id / @channel" "TELEGRAM_CHAT_ID"
+Read-OptionalSecret "Brave Search API key (search tool backend)" "BRAVE_API_KEY"
+Read-OptionalSecret "Tavily Search API key (search tool backend)" "TAVILY_API_KEY"
+Read-OptionalPath "Artifact catalog DB (this repo's artifacts, shared cross-repo via LazyTools' registry)" "CRAWLER_ARTIFACTS_DB"
 
 if (!$SkipInstall) {
     Write-Host ""
