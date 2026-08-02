@@ -20,6 +20,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   catalog), previously invisible to this installer.
 
 ### Fixed
+- `setup_first_run.ps1` recomputed `LAZYCRAWLER_NEWS_DB` from the
+  `-NewsDbPath` default on every rerun, silently overwriting a
+  deliberately-configured path — the script's own header already claimed
+  "existing env vars are offered as defaults, not silently overwritten,"
+  which this was the one exception to. A plain rerun (no `-NewsDbPath`
+  passed) now keeps whatever's already set.
 - `run_news_crawl_with_telegram.ps1` (what the 3 scheduled tasks actually
   run) never reloaded `CRAWLER_ARTIFACTS_DB` from the persisted
   environment — on a Task Scheduler launch, `make_news_report.py`'s
