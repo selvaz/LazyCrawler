@@ -78,6 +78,9 @@ Write-Host "(Anyone constructing CrawlerTools()/WebTools() with no explicit db= 
 Read-OptionalSecret "DeepSeek API key (smart-mode local-language sources + index summaries + digest)" "DEEPSEEK_API_KEY"
 Read-OptionalSecret "Telegram bot token" "TELEGRAM_BOT_TOKEN"
 Read-OptionalSecret "Telegram chat id / @channel" "TELEGRAM_CHAT_ID"
+Read-OptionalSecret "Brave Search API key (search tool backend)" "BRAVE_API_KEY"
+Read-OptionalSecret "Tavily Search API key (search tool backend)" "TAVILY_API_KEY"
+Read-OptionalSecret "Artifact catalog DB (this repo's artifacts, shared cross-repo via LazyTools' registry)" "CRAWLER_ARTIFACTS_DB"
 
 if (!$SkipInstall) {
     Write-Host ""
