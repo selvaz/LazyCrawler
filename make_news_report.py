@@ -52,7 +52,13 @@ from lazycrawler import CrawlerDB, DBConfig  # noqa: E402
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DB = ROOT / "news.db"
 REPORT_DIR = ROOT / "reports" / "news"
+DIGESTS_DB = REPORT_DIR / "digests.db"
 DIGEST_MODEL = "deepseek-v4-flash"
+#: Recognised --cycle values -- the three scheduled tasks in
+#: setup_scheduler.ps1. Kept loose (validated only where it matters, e.g.
+#: make_digest_delta_report.py's cycle filter) rather than an enum, since
+#: this is also passed for ad-hoc manual runs that have no fixed cycle.
+CYCLES = ("morning", "europeclose", "usclose")
 UNKNOWN_REGION = "unclassified"
 
 DIGEST_PROMPT = """\
@@ -248,10 +254,33 @@ def generate_index_summaries(pages: list[dict], cost_session=None) -> None:
                 p["summary"] = summary
 
 
-def build_digest(pages: list[dict], cost_session=None) -> str:
+DIGEST_ENGINES = ("claude", "deepseek")
+DEFAULT_DIGEST_ENGINES = ("claude",)
+
+
+def _digest_agent(engine_name: str, cost_session):
     from lazybridge import Agent
 
-    agent = Agent(model=DIGEST_MODEL, name="news_digest_writer", session=cost_session)
+    if engine_name == "claude":
+        from lazybridge_claude_code import ClaudeCodeEngine
+
+        # Runs through the local Claude Code login (Claude.ai subscription),
+        # not DEEPSEEK_API_KEY -- see docs/technical-guide.md in
+        # lazybridge-claude-code-engine for the auth model. web=False: this
+        # is a closed-book synthesis over the article summaries already
+        # assembled in `items` below -- it should not go browse the web.
+        return Agent(
+            engine=ClaudeCodeEngine(model="sonnet", web=False),
+            name="news_digest_writer_claude",
+            session=cost_session,
+        )
+    if engine_name == "deepseek":
+        return Agent(model=DIGEST_MODEL, name="news_digest_writer_deepseek", session=cost_session)
+    raise ValueError(f"Unknown digest engine {engine_name!r}; expected one of {DIGEST_ENGINES}")
+
+
+def build_digest(pages: list[dict], cost_session=None, engine_name: str = "claude") -> str:
+    agent = _digest_agent(engine_name, cost_session)
     prompt = DIGEST_PROMPT.format(n=len(pages), items=_digest_input(pages))
     env = agent(prompt)
     return env.text()
@@ -420,14 +449,89 @@ def build_cost_report(session_id: str, n_articles: int, n_smart: int, cost_db_pa
     return "\n".join(lines)
 
 
+def _init_digests_db(db_path: Path) -> None:
+    con = sqlite3.connect(str(db_path))
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS digests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                cycle TEXT,
+                engine TEXT NOT NULL,
+                produced_at TEXT NOT NULL,
+                n_articles INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                UNIQUE(session_id, engine)
+            )
+            """
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def save_digest_to_db(
+    db_path: Path, *, session_id: str, cycle: str | None, engine: str, n_articles: int, text: str
+) -> None:
+    """Persist one digest run. Idempotent: re-running the same session_id +
+    engine (e.g. regenerating tonight's report by hand) updates the
+    existing row in place instead of accumulating duplicates -- callers
+    that want per-day history (make_digest_delta_report.py) can then just
+    take the last N distinct session_ids for a cycle without worrying
+    about manual re-runs skewing the count."""
+    _init_digests_db(db_path)
+    con = sqlite3.connect(str(db_path))
+    try:
+        con.execute(
+            """
+            INSERT INTO digests (session_id, cycle, engine, produced_at, n_articles, text)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id, engine) DO UPDATE SET
+                cycle=excluded.cycle,
+                produced_at=excluded.produced_at,
+                n_articles=excluded.n_articles,
+                text=excluded.text
+            """,
+            (session_id, cycle, engine, datetime.now().isoformat(timespec="seconds"), n_articles, text),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Build the news-monitor digest + full report")
     p.add_argument("--db", default=str(DEFAULT_DB))
     p.add_argument("--session-id", help="Defaults to the latest news_crawl session")
     p.add_argument(
-        "--no-digest", action="store_true", help="Skip the DeepSeek digest (full report only)"
+        "--no-digest", action="store_true", help="Skip the digest step (full report only)"
+    )
+    p.add_argument(
+        "--digest-engines",
+        default=",".join(DEFAULT_DIGEST_ENGINES),
+        help=(
+            "Comma-separated digest engines to run, e.g. 'claude' (default), "
+            "'deepseek', or 'claude,deepseek' to generate and send one digest "
+            f"per engine for comparison. Choices: {', '.join(DIGEST_ENGINES)}."
+        ),
+    )
+    p.add_argument(
+        "--cycle",
+        default=None,
+        help=(
+            "Which scheduled cycle this run belongs to -- stored alongside "
+            "each digest in digests.db so make_digest_delta_report.py can "
+            f"pull 'the last N usclose digests' precisely. Choices: {', '.join(CYCLES)}. "
+            "Omit for ad-hoc manual runs."
+        ),
     )
     args = p.parse_args()
+    digest_engines = [e.strip() for e in args.digest_engines.split(",") if e.strip()]
+    for e in digest_engines:
+        if e not in DIGEST_ENGINES:
+            print(f"Unknown --digest-engines value {e!r}; expected one of {DIGEST_ENGINES}.", file=sys.stderr)
+            return 2
 
     db = CrawlerDB(DBConfig(db_path=args.db))
     session_id = args.session_id or _latest_session_id(db)
@@ -463,11 +567,28 @@ def main() -> int:
         _register_region_artifact(session_id, region, region_pages, region_path)
 
     if not args.no_digest:
-        digest_text = build_digest(pages, cost_session=cost_session)
-        digest_path = REPORT_DIR / f"news_digest_{session_id}.md"
-        digest_path.write_text(digest_text, encoding="utf-8")
-        print(f"Digest: {digest_path}")
-        _register_digest_artifact(session_id, digest_text, digest_path, len(pages))
+        # Single engine (the default) keeps the plain, unsuffixed filename
+        # for backward compatibility with the scheduled pipeline and
+        # send_telegram_news_report.py's existing exact-name lookup.
+        # Multiple engines (comparison mode) suffix every digest with its
+        # engine name instead, so send_telegram_news_report.py's glob picks
+        # up all of them.
+        suffix_names = len(digest_engines) > 1
+        for engine_name in digest_engines:
+            digest_text = build_digest(pages, cost_session=cost_session, engine_name=engine_name)
+            suffix = f"_{engine_name}" if suffix_names else ""
+            digest_path = REPORT_DIR / f"news_digest_{session_id}{suffix}.md"
+            digest_path.write_text(digest_text, encoding="utf-8")
+            print(f"Digest [{engine_name}]: {digest_path}")
+            _register_digest_artifact(session_id, digest_text, digest_path, len(pages))
+            save_digest_to_db(
+                DIGESTS_DB,
+                session_id=session_id,
+                cycle=args.cycle,
+                engine=engine_name,
+                n_articles=len(pages),
+                text=digest_text,
+            )
 
     cost_session.close()
     n_smart = sum(1 for p in pages if p.get("mode") == "smart")

@@ -5,7 +5,17 @@
 #   DEEPSEEK_API_KEY   (smart-mode local-language sources + the digest step)
 
 param(
-    [string[]]$CrawlArgs = @()
+    [string[]]$CrawlArgs = @(),
+    # Passed straight through to make_news_report.py --digest-engines.
+    # Default "claude" matches the EuropeClose/USClose cycles' current
+    # behavior; the Morning task is registered with "claude,deepseek" (see
+    # setup_scheduler.ps1) so that cycle sends both digests for comparison.
+    [string]$DigestEngines = "claude",
+    # Passed straight through to make_news_report.py --cycle -- identifies
+    # which scheduled task produced this run (morning/europeclose/usclose),
+    # stored in digests.db so make_digest_delta_report.py can pull "the
+    # last N usclose digests" precisely instead of guessing from timestamps.
+    [string]$Cycle = ""
 )
 
 $ErrorActionPreference = 'Continue'
@@ -45,8 +55,12 @@ if ($sessionLine) {
 }
 
 if ($crawlExit -eq 0 -and $sessionId) {
-    Write-Host "[$(Get-Date -Format s)] Building report for session $sessionId"
-    & $Python (Join-Path $Root 'make_news_report.py') --session-id $sessionId
+    $reportArgs = @('--session-id', $sessionId, '--digest-engines', $DigestEngines)
+    if ($Cycle) {
+        $reportArgs += @('--cycle', $Cycle)
+    }
+    Write-Host "[$(Get-Date -Format s)] Building report for session $sessionId (digest engines: $DigestEngines, cycle: $Cycle)"
+    & $Python (Join-Path $Root 'make_news_report.py') @reportArgs
     $reportExit = $LASTEXITCODE
     Write-Host "[$(Get-Date -Format s)] make_news_report.py exit code: $reportExit"
 
