@@ -1,6 +1,8 @@
 # ============================================================================
 # setup_scheduler.ps1 -- creates the 3 daily Windows scheduled tasks for the
-# LazyCrawler news-monitor (crawl + DeepSeek digest + Telegram send).
+# LazyCrawler news-monitor (crawl + digest + Telegram send). Morning sends
+# both a Claude and a DeepSeek digest for comparison (--digest-engines
+# claude,deepseek); EuropeClose/USClose send only the Claude digest.
 #
 # Times are chosen for an Ireland-based user (GMT/IST), converted to this
 # machine's Pacific clock (Ireland is a constant 8h ahead of Pacific, summer
@@ -30,10 +32,11 @@ if (!$Root) {
     $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 $wrapper = Join-Path $Root "run_news_crawl_with_telegram.ps1"
+$deltaWrapper = Join-Path $Root "run_digest_delta_with_telegram.ps1"
 $logDir = Join-Path $Root "logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
-$taskNames = @("LazyCrawler_News_Morning", "LazyCrawler_News_EuropeClose", "LazyCrawler_News_USClose")
+$taskNames = @("LazyCrawler_News_Morning", "LazyCrawler_News_EuropeClose", "LazyCrawler_News_USClose", "LazyCrawler_News_DeltaReport")
 
 if ($Remove) {
     foreach ($name in $taskNames) {
@@ -46,12 +49,12 @@ if ($Remove) {
     return
 }
 
-function New-NewsTask($name, $time, $description) {
+function New-NewsTask($name, $time, $description, $DigestEngines = "claude", $Cycle = "") {
     $logFile = Join-Path $logDir "$name.log"
     # -Command (not -File): Task Scheduler invokes powershell.exe directly, and
     # -File would pass "*>>" through as an inert literal argument instead of
     # redirecting output (same reasoning as the other repos' setup_scheduler.ps1).
-    $cmdString = "& '$wrapper' *>> '$logFile'"
+    $cmdString = "& '$wrapper' -DigestEngines '$DigestEngines' -Cycle '$Cycle' *>> '$logFile'"
     $psArgs = "-NoProfile -ExecutionPolicy Bypass -Command `"$cmdString`""
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $psArgs
     $trigger = New-ScheduledTaskTrigger -Daily -At $time
@@ -66,11 +69,29 @@ function New-NewsTask($name, $time, $description) {
 }
 
 New-NewsTask "LazyCrawler_News_Morning" "23:00" `
-    "LazyCrawler news-monitor: morning cycle (07:00 Ireland)"
+    "LazyCrawler news-monitor: morning cycle (07:00 Ireland)" -DigestEngines "claude,deepseek" -Cycle "morning"
 New-NewsTask "LazyCrawler_News_EuropeClose" "08:30" `
-    "LazyCrawler news-monitor: European market close cycle (16:30 Ireland)"
+    "LazyCrawler news-monitor: European market close cycle (16:30 Ireland)" -Cycle "europeclose"
 New-NewsTask "LazyCrawler_News_USClose" "13:00" `
-    "LazyCrawler news-monitor: US market close cycle (21:00 Ireland)"
+    "LazyCrawler news-monitor: US market close cycle (21:00 Ireland)" -Cycle "usclose"
+
+# Delta report ("what's actually new") -- must run after the Morning task's
+# digest lands in digests.db. Morning starts 23:00 Pacific and has taken
+# 32-48 min end-to-end over the last 10 days (checked live), so 00:15
+# Pacific (75 min after start) leaves a comfortable buffer -> 08:15 Ireland.
+$deltaLogFile = Join-Path $logDir "LazyCrawler_News_DeltaReport.log"
+$deltaCmdString = "& '$deltaWrapper' *>> '$deltaLogFile'"
+$deltaPsArgs = "-NoProfile -ExecutionPolicy Bypass -Command `"$deltaCmdString`""
+$deltaAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $deltaPsArgs
+$deltaTrigger = New-ScheduledTaskTrigger -Daily -At "00:15"
+$deltaSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+    -DontStopOnIdleEnd -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+if (Get-ScheduledTask -TaskName "LazyCrawler_News_DeltaReport" -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskName "LazyCrawler_News_DeltaReport" -Confirm:$false
+}
+Register-ScheduledTask -TaskName "LazyCrawler_News_DeltaReport" -Action $deltaAction -Trigger $deltaTrigger `
+    -Settings $deltaSettings -Description "LazyCrawler news delta: what's new in the morning digest vs the last 4 usclose digests (08:15 Ireland)" | Out-Null
+Write-Host "Created task 'LazyCrawler_News_DeltaReport' (daily 00:15 Pacific / 08:15 Ireland) -> $(Split-Path -Leaf $deltaWrapper)"
 
 Write-Host ""
 Write-Host "Tasks created. Verify with: Get-ScheduledTask -TaskName LazyCrawler_News*"
