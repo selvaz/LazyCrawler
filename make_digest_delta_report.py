@@ -174,9 +174,16 @@ def main() -> int:
     p = argparse.ArgumentParser(
         description="Report what's new in the latest query-cycle digest vs. the last N baseline-cycle digests"
     )
-    p.add_argument("--query-cycle", default="morning", choices=CYCLES, help="Cycle whose latest digest is checked for novelty (default: morning)")
-    p.add_argument("--baseline-cycle", default="usclose", choices=CYCLES, help="Cycle whose recent digests form the baseline (default: usclose)")
-    p.add_argument("--baseline-count", type=int, default=4, help="How many most-recent baseline digests to use (default: 4)")
+    # All three required, none defaulted. Which cycle is checked against
+    # which baseline, and over how many digests, decides what counts as
+    # "new" — and a default here would let one desk's editorial judgement
+    # run silently for another's.
+    p.add_argument("--query-cycle", required=True, choices=CYCLES,
+                   help="Cycle whose latest digest is checked for novelty")
+    p.add_argument("--baseline-cycle", required=True, choices=CYCLES,
+                   help="Cycle whose recent digests form the baseline")
+    p.add_argument("--baseline-count", type=int, required=True,
+                   help="How many most-recent baseline digests to use")
     p.add_argument("--send", action="store_true", help="Also send the delta report to Telegram (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID)")
     args = p.parse_args()
 
