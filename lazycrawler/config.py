@@ -527,12 +527,19 @@ class DBConfig:
         If True, ignore the cache and always re-fetch/re-process.
     enable_fts : bool
         If True, build and maintain the full-text (FTS5) index on clean_text.
+    read_only : bool
+        If True, open the file with SQLite's ``mode=ro`` and skip every
+        write the constructor otherwise performs (WAL pragma, schema DDL,
+        migrations, FTS index build). For consumers that only query an
+        existing cache — a cache mounted read-only stays readable, and a
+        mistyped path raises instead of minting an empty database.
     """
 
     db_path: str = "lazycrawler.db"
     ttl_hours: float = 24.0
     force_refresh: bool = False
     enable_fts: bool = True
+    read_only: bool = False
 
 
 # =============================================================================

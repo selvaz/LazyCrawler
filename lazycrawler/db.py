@@ -34,6 +34,7 @@ import threading
 import weakref
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from ._log import log
 from .config import DBConfig
@@ -43,6 +44,18 @@ from .http import _quiet_close, get_base_domain, url_hash
 def utc_now_iso() -> str:
     """Current UTC date/time in ISO 8601."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def sqlite_ro_uri(path: str) -> str:
+    """A ``file:`` URI opening ``path`` read-only, safe for any filename.
+
+    Interpolating a raw path into ``f"file:{path}?mode=ro"`` breaks on
+    platforms where ``?`` or ``#`` are valid filename characters: SQLite
+    parses everything after ``?`` as the query string, so it opens (or,
+    with the ``mode=ro`` swallowed, even creates) a *different* file than
+    the one the caller checked. Percent-encoding the path closes that.
+    """
+    return "file:" + quote(path.replace("\\", "/"), safe="/:") + "?mode=ro"
 
 
 def _parse_iso(value: str) -> Optional[datetime]:
@@ -197,6 +210,19 @@ class CrawlerDB:
         # check_same_thread=False + a reentrant lock: the connection is shared
         # across worker threads in parallel mode; every access is serialized by
         # ``self._lock`` (the DB is never the bottleneck — fetch/LLM are).
+        if self.cfg.read_only:
+            # mode=ro refuses to create and refuses every write, including
+            # the WAL pragma, DDL and migrations below — which is the point:
+            # a read-only consumer of an existing cache must not mint an
+            # empty database at a mistyped path, and must stay usable when
+            # the file itself is mounted read-only.
+            self.conn = sqlite3.connect(
+                sqlite_ro_uri(self.cfg.db_path), uri=True, check_same_thread=False
+            )
+            self._lock = threading.RLock()
+            self.conn.row_factory = sqlite3.Row
+            self._finalizer = weakref.finalize(self, _quiet_close, self.conn)
+            return
         self.conn = sqlite3.connect(self.cfg.db_path, check_same_thread=False)
         self._lock = threading.RLock()
         self.conn.row_factory = sqlite3.Row
