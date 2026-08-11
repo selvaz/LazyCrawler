@@ -144,3 +144,46 @@ class TestTheListIsNoLongerHere:
         assert "--sources-config" in runner
         assert "required=True" in runner
         assert "from news_sources import load_sources" in runner
+
+
+class TestOrdinaryImportsAreEnough:
+    """No module here rewrites the interpreter's search path.
+
+    The two runners used to insert their own directory into sys.path before
+    importing their siblings. Running from the repository root — which is
+    what every launcher does — that line was already redundant, and it made
+    an import work for reasons a reader could not see from the import.
+    """
+
+    @pytest.mark.parametrize("name", ["run_news_crawl", "make_digest_delta_report"])
+    def test_the_runner_does_not_touch_sys_path(self, name):
+        source = (ROOT / f"{name}.py").read_text(encoding="utf-8")
+        assert "sys.path" not in source
+
+    @pytest.mark.parametrize("name", ["run_news_crawl", "make_digest_delta_report"])
+    def test_it_still_imports_in_a_fresh_process(self, name):
+        """A fresh process, because this session has already imported these
+        modules and would prove nothing about a cold start."""
+        import subprocess
+        import sys
+
+        probe = (
+            "import importlib.util, sys\n"
+            f"spec = importlib.util.spec_from_file_location('{name}', '{name}.py')\n"
+            "m = importlib.util.module_from_spec(spec)\n"
+            f"sys.modules['{name}'] = m\n"
+            "spec.loader.exec_module(m)\n"
+            "print('OK')\n"
+        )
+        result = subprocess.run([sys.executable, "-c", probe], capture_output=True,
+                                text=True, cwd=str(ROOT))
+        assert result.returncode == 0, result.stderr
+        assert "OK" in result.stdout
+
+    @pytest.mark.parametrize("name", ["run_news_crawl", "make_digest_delta_report"])
+    def test_no_noqa_survives_the_removal(self, name):
+        """The E402 suppressions existed only because the inserted line sat
+        between the imports. Leaving them would silence a real finding
+        later."""
+        source = (ROOT / f"{name}.py").read_text(encoding="utf-8")
+        assert "noqa: E402" not in source

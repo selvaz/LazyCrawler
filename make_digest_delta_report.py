@@ -25,9 +25,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-
-from make_news_report import CYCLES, DEFAULT_DB, DIGESTS_DB, REPORT_DIR  # noqa: E402
+from make_news_report import CYCLES, DEFAULT_DB, DIGESTS_DB, REPORT_DIR
 
 DELTA_PROMPT = """\
 You are a buy-side macro/portfolio analyst. Below is the accumulated recent

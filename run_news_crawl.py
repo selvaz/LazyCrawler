@@ -28,11 +28,9 @@ from pathlib import Path
 
 import feedparser
 
-sys.path.insert(0, str(Path(__file__).parent))
-
-from lazycrawler import CrawlerConfig, CrawlerDB, DBConfig, LLMConfig, WebCrawler  # noqa: E402
-from lazycrawler.http import HTTPClient  # noqa: E402
-from news_sources import load_sources  # noqa: E402
+from lazycrawler import CrawlerConfig, CrawlerDB, DBConfig, LLMConfig, WebCrawler
+from lazycrawler.http import HTTPClient
+from news_sources import load_sources
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DB = ROOT / "news.db"
