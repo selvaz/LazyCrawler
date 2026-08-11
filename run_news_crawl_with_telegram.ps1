@@ -5,17 +5,22 @@
 #   DEEPSEEK_API_KEY   (smart-mode local-language sources + the digest step)
 
 param(
-    [string[]]$CrawlArgs = @(),
+    # The source list to crawl. Mandatory and passed straight through: there
+    # is no default and no search path, because a crawl running silently
+    # against someone else's curation produces a plausible digest of the
+    # wrong world.
+    [Parameter(Mandatory)] [string]   $SourcesConfig,
     # Passed straight through to make_news_report.py --digest-engines.
-    # Default "claude" matches the EuropeClose/USClose cycles' current
-    # behavior; the Morning task is registered with "claude,deepseek" (see
-    # setup_scheduler.ps1) so that cycle sends both digests for comparison.
-    [string]$DigestEngines = "claude",
-    # Passed straight through to make_news_report.py --cycle -- identifies
-    # which scheduled task produced this run (morning/europeclose/usclose),
-    # stored in digests.db so make_digest_delta_report.py can pull "the
-    # last N usclose digests" precisely instead of guessing from timestamps.
-    [string]$Cycle = ""
+    # Mandatory: which engines write the digest is a cost decision, and a
+    # default here would spend one desk's budget on another's behalf.
+    [Parameter(Mandatory)] [string]   $DigestEngines,
+    # Passed straight through to make_news_report.py --cycle. Identifies
+    # which scheduled run produced this digest, and is stored so the delta
+    # report can pull "the last N usclose digests" precisely rather than
+    # guessing from timestamps. Mandatory: a wrong or empty cycle does not
+    # fail, it silently files the digest under the wrong heading.
+    [Parameter(Mandatory)] [string]   $Cycle,
+    [string[]]$CrawlArgs = @()
 )
 
 $ErrorActionPreference = 'Continue'
@@ -44,7 +49,7 @@ Import-PersistedEnvVar "DEEPSEEK_API_KEY"
 Import-PersistedEnvVar "CRAWLER_ARTIFACTS_DB"
 
 Write-Host "[$(Get-Date -Format s)] Starting news crawl: $($CrawlArgs -join ' ')"
-$crawlOutput = & $Python (Join-Path $Root 'run_news_crawl.py') @CrawlArgs 2>&1 | Tee-Object -Variable crawlOutputVar
+$crawlOutput = & $Python (Join-Path $Root 'run_news_crawl.py') --sources-config $SourcesConfig @CrawlArgs 2>&1 | Tee-Object -Variable crawlOutputVar
 $crawlExit = $LASTEXITCODE
 Write-Host "[$(Get-Date -Format s)] run_news_crawl.py exit code: $crawlExit"
 

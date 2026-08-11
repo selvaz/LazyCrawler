@@ -6,9 +6,13 @@
 #   DEEPSEEK_API_KEY   (only needed if the morning digest itself fell back to deepseek)
 
 param(
-    [string]$QueryCycle = "morning",
-    [string]$BaselineCycle = "usclose",
-    [int]$BaselineCount = 4
+    # All three mandatory. Which cycle is checked against which baseline, and
+    # over how many digests, decides what counts as "new" — and a default
+    # here would let one desk's editorial judgement run silently for
+    # another's.
+    [Parameter(Mandatory)] [string] $QueryCycle,
+    [Parameter(Mandatory)] [string] $BaselineCycle,
+    [Parameter(Mandatory)] [int]    $BaselineCount
 )
 
 $ErrorActionPreference = 'Continue'
