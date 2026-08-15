@@ -1,0 +1,37 @@
+# Domains that refuse this machine (401/403/429), harvested from run logs.
+# Checked by the crawler before the fetch, so a listed domain costs nothing.
+agenciadenoticias.ibge.gov.br
+aninews.in
+bandnewstv.uol.com.br
+commonslibrary.parliament.uk
+economia.uol.com.br
+in.investing.com
+indianexpress.com
+news.sky.com
+smefutures.com
+tradingeconomics.com
+www.advisorperspectives.com
+www.ainvest.com
+www.bloomberg.com
+www.bls.gov
+www.business-standard.com
+www.diariodemexico.com
+www.financialexpress.com
+www.finanzen.at
+www.finanzen.ch
+www.forbes.com
+www.freejobalert.com
+www.fxstreet.com
+www.ibge.gov.br
+www.iea.org
+www.investing.com
+www.investopedia.com
+www.marketplace.org
+www.milenio.com
+www.myfxbook.com
+www.ndtvprofit.com
+www.nytimes.com
+www.pib.gov.in
+www.riotimesonline.com
+www.similarweb.com
+www.worldeconomics.com
