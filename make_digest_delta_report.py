@@ -177,13 +177,29 @@ def main() -> int:
     # which baseline, and over how many digests, decides what counts as
     # "new" — and a default here would let one desk's editorial judgement
     # run silently for another's.
-    p.add_argument("--query-cycle", required=True, choices=CYCLES,
-                   help="Cycle whose latest digest is checked for novelty")
-    p.add_argument("--baseline-cycle", required=True, choices=CYCLES,
-                   help="Cycle whose recent digests form the baseline")
-    p.add_argument("--baseline-count", type=int, required=True,
-                   help="How many most-recent baseline digests to use")
-    p.add_argument("--send", action="store_true", help="Also send the delta report to Telegram (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID)")
+    p.add_argument(
+        "--query-cycle",
+        required=True,
+        choices=CYCLES,
+        help="Cycle whose latest digest is checked for novelty",
+    )
+    p.add_argument(
+        "--baseline-cycle",
+        required=True,
+        choices=CYCLES,
+        help="Cycle whose recent digests form the baseline",
+    )
+    p.add_argument(
+        "--baseline-count",
+        type=int,
+        required=True,
+        help="How many most-recent baseline digests to use",
+    )
+    p.add_argument(
+        "--send",
+        action="store_true",
+        help="Also send the delta report to Telegram (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID)",
+    )
     args = p.parse_args()
 
     query_digests = _fetch_cycle_digests(DIGESTS_DB, args.query_cycle)
@@ -206,12 +222,20 @@ def main() -> int:
         )
         return 1
 
-    print(f"Query: {_date_label(query['session_id'])} ({args.query_cycle}, engine={query['engine']}, {query['n_articles']} articles)")
-    print(f"Baseline: {len(baseline)} '{args.baseline_cycle}' digest(s): " + ", ".join(_date_label(d["session_id"]) for d in baseline))
+    print(
+        f"Query: {_date_label(query['session_id'])} ({args.query_cycle}, engine={query['engine']}, {query['n_articles']} articles)"
+    )
+    print(
+        f"Baseline: {len(baseline)} '{args.baseline_cycle}' digest(s): "
+        + ", ".join(_date_label(d["session_id"]) for d in baseline)
+    )
 
     report_text = build_delta_report(baseline, query)
 
-    out_path = REPORT_DIR / f"digest_delta_{args.query_cycle}_vs_{args.baseline_cycle}_{query['session_id']}.md"
+    out_path = (
+        REPORT_DIR
+        / f"digest_delta_{args.query_cycle}_vs_{args.baseline_cycle}_{query['session_id']}.md"
+    )
     out_path.write_text(report_text, encoding="utf-8")
     print(f"Delta report: {out_path}")
 

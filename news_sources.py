@@ -110,13 +110,14 @@ def load_sources(path: str | Path) -> tuple[NewsSource, ...]:
         values = {field: _require(entry, field, where) for field in FIELDS}
         if values["category"] not in CATEGORIES:
             raise SourcesError(
-                f"{where}: category {values['category']!r} is not one of {list(CATEGORIES)}")
+                f"{where}: category {values['category']!r} is not one of {list(CATEGORIES)}"
+            )
         if values["region"] not in REGIONS:
             raise SourcesError(
-                f"{where}: region {values['region']!r} is not one of {list(REGIONS)}")
+                f"{where}: region {values['region']!r} is not one of {list(REGIONS)}"
+            )
         if values["mode"] not in MODES:
-            raise SourcesError(
-                f"{where}: mode {values['mode']!r} is not one of {list(MODES)}")
+            raise SourcesError(f"{where}: mode {values['mode']!r} is not one of {list(MODES)}")
         sources.append(NewsSource(**values))
 
     for field in ("name", "url"):
@@ -126,7 +127,8 @@ def load_sources(path: str | Path) -> tuple[NewsSource, ...]:
             if value in seen:
                 raise SourcesError(
                     f"{p.name}: sources[{i}] repeats the {field} of sources[{seen[value]}]: "
-                    f"{value!r}")
+                    f"{value!r}"
+                )
             seen[value] = i
 
     return tuple(sources)

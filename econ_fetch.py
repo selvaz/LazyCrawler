@@ -187,14 +187,20 @@ def fetch_census(
             period_date = date.fromisoformat(r[idx["time_slot_date"]][:10])
         except (KeyError, ValueError, IndexError):
             continue
-        out.append(Observation(period=period_date.isoformat()[:7], period_date=period_date, value=value))
+        out.append(
+            Observation(period=period_date.isoformat()[:7], period_date=period_date, value=value)
+        )
     if not out:
-        raise EconFetchError(f"Census {program} ({category_code}/{data_type_code}): rows returned but none parsed")
+        raise EconFetchError(
+            f"Census {program} ({category_code}/{data_type_code}): rows returned but none parsed"
+        )
     out.sort(key=lambda o: o.period_date, reverse=True)
     return out
 
 
-def diagnose_census(program: str, seasonally_adj: str = "yes", lookback_years: int = 3) -> list[tuple[str, str]]:
+def diagnose_census(
+    program: str, seasonally_adj: str = "yes", lookback_years: int = 3
+) -> list[tuple[str, str]]:
     """List every distinct (category_code, data_type_code) pair Census
     actually returns for ``program`` -- run this once with a real
     CENSUS_API_KEY to confirm/correct a guessed indicator code (see
@@ -227,7 +233,14 @@ def fetch_latest(indicator: EconIndicator) -> list[Observation]:
     if indicator.source == "bls":
         return fetch_bls(p["series_id"])
     if indicator.source == "bea":
-        return fetch_bea(p["dataset"], p["table_name"], p["frequency"], line_description=p.get("line_description"))
+        return fetch_bea(
+            p["dataset"],
+            p["table_name"],
+            p["frequency"],
+            line_description=p.get("line_description"),
+        )
     if indicator.source == "census":
-        return fetch_census(p["program"], p["category_code"], p["data_type_code"], p["seasonally_adj"])
+        return fetch_census(
+            p["program"], p["category_code"], p["data_type_code"], p["seasonally_adj"]
+        )
     raise EconFetchError(f"unknown source {indicator.source!r} for indicator {indicator.key!r}")

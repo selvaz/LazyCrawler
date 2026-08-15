@@ -101,9 +101,9 @@ def main() -> int:
         required=True,
         metavar="PATH",
         help="YAML source list. Required: there is no default and no search "
-             "path, because a crawl running silently against someone else's "
-             "curation produces a plausible digest of the wrong world. See "
-             "examples/news_sources.example.yaml.",
+        "path, because a crawl running silently against someone else's "
+        "curation produces a plausible digest of the wrong world. See "
+        "examples/news_sources.example.yaml.",
     )
     p.add_argument("--db", default=str(DEFAULT_DB), help="Dedicated SQLite DB path")
     p.add_argument(

@@ -43,7 +43,9 @@ SEARCH_MAX_RESULTS = 3
 SEARCH_TIMELIMIT = "w"
 
 
-def _format_change(indicator: EconIndicator, value: float, prev_value: float | None) -> tuple[str | None, str | None]:
+def _format_change(
+    indicator: EconIndicator, value: float, prev_value: float | None
+) -> tuple[str | None, str | None]:
     """(change_display, change_sign) -- an indicator whose own unit is
     already a percentage (e.g. GDP % change) gets a percentage-point diff,
     not a nonsensical "percent change of a percent"; everything else gets a
@@ -96,7 +98,9 @@ def _search_commentary(indicator: EconIndicator, obs: Observation, max_results: 
     return commentary
 
 
-def _run(*, skip_search: bool, search_max_results: int, state_db: Path, dry_run: bool = False) -> dict:
+def _run(
+    *, skip_search: bool, search_max_results: int, state_db: Path, dry_run: bool = False
+) -> dict:
     state = EconState(state_db)
     today = date.today()
 
@@ -150,7 +154,9 @@ def _run(*, skip_search: bool, search_max_results: int, state_db: Path, dry_run:
         )
 
         if is_new:
-            commentary = [] if skip_search else _search_commentary(indicator, latest, search_max_results)
+            commentary = (
+                [] if skip_search else _search_commentary(indicator, latest, search_max_results)
+            )
             change_display, change_sign = _format_change(
                 indicator, latest.value, prev.value if prev else None
             )
@@ -171,7 +177,9 @@ def _run(*, skip_search: bool, search_max_results: int, state_db: Path, dry_run:
                 }
             )
             if not dry_run:
-                state.mark_seen(indicator.key, latest.period_date.isoformat(), latest.period, latest.value)
+                state.mark_seen(
+                    indicator.key, latest.period_date.isoformat(), latest.period, latest.value
+                )
 
     payload = {
         "as_of": today.isoformat(),
@@ -201,10 +209,18 @@ def _run(*, skip_search: bool, search_max_results: int, state_db: Path, dry_run:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Daily official-source economic release monitor")
-    p.add_argument("--dry-run", action="store_true", help="Build + save the report but skip Telegram")
-    p.add_argument("--skip-search", action="store_true", help="Skip the commentary search step (faster testing)")
+    p.add_argument(
+        "--dry-run", action="store_true", help="Build + save the report but skip Telegram"
+    )
+    p.add_argument(
+        "--skip-search",
+        action="store_true",
+        help="Skip the commentary search step (faster testing)",
+    )
     p.add_argument("--search-max-results", type=int, default=SEARCH_MAX_RESULTS)
-    p.add_argument("--state-db", help="Override the state DB path (default: econ_state.db next to this script)")
+    p.add_argument(
+        "--state-db", help="Override the state DB path (default: econ_state.db next to this script)"
+    )
     p.add_argument(
         "--diagnose-census",
         metavar="PROGRAM",
@@ -218,7 +234,9 @@ def main() -> int:
         except EconFetchError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1
-        print(f"{len(pairs)} distinct (category_code, data_type_code) pairs for {args.diagnose_census!r}:")
+        print(
+            f"{len(pairs)} distinct (category_code, data_type_code) pairs for {args.diagnose_census!r}:"
+        )
         for cat, dtype in pairs:
             print(f"  category_code={cat!r}  data_type_code={dtype!r}")
         return 0
@@ -269,7 +287,9 @@ def main() -> int:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
-        print("Telegram not configured (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID unset) -- skipping send.")
+        print(
+            "Telegram not configured (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID unset) -- skipping send."
+        )
         return 0
 
     from lazytools.connectors.telegram import TelegramClient

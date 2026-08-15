@@ -493,7 +493,14 @@ def save_digest_to_db(
                 n_articles=excluded.n_articles,
                 text=excluded.text
             """,
-            (session_id, cycle, engine, datetime.now().isoformat(timespec="seconds"), n_articles, text),
+            (
+                session_id,
+                cycle,
+                engine,
+                datetime.now().isoformat(timespec="seconds"),
+                n_articles,
+                text,
+            ),
         )
         con.commit()
     finally:
@@ -530,7 +537,10 @@ def main() -> int:
     digest_engines = [e.strip() for e in args.digest_engines.split(",") if e.strip()]
     for e in digest_engines:
         if e not in DIGEST_ENGINES:
-            print(f"Unknown --digest-engines value {e!r}; expected one of {DIGEST_ENGINES}.", file=sys.stderr)
+            print(
+                f"Unknown --digest-engines value {e!r}; expected one of {DIGEST_ENGINES}.",
+                file=sys.stderr,
+            )
             return 2
 
     db = CrawlerDB(DBConfig(db_path=args.db))

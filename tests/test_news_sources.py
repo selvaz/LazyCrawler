@@ -22,8 +22,14 @@ EXAMPLE = ROOT / "examples" / "news_sources.example.yaml"
 
 
 def entry(**overrides):
-    base = {"name": "Example Wire", "url": "https://example.invalid/a.xml",
-            "category": "financial", "region": "global", "lang": "en", "mode": "ml"}
+    base = {
+        "name": "Example Wire",
+        "url": "https://example.invalid/a.xml",
+        "category": "financial",
+        "region": "global",
+        "lang": "en",
+        "mode": "ml",
+    }
     base.update(overrides)
     return base
 
@@ -53,16 +59,22 @@ class TestALoadedList:
         digest groups what it finds, so reordering changes what a reader
         sees first."""
         names = ["First", "Second", "Third"]
-        path = write(tmp_path, [entry(name=n, url=f"https://example.invalid/{n}.xml")
-                                for n in names])
+        path = write(
+            tmp_path, [entry(name=n, url=f"https://example.invalid/{n}.xml") for n in names]
+        )
         assert [s.name for s in load_sources(path)] == names
 
     def test_every_field_is_carried_through(self, tmp_path):
-        path = write(tmp_path, [entry(lang="pt", mode="smart", region="latam",
-                                      category="geopolitical")])
+        path = write(
+            tmp_path, [entry(lang="pt", mode="smart", region="latam", category="geopolitical")]
+        )
         source = load_sources(path)[0]
         assert (source.lang, source.mode, source.region, source.category) == (
-            "pt", "smart", "latam", "geopolitical")
+            "pt",
+            "smart",
+            "latam",
+            "geopolitical",
+        )
 
 
 class TestRefusals:
@@ -73,11 +85,14 @@ class TestRefusals:
         with pytest.raises(SourcesError, match=field):
             load_sources(write(tmp_path, [body]))
 
-    @pytest.mark.parametrize("bad,match", [
-        ({"category": "opinion"}, "category"),
-        ({"region": "antarctica"}, "region"),
-        ({"mode": "clever"}, "mode"),
-    ])
+    @pytest.mark.parametrize(
+        "bad,match",
+        [
+            ({"category": "opinion"}, "category"),
+            ({"region": "antarctica"}, "region"),
+            ({"mode": "clever"}, "mode"),
+        ],
+    )
     def test_a_value_outside_its_vocabulary_is_refused(self, tmp_path, bad, match):
         """A free-text value cannot be grouped; it quietly forms a category
         of one."""
@@ -175,8 +190,9 @@ class TestOrdinaryImportsAreEnough:
             "spec.loader.exec_module(m)\n"
             "print('OK')\n"
         )
-        result = subprocess.run([sys.executable, "-c", probe], capture_output=True,
-                                text=True, cwd=str(ROOT))
+        result = subprocess.run(
+            [sys.executable, "-c", probe], capture_output=True, text=True, cwd=str(ROOT)
+        )
         assert result.returncode == 0, result.stderr
         assert "OK" in result.stdout
 

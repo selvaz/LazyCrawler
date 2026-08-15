@@ -42,7 +42,9 @@ class EconState:
             ).fetchone()
         return row[0] if row else None
 
-    def mark_seen(self, indicator_key: str, period_date: str, period_label: str, value: float) -> None:
+    def mark_seen(
+        self, indicator_key: str, period_date: str, period_label: str, value: float
+    ) -> None:
         with closing(sqlite3.connect(self.db_path)) as con:
             con.execute(
                 """
