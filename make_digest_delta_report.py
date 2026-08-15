@@ -136,8 +136,7 @@ def _format_digest_block(d: dict) -> str:
 
 
 def build_delta_report(baseline: list[dict], query: dict) -> str:
-    from lazybridge import Agent
-    from lazybridge_claude_code import ClaudeCodeEngine
+    from lazybridge import Agent, ClaudeCodeEngine
 
     from lazycrawler import CrawlerDB, DBConfig
     from lazycrawler.tools import CrawlerTools

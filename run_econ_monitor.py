@@ -131,8 +131,21 @@ def _run(
 
         latest = observations[0]
         prev = observations[1] if len(observations) > 1 else None
-        last_seen_date = state.last_period_date(indicator.key)
-        is_new = last_seen_date is None or latest.period_date.isoformat() > last_seen_date
+        # New period, or the same period with a different number.
+        #
+        # BEA publishes a quarter's GDP three times -- advance, second, third --
+        # under one TimePeriod, revising the value. Comparing periods only, the
+        # second and third look like a quarter already seen and were dropped,
+        # although the indicator set asks for each of them by name.
+        seen = state.last_seen(indicator.key)
+        if seen is None:
+            is_new = True
+        else:
+            seen_period, seen_value = seen
+            this_period = latest.period_date.isoformat()
+            is_new = this_period > seen_period or (
+                this_period == seen_period and latest.value != seen_value
+            )
 
         print(
             f"[{indicator.key}] latest={latest.period} value={latest.value} "

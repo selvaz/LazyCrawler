@@ -28,6 +28,30 @@ CENSUS_BASE = "https://api.census.gov/data/timeseries/eits/"
 _TIMEOUT = 20
 
 
+def _get_json(url: str, params: dict, what: str):
+    """One request, one parsed body, and every failure as EconFetchError.
+
+    The module promises that a failure raises EconFetchError, and the monitor
+    relies on that promise for per-indicator isolation: it catches
+    EconFetchError so one source going down cannot take the rest of the run
+    with it. `raise_for_status()` raises `requests.HTTPError`, a timeout raises
+    `requests.Timeout`, and a truncated body raises a JSON error -- none of
+    which are EconFetchError, so the isolation was not there. A DNS blip on the
+    first indicator aborted the whole monitor, and the report never got built.
+
+    The message keeps the exception type, because "BLS CUUR0000SA0:
+    ConnectTimeout" and "BLS CUUR0000SA0: 503" call for different reactions.
+    """
+    try:
+        resp = requests.get(url, params=params, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.RequestException as exc:
+        raise EconFetchError(f"{what}: {type(exc).__name__}: {exc}") from exc
+    except ValueError as exc:  # json.JSONDecodeError subclasses ValueError
+        raise EconFetchError(f"{what}: response was not JSON: {exc}") from exc
+
+
 class EconFetchError(RuntimeError):
     """A fetch failed in a way the caller should see and log, not swallow."""
 
@@ -55,9 +79,7 @@ def _bls_period_to_date(year: int, period_code: str) -> date:
 def fetch_bls(series_id: str) -> list[Observation]:
     """BLS public API v1 -- no key needed at this indicator set's call volume
     (25 unauthenticated queries/day; this pipeline makes 5/day)."""
-    resp = requests.get(BLS_BASE + series_id, params={"latest": "true"}, timeout=_TIMEOUT)
-    resp.raise_for_status()
-    data = resp.json()
+    data = _get_json(BLS_BASE + series_id, {"latest": "true"}, f"BLS {series_id}")
     if data.get("status") != "REQUEST_SUCCEEDED":
         raise EconFetchError(f"BLS {series_id}: {data.get('message') or data.get('status')}")
     series = data.get("Results", {}).get("series") or []
@@ -110,9 +132,7 @@ def fetch_bea(
         "Year": "ALL",
         "ResultFormat": "JSON",
     }
-    resp = requests.get(BEA_BASE, params=params, timeout=_TIMEOUT)
-    resp.raise_for_status()
-    payload = resp.json()
+    payload = _get_json(BEA_BASE, params, f"BEA {dataset}/{table_name}")
     results = payload.get("BEAAPI", {}).get("Results", {})
     if isinstance(results, dict) and "Error" in results:
         raise EconFetchError(f"BEA {dataset}/{table_name}: {results['Error']}")
@@ -163,13 +183,19 @@ def fetch_census(
         "time": f"from+{start_year}",
         "key": api_key,
     }
-    resp = requests.get(CENSUS_BASE + program, params=params, timeout=_TIMEOUT)
+    what = f"Census {program} ({category_code}/{data_type_code})"
+    try:
+        resp = requests.get(CENSUS_BASE + program, params=params, timeout=_TIMEOUT)
+    except requests.RequestException as exc:
+        raise EconFetchError(f"{what}: {type(exc).__name__}: {exc}") from exc
+    # Its own status branch, kept: the body says which code combination is wrong,
+    # which a bare status line does not.
     if resp.status_code != 200:
-        raise EconFetchError(
-            f"Census {program} ({category_code}/{data_type_code}): HTTP {resp.status_code} "
-            f"-- {resp.text[:300]}"
-        )
-    rows = resp.json()
+        raise EconFetchError(f"{what}: HTTP {resp.status_code} -- {resp.text[:300]}")
+    try:
+        rows = resp.json()
+    except ValueError as exc:
+        raise EconFetchError(f"{what}: response was not JSON: {exc}") from exc
     if not rows or len(rows) < 2:
         raise EconFetchError(
             f"Census {program} ({category_code}/{data_type_code}): no data returned -- "
@@ -216,9 +242,7 @@ def diagnose_census(
         "time": f"from+{start_year}",
         "key": api_key,
     }
-    resp = requests.get(CENSUS_BASE + program, params=params, timeout=_TIMEOUT)
-    resp.raise_for_status()
-    rows = resp.json()
+    rows = _get_json(CENSUS_BASE + program, params, f"Census {program}")
     header, *data_rows = rows
     idx = {name: i for i, name in enumerate(header)}
     pairs = {(r[idx["category_code"]], r[idx["data_type_code"]]) for r in data_rows}

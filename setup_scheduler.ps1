@@ -24,7 +24,14 @@
 param(
     [switch]$Remove,
     [string]$Root = "",
-    [string]$Python = "C:\ProgramData\spyder-6\python.exe"
+    [string]$Python = "C:\ProgramData\spyder-6\python.exe",
+    # The crawl wrapper requires -SourcesConfig and this script had no way to
+    # supply it, so every task it registered stopped at PowerShell parameter
+    # binding before the crawl began -- noninteractively, with nothing in the
+    # log to say why. The list itself is private and deliberately not in this
+    # repository (see examples/news_sources.example.yaml for the shape), which
+    # is exactly why it has to be passed in rather than defaulted.
+    [Parameter(Mandatory)] [string]$SourcesConfig
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,7 +61,7 @@ function New-NewsTask($name, $time, $description, $DigestEngines = "claude", $Cy
     # -Command (not -File): Task Scheduler invokes powershell.exe directly, and
     # -File would pass "*>>" through as an inert literal argument instead of
     # redirecting output (same reasoning as the other repos' setup_scheduler.ps1).
-    $cmdString = "& '$wrapper' -DigestEngines '$DigestEngines' -Cycle '$Cycle' *>> '$logFile'"
+    $cmdString = "& '$wrapper' -SourcesConfig '$SourcesConfig' -DigestEngines '$DigestEngines' -Cycle '$Cycle' *>> '$logFile'"
     $psArgs = "-NoProfile -ExecutionPolicy Bypass -Command `"$cmdString`""
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $psArgs
     $trigger = New-ScheduledTaskTrigger -Daily -At $time
@@ -80,7 +87,11 @@ New-NewsTask "LazyCrawler_News_USClose" "13:00" `
 # 32-48 min end-to-end over the last 10 days (checked live), so 00:15
 # Pacific (75 min after start) leaves a comfortable buffer -> 08:15 Ireland.
 $deltaLogFile = Join-Path $logDir "LazyCrawler_News_DeltaReport.log"
-$deltaCmdString = "& '$deltaWrapper' *>> '$deltaLogFile'"
+# QueryCycle/BaselineCycle/BaselineCount are mandatory on that wrapper; the
+# values are the ones the comment above describes -- the morning digest
+# against the four most recent US closes. Without them the task stopped at
+# parameter binding, noninteractively, before reaching Python.
+$deltaCmdString = "& '$deltaWrapper' -QueryCycle 'morning' -BaselineCycle 'usclose' -BaselineCount 4 *>> '$deltaLogFile'"
 $deltaPsArgs = "-NoProfile -ExecutionPolicy Bypass -Command `"$deltaCmdString`""
 $deltaAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $deltaPsArgs
 $deltaTrigger = New-ScheduledTaskTrigger -Daily -At "00:15"

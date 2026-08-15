@@ -42,6 +42,22 @@ class EconState:
             ).fetchone()
         return row[0] if row else None
 
+    def last_seen(self, indicator_key: str) -> tuple[str, float] | None:
+        """The last-seen period *and* its value, or None on a first run.
+
+        The period alone cannot detect a revision. BEA publishes a quarter's
+        GDP three times -- advance, second, third -- under the same
+        `TimePeriod`, revising the number each time. Comparing periods only,
+        the two later releases look like "the same quarter we already have"
+        and are dropped, which is precisely the pair a reader is waiting for.
+        """
+        with closing(sqlite3.connect(self.db_path)) as con:
+            row = con.execute(
+                "SELECT last_period_date, last_value FROM indicator_state WHERE indicator_key = ?",
+                (indicator_key,),
+            ).fetchone()
+        return (row[0], row[1]) if row else None
+
     def mark_seen(
         self, indicator_key: str, period_date: str, period_label: str, value: float
     ) -> None:
