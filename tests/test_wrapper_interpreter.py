@@ -59,9 +59,7 @@ def test_nessun_wrapper_assegna_un_interprete() -> None:
 def test_nessun_wrapper_nomina_un_interprete_assoluto() -> None:
     colpevoli = {n: PERCORSO_INTERPRETE.findall(leggi(n)) for n in WRAPPER}
     colpevoli = {n: v for n, v in colpevoli.items() if v}
-    assert not colpevoli, (
-        f"percorsi assoluti a un interprete dentro wrapper pubblici: {colpevoli}"
-    )
+    assert not colpevoli, f"percorsi assoluti a un interprete dentro wrapper pubblici: {colpevoli}"
 
 
 def test_ogni_wrapper_dichiara_python_obbligatorio() -> None:
