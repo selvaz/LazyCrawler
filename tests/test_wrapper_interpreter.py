@@ -99,3 +99,34 @@ def test_lo_scheduler_lo_passa_ai_wrapper() -> None:
     assert comandi, "nessuna riga di setup_scheduler.ps1 invoca un wrapper"
     senza = [r.strip()[:80] for r in comandi if "-Python" not in r]
     assert not senza, f"queste invocazioni non passano -Python: {senza}"
+
+
+def test_rimuovere_i_task_non_chiede_un_interprete() -> None:
+    """`-Remove` binds on its own.
+
+    PowerShell binds mandatory parameters before any of the script's own code
+    runs, so a mandatory `-Python` reaches the removal path too: uninstalling
+    would have to name an interpreter it never starts and a source list it
+    never reads, and under a scheduler it would sit at a prompt nobody
+    answers. Parameter sets, not a check in the body, because the binding
+    happens first.
+
+    Checked as text because this repository's CI has no PowerShell to ask; the
+    sets were verified against a real `Get-Command -Syntax`, which reports
+    `-Remove [-Root]` and nothing more.
+    """
+    contenuto = leggi("setup_scheduler.ps1")
+    assert 'DefaultParameterSetName = "Install"' in contenuto, (
+        "il param block non dichiara un set predefinito"
+    )
+    for nome in ("$Python", "$SourcesConfig"):
+        i = contenuto.find(nome)
+        assert i >= 0, f"{nome} non e' dichiarato"
+        riga = contenuto[max(0, i - 120) : i]
+        assert 'ParameterSetName = "Install"' in riga, (
+            f"{nome} e' obbligatorio anche per la rimozione"
+        )
+    i = contenuto.find("$Remove")
+    assert 'ParameterSetName = "Remove"' in contenuto[max(0, i - 120) : i], (
+        "-Remove non ha un set proprio, quindi non si puo' invocare da solo"
+    )
