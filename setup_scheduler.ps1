@@ -21,17 +21,30 @@
 # To remove the tasks:
 #     powershell -ExecutionPolicy Bypass -File .\setup_scheduler.ps1 -Remove
 # ============================================================================
+# Two modes, declared as parameter sets rather than checked in the body:
+# PowerShell binds mandatory parameters before any code runs, so a removal
+# invocation would otherwise have to supply an interpreter it never uses and a
+# source list it never reads -- prompting for them under a scheduler, where
+# nobody is there to answer.
+[CmdletBinding(DefaultParameterSetName = "Install")]
 param(
-    [switch]$Remove,
+    [Parameter(Mandatory, ParameterSetName = "Remove")] [switch]$Remove,
+    # In both sets: where the wrappers live is the one thing removal and
+    # installation agree on.
     [string]$Root = "",
-    [string]$Python = "C:\ProgramData\spyder-6\python.exe",
+    # Passed straight through to the wrappers, which now require it. Mandatory
+    # for the same reason as the source list: which interpreter runs the crawl
+    # decides which packages it runs against, and the default that used to sit
+    # here named one machine's shared development install -- so every task this
+    # script registered ran production against a checkout under active edit.
+    [Parameter(Mandatory, ParameterSetName = "Install")] [string]$Python,
     # The crawl wrapper requires -SourcesConfig and this script had no way to
     # supply it, so every task it registered stopped at PowerShell parameter
     # binding before the crawl began -- noninteractively, with nothing in the
     # log to say why. The list itself is private and deliberately not in this
     # repository (see examples/news_sources.example.yaml for the shape), which
     # is exactly why it has to be passed in rather than defaulted.
-    [Parameter(Mandatory)] [string]$SourcesConfig
+    [Parameter(Mandatory, ParameterSetName = "Install")] [string]$SourcesConfig
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,7 +74,7 @@ function New-NewsTask($name, $time, $description, $DigestEngines = "claude", $Cy
     # -Command (not -File): Task Scheduler invokes powershell.exe directly, and
     # -File would pass "*>>" through as an inert literal argument instead of
     # redirecting output (same reasoning as the other repos' setup_scheduler.ps1).
-    $cmdString = "& '$wrapper' -SourcesConfig '$SourcesConfig' -DigestEngines '$DigestEngines' -Cycle '$Cycle' *>> '$logFile'"
+    $cmdString = "& '$wrapper' -SourcesConfig '$SourcesConfig' -DigestEngines '$DigestEngines' -Cycle '$Cycle' -Python '$Python' *>> '$logFile'"
     $psArgs = "-NoProfile -ExecutionPolicy Bypass -Command `"$cmdString`""
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $psArgs
     $trigger = New-ScheduledTaskTrigger -Daily -At $time
@@ -91,7 +104,7 @@ $deltaLogFile = Join-Path $logDir "LazyCrawler_News_DeltaReport.log"
 # values are the ones the comment above describes -- the morning digest
 # against the four most recent US closes. Without them the task stopped at
 # parameter binding, noninteractively, before reaching Python.
-$deltaCmdString = "& '$deltaWrapper' -QueryCycle 'morning' -BaselineCycle 'usclose' -BaselineCount 4 *>> '$deltaLogFile'"
+$deltaCmdString = "& '$deltaWrapper' -QueryCycle 'morning' -BaselineCycle 'usclose' -BaselineCount 4 -Python '$Python' *>> '$deltaLogFile'"
 $deltaPsArgs = "-NoProfile -ExecutionPolicy Bypass -Command `"$deltaCmdString`""
 $deltaAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $deltaPsArgs
 $deltaTrigger = New-ScheduledTaskTrigger -Daily -At "00:15"

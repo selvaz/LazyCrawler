@@ -20,12 +20,18 @@ param(
     # guessing from timestamps. Mandatory: a wrong or empty cycle does not
     # fail, it silently files the digest under the wrong heading.
     [Parameter(Mandatory)] [string]   $Cycle,
+    # The interpreter that runs this job's Python steps. Mandatory and with no
+    # default, for the same reason as $Cycle: an interpreter hard-coded here is
+    # a deployment decision written into a public wrapper, it silently outranks
+    # whatever the caller believes it chose, and a wrong one does not fail --
+    # it crawls against a different set of installed packages and reports
+    # success.
+    [Parameter(Mandatory)] [string]   $Python,
     [string[]]$CrawlArgs = @()
 )
 
 $ErrorActionPreference = 'Continue'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Python = 'C:\ProgramData\spyder-6\python.exe'
 
 Set-Location $Root
 
