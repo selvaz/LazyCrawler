@@ -260,9 +260,29 @@ renderStatus();
 """
 
 
+def _script_safe_json(row: dict) -> str:
+    """JSON that cannot end the <script> element it is written into.
+
+    The row carries titles, summaries and URLs taken from arbitrary
+    commentary pages. json.dumps leaves a literal </script> intact, so a
+    page whose title contains one -- by malice or by accident, and
+    headlines about scripts are not rare -- closes the element early, and
+    everything after it is parsed as markup by whoever opens the report.
+
+    Escaping the three characters as unicode sequences keeps the value
+    identical to the reader, since JSON unescapes them, while leaving
+    nothing an HTML parser can act on.
+    """
+    # The replacements are the two-character sequences a JSON reader
+    # unescapes, not the characters themselves: "<" written as a unicode
+    # escape in Python source *is* "<", so replacing one with the other is
+    # a no-op -- which is the shape this bug took on the first attempt.
+    return json.dumps(row).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+
 def render_html(row: dict) -> str:
     """Render ``row`` (the same dict shape ``run_econ_monitor.py`` saves to
     ``reports/econ/*.json``) as a self-contained HTML report. Pure function
     -- no I/O -- works identically whether ``row`` just came off a live run
     or was loaded from disk days later."""
-    return _TEMPLATE.replace("__ROW_JSON__", json.dumps(row))
+    return _TEMPLATE.replace("__ROW_JSON__", _script_safe_json(row))

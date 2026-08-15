@@ -262,11 +262,11 @@ def _digest_agent(engine_name: str, cost_session):
     from lazybridge import Agent
 
     if engine_name == "claude":
-        from lazybridge_claude_code import ClaudeCodeEngine
+        from lazybridge import ClaudeCodeEngine
 
         # Runs through the local Claude Code login (Claude.ai subscription),
         # not DEEPSEEK_API_KEY -- see docs/technical-guide.md in
-        # lazybridge-claude-code-engine for the auth model. web=False: this
+        # LazyBridge for the auth model. web=False: this
         # is a closed-book synthesis over the article summaries already
         # assembled in `items` below -- it should not go browse the web.
         return Agent(
