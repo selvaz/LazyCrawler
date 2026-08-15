@@ -69,7 +69,12 @@ async = ["aiohttp>=3.9", "certifi"]
 domains = ["tldextract>=5"]
 # The news-monitor pipeline (run_news_crawl.py / news_sources.py at the repo
 # root, not part of the lazycrawler package itself): RSS/Atom/RDF parsing.
-news = ["feedparser>=6.0"]
+# PyYAML backs the source list: every crawl loads its sources from a YAML
+# file before it does anything else, so this is not optional within the
+# extra that provides the news pipeline. It was reaching Python through an
+# incidental transitive install, and a clean environment does not have one --
+# which is how CI found it here, with ModuleNotFoundError on collection.
+news = ["feedparser>=6.0", "PyYAML>=6.0"]
 # Everything. Self-referential so it can never drift from the extras above.
 all = [
     "lazycrawler[smart,pdf,search,js,excel,dates,markdown,image,ml,nlp,async,domains,news]",

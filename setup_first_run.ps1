@@ -145,7 +145,7 @@ Write-Host ""
 Write-Host "Verifying dependencies..."
 & $Python -c @"
 import importlib
-mods = ['spacy', 'yake', 'vaderSentiment', 'model2vec', 'feedparser', 'lazybridge', 'lazytools', 'trafilatura']
+mods = ['spacy', 'yake', 'vaderSentiment', 'model2vec', 'feedparser', 'yaml', 'lazybridge', 'lazytools', 'trafilatura']
 missing = []
 for m in mods:
     try:

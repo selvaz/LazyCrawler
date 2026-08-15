@@ -53,6 +53,17 @@ def _region_reports(session_id: str) -> list[Path]:
     return sorted(REPORT_DIR.glob(f"news_full_{session_id}_*.md"))
 
 
+def _digest_reports(session_id: str) -> list[Path]:
+    """Every digest file for this session -- the plain, unsuffixed
+    ``news_digest_<session>.md`` (single-engine, the default) plus any
+    ``news_digest_<session>_<engine>.md`` variants (comparison mode, see
+    make_news_report.py --digest-engines)."""
+    exact = REPORT_DIR / f"news_digest_{session_id}.md"
+    paths = [exact] if exact.exists() else []
+    paths += sorted(REPORT_DIR.glob(f"news_digest_{session_id}_*.md"))
+    return paths
+
+
 def _split_text(text: str, max_bytes: int) -> list[str]:
     """Split on paragraph boundaries ('\\n---\\n' article separators) into
     chunks no bigger than max_bytes (UTF-8), keeping articles intact."""
@@ -96,7 +107,7 @@ def main() -> int:
         )
         return 1
 
-    digest_path = REPORT_DIR / f"news_digest_{session_id}.md"
+    digest_paths = _digest_reports(session_id)
     cost_path = REPORT_DIR / f"news_cost_{session_id}.md"
     region_paths = _region_reports(session_id)
     if not region_paths:
@@ -113,7 +124,11 @@ def main() -> int:
     n_articles = sum(region_counts.values())
 
     if args.dry_run:
-        print(f"Would send: {digest_path if digest_path.exists() else '(no digest)'}")
+        if digest_paths:
+            for dp in digest_paths:
+                print(f"Would send: {dp}")
+        else:
+            print("Would send: (no digest)")
         print(f"Would send: {cost_path if cost_path.exists() else '(no cost report)'}")
         for region, count in region_counts.items():
             print(f"Would send [{region}]: {count} articles")
@@ -129,15 +144,22 @@ def main() -> int:
         return 2
 
     with TelegramClient.from_token(token) as client:
-        if digest_path.exists():
-            send_document(
-                client,
-                chat_id=chat_id,
-                filename=digest_path.name,
-                content=digest_path.read_bytes(),
-                caption=f"News digest | {session_id} | {n_articles} articles crawled",
-            )
-            print(f"Sent Telegram document: {digest_path.name}")
+        if digest_paths:
+            prefix = f"news_digest_{session_id}"
+            for digest_path in digest_paths:
+                # Unsuffixed (single-engine, the common case) -> no
+                # per-engine label; "news_digest_<session>_<engine>.md"
+                # (comparison mode) -> label the caption with <engine>.
+                stem_suffix = digest_path.stem[len(prefix) :].lstrip("_")
+                label = f" ({stem_suffix})" if stem_suffix else ""
+                send_document(
+                    client,
+                    chat_id=chat_id,
+                    filename=digest_path.name,
+                    content=digest_path.read_bytes(),
+                    caption=f"News digest{label} | {session_id} | {n_articles} articles crawled",
+                )
+                print(f"Sent Telegram document: {digest_path.name}")
         else:
             client.send_message(
                 chat_id=chat_id,

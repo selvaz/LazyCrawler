@@ -1,0 +1,34 @@
+# Example source list for run_news_crawl.py.
+#
+# Fictitious on purpose: these feeds belong to nobody's real desk and are
+# not reachable. Nothing reads this file unless you pass it explicitly:
+#
+#     python run_news_crawl.py --sources-config examples/news_sources.example.yaml
+#
+# There is no default list. A crawl running silently against someone else's
+# curation produces a plausible digest of the wrong world.
+#
+# Order is preserved and matters: the crawl walks the list in order.
+#
+# mode: "ml" is the no-LLM path — cheap, and the NLP stack is English-tuned.
+# "smart" is LLM extraction, worth its cost for languages the ml path reads
+# badly.
+sources:
+  - name: Example Financial Wire
+    url: https://example.invalid/feeds/finance.xml
+    category: financial
+    region: global
+    lang: en
+    mode: ml
+  - name: Example Central Bank
+    url: https://example.invalid/feeds/centralbank.xml
+    category: central_bank
+    region: europe
+    lang: en
+    mode: ml
+  - name: Example Local Daily
+    url: https://example.invalid/feeds/local.xml
+    category: geopolitical
+    region: latam
+    lang: pt
+    mode: smart

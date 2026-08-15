@@ -28,11 +28,9 @@ from pathlib import Path
 
 import feedparser
 
-sys.path.insert(0, str(Path(__file__).parent))
-
-from lazycrawler import CrawlerConfig, CrawlerDB, DBConfig, LLMConfig, WebCrawler  # noqa: E402
-from lazycrawler.http import HTTPClient  # noqa: E402
-from news_sources import SOURCES  # noqa: E402
+from lazycrawler import CrawlerConfig, CrawlerDB, DBConfig, LLMConfig, WebCrawler
+from lazycrawler.http import HTTPClient
+from news_sources import load_sources
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DB = ROOT / "news.db"
@@ -98,6 +96,15 @@ def _feed_items(
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Crawl the news-monitor source list")
+    p.add_argument(
+        "--sources-config",
+        required=True,
+        metavar="PATH",
+        help="YAML source list. Required: there is no default and no search "
+        "path, because a crawl running silently against someone else's "
+        "curation produces a plausible digest of the wrong world. See "
+        "examples/news_sources.example.yaml.",
+    )
     p.add_argument("--db", default=str(DEFAULT_DB), help="Dedicated SQLite DB path")
     p.add_argument(
         "--ml-max-items",
@@ -151,7 +158,7 @@ def main() -> int:
         db=db,
     )
 
-    sources = SOURCES
+    sources = list(load_sources(args.sources_config))
     if args.sources:
         needles = [s.strip().lower() for s in args.sources.split(",")]
         sources = [s for s in sources if any(n in s.name.lower() for n in needles)]

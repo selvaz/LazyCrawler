@@ -1,24 +1,45 @@
 # -*- coding: utf-8 -*-
-"""Curated source list for the news-monitor pipeline (financial + geopolitical).
+"""What a news source is, and how to read a list of them.
 
-Every feed URL below was checked reachable from this VPS on 2026-07-23 (many
-obvious candidates -- Politico, NYT, Britannica, IMF, most Reuters RSS, US
-Treasury, BIS, CFR -- return 403/404 here and are excluded).
+The *shape* is method and stays here: a source has a name, a URL, a
+category, a region, a language and an extraction mode, and a list of them is
+loaded and validated the same way whoever is running it. The *list* is not.
+Which thirty-odd feeds a particular desk watches is an editorial judgement
+about that desk's coverage, and it moves with whoever makes it.
 
-``mode`` picks the LazyCrawler extraction path per source:
+``mode`` picks the extraction path per source:
 
-- "ml"    -- no LLM (TextRank summary, YAKE topics, spaCy NER, VADER
-             sentiment). Used for every English-language source: zero
-             token cost, and the NLP stack itself is English-tuned.
-- "smart" -- LLM extraction (DeepSeek). Used for foreign-language local
-             sources, where the English-tuned ml pipeline would degrade
-             badly; DeepSeek reads the native language directly instead of
-             requiring a separate model per language.
+- ``"ml"`` — no LLM (TextRank summary, YAKE topics, spaCy NER, VADER
+  sentiment). Cheap, and the NLP stack is English-tuned, so it suits
+  English-language sources.
+- ``"smart"`` — LLM extraction. Worth its cost for foreign-language sources,
+  where the English-tuned pipeline degrades badly and a model that reads the
+  language directly avoids needing one model per language.
+
+There is deliberately **no default list** and no search path.
+``load_sources`` requires an explicit file. A crawl silently running against
+someone else's curation would produce a plausible digest of the wrong world.
+
+YAML because the list is edited by hand and carries comments about why a
+feed is in or out — the kind of thing that gets deleted when a format cannot
+hold it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+
+#: The extraction paths a source may ask for.
+MODES = ("ml", "smart")
+
+#: Closed vocabularies. Both are used to group a digest, and a free-text
+#: value cannot be grouped — it just quietly forms a category of one.
+CATEGORIES = ("financial", "central_bank", "geopolitical")
+REGIONS = ("global", "us", "europe", "asia", "africa", "latam", "mena")
+
+#: Every field a source must carry, in the order they are written.
+FIELDS = ("name", "url", "category", "region", "lang", "mode")
 
 
 @dataclass(frozen=True)
@@ -31,291 +52,94 @@ class NewsSource:
     mode: str  # "ml" | "smart"
 
 
-SOURCES: list[NewsSource] = [
-    # -- Financial wires (ml, en) ---------------------------------------
-    # Tried and dropped (checked live 2026-07-23, full-source validation run):
-    # MarketWatch (both feeds) and Folha (both feeds) 100% "Disallowed by
-    # robots.txt" -- honored, not overridden. Investing.com and Seeking
-    # Alpha's article pages 403 every fetch (feed works, articles don't).
-    # Yahoo Finance's article links all redirect to a GDPR consent-wall page
-    # (consent.yahoo.com) from this VPS's apparent geo-IP -- zero real content.
-    NewsSource(
-        "CNBC Markets",
-        "https://www.cnbc.com/id/20910258/device/rss/rss.html",
-        "financial",
-        "us",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "CNBC Economy",
-        "https://www.cnbc.com/id/10000664/device/rss/rss.html",
-        "financial",
-        "us",
-        "en",
-        "ml",
-    ),
-    NewsSource("ForexLive", "https://www.forexlive.com/feed/", "financial", "global", "en", "ml"),
-    NewsSource("Benzinga", "https://www.benzinga.com/feed", "financial", "us", "en", "ml"),
-    # -- Central banks (ml, en) -------------------------------------------
-    NewsSource(
-        "Federal Reserve Press Releases",
-        "https://www.federalreserve.gov/feeds/press_all.xml",
-        "central_bank",
-        "us",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "ECB Press Releases",
-        "https://www.ecb.europa.eu/rss/press.xml",
-        "central_bank",
-        "europe",
-        "en",
-        "ml",
-    ),
-    # -- Geopolitical, major outlets (ml, en) ------------------------------
-    NewsSource(
-        "BBC World",
-        "http://feeds.bbci.co.uk/news/world/rss.xml",
-        "geopolitical",
-        "global",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "Al Jazeera (English)",
-        "https://www.aljazeera.com/xml/rss/all.xml",
-        "geopolitical",
-        "mena",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "The Guardian World",
-        "https://www.theguardian.com/world/rss",
-        "geopolitical",
-        "global",
-        "en",
-        "ml",
-    ),
-    NewsSource("NPR World", "https://feeds.npr.org/1004/rss.xml", "geopolitical", "us", "en", "ml"),
-    NewsSource(
-        "Deutsche Welle World",
-        "https://rss.dw.com/rdf/rss-en-world",
-        "geopolitical",
-        "europe",
-        "en",
-        "ml",
-    ),
-    # -- Regional/local, English-language (ml) -----------------------------
-    NewsSource(
-        "South China Morning Post - China",
-        "https://www.scmp.com/rss/91/feed",
-        "geopolitical",
-        "asia",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "South China Morning Post - Asia",
-        "https://www.scmp.com/rss/318208/feed",
-        "geopolitical",
-        "asia",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "South China Morning Post - Business",
-        "https://www.scmp.com/rss/92/feed",
-        "financial",
-        "asia",
-        "en",
-        "ml",
-    ),
-    # Tried and dropped: Xinhua World RSS is dead (items dated 2017-2018),
-    # China Daily's RSS serves stale/duplicate items with no pubDate, Caixin
-    # Global's RSS host doesn't resolve, Economic Times' RSS returns a valid
-    # but item-less feed shell -- all checked live from this VPS on
-    # 2026-07-23. SCMP remains the only fresh, working China-adjacent source.
-    NewsSource(
-        "Times of India - World",
-        "https://timesofindia.indiatimes.com/rssfeeds/296589292.cms",
-        "geopolitical",
-        "asia",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "Times of India - Business",
-        "https://timesofindia.indiatimes.com/rssfeeds/1898055.cms",
-        "financial",
-        "asia",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "LiveMint - Economy",
-        "https://www.livemint.com/rss/economy",
-        "financial",
-        "asia",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "Hindustan Times - World",
-        "https://www.hindustantimes.com/feeds/rss/world-news/rssfeed.xml",
-        "geopolitical",
-        "asia",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "AllAfrica Headlines",
-        "https://allafrica.com/tools/headlines/rdf/latest/headlines.rdf",
-        "geopolitical",
-        "africa",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "Al-Monitor (Middle East)",
-        "https://www.al-monitor.com/rss",
-        "geopolitical",
-        "mena",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "Middle East Eye", "https://www.middleeasteye.net/rss", "geopolitical", "mena", "en", "ml"
-    ),
-    NewsSource(
-        "Rappler - Nation (Philippines)",
-        "https://www.rappler.com/nation/feed/",
-        "geopolitical",
-        "asia",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "Rappler - World (Philippines)",
-        "https://www.rappler.com/world/feed/",
-        "geopolitical",
-        "asia",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "Rappler - Business (Philippines)",
-        "https://www.rappler.com/business/feed/",
-        "financial",
-        "asia",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "Daily Maverick (South Africa)",
-        "https://www.dailymaverick.co.za/dmrss/",
-        "geopolitical",
-        "africa",
-        "en",
-        "ml",
-    ),
-    NewsSource(
-        "Buenos Aires Times", "https://www.batimes.com.ar/feed", "geopolitical", "latam", "en", "ml"
-    ),
-    # -- Local-language sources (smart / DeepSeek) -------------------------
-    # Section-scoped feeds only (politics/economy/world), not the sitewide
-    # "latest everything" firehose -- the latter mixes in celebrity/gossip/
-    # sports content that has no place in a portfolio-manager news feed
-    # (e.g. Clarin's old "lo-ultimo" feed once surfaced a porn-actress gossip
-    # item alongside the Trump/Saudi and oil headlines).
-    NewsSource(
-        "Clarin - Politica (Argentina, ES)",
-        "https://www.clarin.com/rss/politica/",
-        "geopolitical",
-        "latam",
-        "es",
-        "smart",
-    ),
-    NewsSource(
-        "Clarin - Economia (Argentina, ES)",
-        "https://www.clarin.com/rss/economia/",
-        "financial",
-        "latam",
-        "es",
-        "smart",
-    ),
-    NewsSource(
-        "Clarin - Mundo (Argentina, ES)",
-        "https://www.clarin.com/rss/mundo/",
-        "geopolitical",
-        "latam",
-        "es",
-        "smart",
-    ),
-    NewsSource(
-        "La Nacion - Economia (Argentina, ES)",
-        "https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/economia/",
-        "financial",
-        "latam",
-        "es",
-        "smart",
-    ),
-    NewsSource(
-        "La Nacion - El Mundo (Argentina, ES)",
-        "https://www.lanacion.com.ar/arc/outboundfeeds/rss/category/el-mundo/",
-        "geopolitical",
-        "latam",
-        "es",
-        "smart",
-    ),
-    NewsSource(
-        "G1 - Economia (Brazil, PT)",
-        "https://g1.globo.com/rss/g1/economia/",
-        "financial",
-        "latam",
-        "pt",
-        "smart",
-    ),
-    NewsSource(
-        "InfoMoney (Brazil, PT)",
-        "https://www.infomoney.com.br/feed/",
-        "financial",
-        "latam",
-        "pt",
-        "smart",
-    ),
-    NewsSource(
-        "Al Jazeera (Arabic)",
-        "https://www.aljazeera.net/aljazeerarss/a7c186be-1baa-4bd4-9d80-a84db769f779/73d0e1b4-532f-45ef-b135-bfdff8b8cab9",
-        "geopolitical",
-        "mena",
-        "ar",
-        "smart",
-    ),
-    NewsSource(
-        "NHK News (Japan, JA)",
-        "https://www3.nhk.or.jp/rss/news/cat0.xml",
-        "geopolitical",
-        "asia",
-        "ja",
-        "smart",
-    ),
-    NewsSource(
-        "RFI Afrique (FR)",
-        "https://www.rfi.fr/fr/afrique/rss",
-        "geopolitical",
-        "africa",
-        "fr",
-        "smart",
-    ),
-    NewsSource(
-        "Jeune Afrique (FR)",
-        "https://www.jeuneafrique.com/feed/",
-        "geopolitical",
-        "africa",
-        "fr",
-        "smart",
-    ),
+class SourcesError(ValueError):
+    """The source list is missing, malformed or incoherent."""
+
+
+def _require(raw: dict, key: str, where: str) -> str:
+    if key not in raw:
+        raise SourcesError(f"{where}: missing '{key}'")
+    value = raw[key]
+    if not isinstance(value, str) or not value.strip():
+        raise SourcesError(f"{where}: '{key}' must be a non-empty string")
+    if value != value.strip():
+        # Refused rather than trimmed: " CNBC" and "CNBC" would silently
+        # become the same source, hiding a typo in a hand-edited list.
+        raise SourcesError(f"{where}: '{key}' must not have surrounding whitespace")
+    return value
+
+
+def load_sources(path: str | Path) -> tuple[NewsSource, ...]:
+    """Load and validate a source list.
+
+    Order is preserved and is part of the contract: a crawl walks the list in
+    order, and a digest groups what it finds, so reordering changes what a
+    reader sees first.
+
+    Raises:
+        SourcesError: The file is absent or unparseable, an entry is missing
+            a field, a value is outside its vocabulary, or two entries share
+            a name or a URL. Duplicates are refused rather than
+            de-duplicated: in a hand-edited list a repeat is a mistake, and
+            silently dropping one hides which.
+    """
+    import yaml
+
+    p = Path(path)
+    if not p.is_file():
+        raise SourcesError(f"source list not found: {p}")
+    try:
+        raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise SourcesError(f"{p.name}: not valid YAML: {exc}") from exc
+
+    if not isinstance(raw, dict) or "sources" not in raw:
+        raise SourcesError(f"{p.name}: expected a mapping with a 'sources' key")
+    entries = raw["sources"]
+    if not isinstance(entries, list) or not entries:
+        raise SourcesError(f"{p.name}: 'sources' must be a non-empty list")
+
+    sources: list[NewsSource] = []
+    for i, entry in enumerate(entries):
+        where = f"{p.name}: sources[{i}]"
+        if not isinstance(entry, dict):
+            raise SourcesError(f"{where}: expected a mapping, got {type(entry).__name__}")
+        unknown = set(entry) - set(FIELDS)
+        if unknown:
+            raise SourcesError(f"{where}: unknown field(s) {sorted(unknown)}")
+        values = {field: _require(entry, field, where) for field in FIELDS}
+        if values["category"] not in CATEGORIES:
+            raise SourcesError(
+                f"{where}: category {values['category']!r} is not one of {list(CATEGORIES)}"
+            )
+        if values["region"] not in REGIONS:
+            raise SourcesError(
+                f"{where}: region {values['region']!r} is not one of {list(REGIONS)}"
+            )
+        if values["mode"] not in MODES:
+            raise SourcesError(f"{where}: mode {values['mode']!r} is not one of {list(MODES)}")
+        sources.append(NewsSource(**values))
+
+    for field in ("name", "url"):
+        seen: dict[str, int] = {}
+        for i, source in enumerate(sources):
+            value = getattr(source, field)
+            if value in seen:
+                raise SourcesError(
+                    f"{p.name}: sources[{i}] repeats the {field} of sources[{seen[value]}]: "
+                    f"{value!r}"
+                )
+            seen[value] = i
+
+    return tuple(sources)
+
+
+__all__ = [
+    "CATEGORIES",
+    "FIELDS",
+    "MODES",
+    "REGIONS",
+    "NewsSource",
+    "SourcesError",
+    "load_sources",
 ]
