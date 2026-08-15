@@ -12,12 +12,17 @@ param(
     # another's.
     [Parameter(Mandatory)] [string] $QueryCycle,
     [Parameter(Mandatory)] [string] $BaselineCycle,
-    [Parameter(Mandatory)] [int]    $BaselineCount
+    [Parameter(Mandatory)] [int]    $BaselineCount,
+    # Mandatory for the same reason: an interpreter hard-coded here is a
+    # deployment decision written into a public wrapper, it silently outranks
+    # whatever the caller believes it chose, and a wrong one does not fail --
+    # it runs against a different set of installed packages and reports
+    # success.
+    [Parameter(Mandatory)] [string] $Python
 )
 
 $ErrorActionPreference = 'Continue'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Python = 'C:\ProgramData\spyder-6\python.exe'
 
 Set-Location $Root
 

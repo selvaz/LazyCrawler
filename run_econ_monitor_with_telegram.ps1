@@ -6,9 +6,17 @@
 #   TELEGRAM_CHAT_ID
 #   CRAWLER_ARTIFACTS_DB   (optional -- artifact registration is best-effort)
 
+param(
+    # The interpreter that runs this job's Python steps. Mandatory and with no
+    # default: an interpreter hard-coded here is a deployment decision written
+    # into a public wrapper, and it silently outranks whatever the caller
+    # believes it chose. A wrong one does not fail either -- it runs the job
+    # against a different set of installed packages and reports success.
+    [Parameter(Mandatory)] [string] $Python
+)
+
 $ErrorActionPreference = 'Continue'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Python = 'C:\ProgramData\spyder-6\python.exe'
 
 Set-Location $Root
 
