@@ -13,15 +13,10 @@ A summary that invents a figure is worse than no summary.
 from __future__ import annotations
 
 import json
-import sys
 from datetime import date
 
-sys.path.insert(0, r'C:/Users/Administrator/Documents/GitHub/market-data-hub')
-
-from pydantic import BaseModel, Field  # noqa: E402
-
-from lazybridge import Agent  # noqa: E402
-from lazybridge_claude_code import ClaudeCodeEngine  # noqa: E402
+from lazybridge import Agent, ClaudeCodeEngine
+from pydantic import BaseModel, Field
 
 
 class ExecutiveSummary(BaseModel):

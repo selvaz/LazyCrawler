@@ -11,19 +11,15 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
 
-sys.path.insert(0, r'C:/Users/Administrator/Documents/GitHub/market-data-hub')
-sys.path.insert(0, str(Path(__file__).parent))
-
-from arricchisci_giornata import enrich_day          # noqa: E402
-from report_giornata import compose_text, day_rows   # noqa: E402
-from render_report import render_html                # noqa: E402
-from sintesi import build_summary                    # noqa: E402
+from .arricchisci_giornata import enrich_day
+from .render_report import render_html
+from .report_giornata import compose_text, day_rows
+from .sintesi import build_summary
 
 
 def send(path: Path, caption: str) -> None:
@@ -37,6 +33,14 @@ def send(path: Path, caption: str) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="prova_integrata.duckdb")
+    ap.add_argument("--news-dir", required=True,
+                    help="where run_news_crawl.py writes news_full_news_*.md; "
+                         "there is no default, because a wrong one returns "
+                         "nothing and looks like a quiet day")
+    ap.add_argument("--news-db", default=None,
+                    help="crawler database web searches persist into "
+                         "(news.db). Without it every page fetched is "
+                         "discarded when the search closes.")
     ap.add_argument("--from-day", default="2026-08-10")
     ap.add_argument("--to-day", default="2026-08-14")
     ap.add_argument("--no-send", action="store_true")
@@ -59,7 +63,9 @@ if __name__ == "__main__":
 
         if not args.no_enrich:
             con = duckdb.connect(args.db)
-            ok, failed = enrich_day(con, day, regenerate=args.regenerate,
+            ok, failed = enrich_day(con, day, news_dir=args.news_dir,
+                                    news_db=args.news_db,
+                                    regenerate=args.regenerate,
                                     search_cap=args.search_cap)
             con.close()                       # commit before the next day
             totals["enriched"] += ok

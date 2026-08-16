@@ -8,14 +8,10 @@ named.
 """
 import argparse
 import os
-import sys
 from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
-
-sys.path.insert(0, r'C:/Users/Administrator/Documents/GitHub/market-data-hub')
-sys.path.insert(0, str(Path(__file__).parent))
 
 MARK = {'T1': '\u25cf', 'T2': '\u25cb', 'T3': '\u00b7'}
 AREAS = {'US': 'United States', 'CN': 'China', 'EZ': 'Euro area', 'UK': 'United Kingdom',
@@ -125,8 +121,8 @@ if __name__ == '__main__':
 
     # The HTML file is the report; the Telegram text is the caption that carries
     # it, not an alternative format.
-    from render_report import render_html
-    from sintesi import build_summary
+    from .render_report import render_html
+    from .sintesi import build_summary
     summary = build_summary(day, rows)
     path = Path(args.html) if args.html else Path('reports/econ') / f'calendar_{day}.html'
     path.parent.mkdir(parents=True, exist_ok=True)

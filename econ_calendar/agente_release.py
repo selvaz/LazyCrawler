@@ -24,19 +24,16 @@ Two constraints learned by measuring, not by assuming:
 """
 from __future__ import annotations
 
-import sys
+from pathlib import Path
 from typing import Optional
 
+from lazybridge import Agent, ClaudeCodeEngine, LLMEngine, Tool
 from pydantic import BaseModel, Field
 
-sys.path.insert(0, r'C:/Users/Administrator/Documents/GitHub/LazyCrawler')
+from lazycrawler import CrawlerDB, DBConfig, WebSearch
 
-from lazybridge import Agent, LLMEngine, Tool  # noqa: E402
-from lazybridge_claude_code import ClaudeCodeEngine  # noqa: E402
-from lazycrawler import WebSearch  # noqa: E402
-
-from domini_bloccati import carica as domini_bloccati  # noqa: E402
-from fonti_locali import read_daily_digest, search_collected_articles  # noqa: E402
+from .domini_bloccati import carica as domini_bloccati
+from .fonti_locali import read_daily_digest, search_collected_articles
 
 # The bulk of the work -- many searches, a lot of text to sift -- runs on the
 # cheap model. The relevance judgement does not: it is the one place where an
@@ -79,6 +76,43 @@ class Enrichment(BaseModel):
 _ricerche = 0
 CAP_RICERCHE: Optional[int] = None      # None = count, do not refuse
 
+#: Where the news crawl's markdown lives, and the crawler database web searches
+#: persist into. Both are set by `configura()` before an agent is built. They
+#: are module state because the tools the model calls take only the arguments
+#: the model chooses -- a directory and a database are configuration, and a
+#: model asked to supply them would be being asked to guess.
+_NEWS_DIR: Optional[Path] = None
+_NEWS_DB = None
+
+
+def configura(news_dir, news_db=None) -> None:
+    """Bind the enrichment to one machine's directories, once, explicitly.
+
+    `news_dir` used to be a module-level absolute path, which meant this only
+    worked on the machine it was written on and said nothing when it did not:
+    a missing directory reads exactly like a day on which nothing was
+    published. `news_db` is the crawler database the web searches persist
+    into; without it every page fetched is discarded when the search closes.
+    """
+    global _NEWS_DIR, _NEWS_DB
+    p = Path(news_dir)
+    if not p.is_dir():
+        raise NotADirectoryError(f"news directory not found: {p}")
+    _NEWS_DIR = p
+    if news_db is not None and not isinstance(news_db, CrawlerDB):
+        news_db = CrawlerDB(DBConfig(db_path=str(news_db)))
+    _NEWS_DB = news_db
+
+
+def _news_dir_richiesta() -> Path:
+    if _NEWS_DIR is None:
+        raise RuntimeError(
+            "econ_calendar.agente_release.configura(news_dir=...) has not been "
+            "called. The tools read one machine's news directory and there is "
+            "no default: a wrong guess would return empty results that look "
+            "like a quiet day.")
+    return _NEWS_DIR
+
 
 def nuovo_evento(cap: Optional[int] = None) -> int:
     """Open the budget for a new release. Returns the previous one's count."""
@@ -90,6 +124,31 @@ def nuovo_evento(cap: Optional[int] = None) -> int:
 
 def ricerche_fatte() -> int:
     return _ricerche
+
+
+def _leggi_digest(day: str) -> str:
+    """Read the curated news digest for a day.
+
+    Args:
+        day: the release date, as YYYY-MM-DD.
+    """
+    return read_daily_digest(day, _news_dir_richiesta())
+
+
+def _cerca_articoli(query: str, day: str) -> str:
+    """Search the articles already crawled for a day.
+
+    Args:
+        query: words to look for, in the language the article is written in.
+        day: the release date, as YYYY-MM-DD.
+    """
+    return search_collected_articles(query, day, _news_dir_richiesta())
+
+
+# The two above exist so the model is asked only for what it can decide. The
+# underlying functions now take the news directory as an argument -- which is
+# right, and is configuration, so it is bound here rather than becoming a
+# parameter the model has to invent a value for.
 
 
 def search_web(query: str, window: str = "w") -> str:
@@ -111,7 +170,15 @@ def search_web(query: str, window: str = "w") -> str:
     # same refusing sites were retried on every event: 601 wasted round trips
     # across the runs, 215 of them on bls.gov alone -- which the agent keeps
     # reaching for precisely because it is told to find the issuing agency.
-    with WebSearch() as search:
+    #
+    # `db` is what makes the pages persist. Built bare, WebSearch keeps
+    # everything it downloads in memory and throws it away at the end of the
+    # `with`: the same page was fetched again on the next release that
+    # mentioned it, and nothing the agent read could be looked at afterwards.
+    # Note that persisting does NOT make `search_collected_articles` find them
+    # -- that reads markdown files off disk, not the database. The two are
+    # separate jobs and only this one is done here.
+    with WebSearch(db=_NEWS_DB) as search:
         outcome = search.run(query, mode="ml", timelimit=window, max_results=4,
                              overrides={"blacklist": domini_bloccati()})
     chunks = []
@@ -238,8 +305,8 @@ release_agent = Agent(
     # la risposta: la busta tornava vuota con MaxTurnsExceeded.
     engine=LLMEngine(MODEL, system=INSTRUCTIONS, max_turns=14),
     tools=[
-        Tool.wrap(read_daily_digest, name="read_daily_digest"),
-        Tool.wrap(search_collected_articles, name="search_collected_articles"),
+        Tool.wrap(_leggi_digest, name="read_daily_digest"),
+        Tool.wrap(_cerca_articoli, name="search_collected_articles"),
         Tool.wrap(search_web, name="search_web"),
     ],
     output=Enrichment,

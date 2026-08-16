@@ -21,24 +21,38 @@ import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-NEWS_DIR = Path(r'C:/Users/Administrator/Documents/GitHub/LazyCrawler/reports/news')
+
+#: Where the news crawl writes its markdown. There is no default: this used to
+#: be one machine's absolute path, which meant the module only worked on that
+#: machine and said nothing about it -- an empty digest and a missing directory
+#: are indistinguishable from "nothing was published that day". The caller
+#: passes it, and `_news_dir` refuses a path that is not there.
+def _news_dir(news_dir) -> Path:
+    p = Path(news_dir)
+    if not p.is_dir():
+        raise NotADirectoryError(
+            f"news directory not found: {p}. It is where run_news_crawl.py "
+            f"writes news_full_news_*.md; without it every lookup would come "
+            f"back empty and look like a quiet day.")
+    return p
+
 DIGEST_CAP = 24_000       # the digest is small enough to read whole
 PASSAGE_CAP = 12_000      # extracted passages: enough to judge, not enough to drown
 WINDOW = 500              # characters returned around a hit, for the reader
 JUDGE_WINDOW = 140        # characters used to DECIDE relevance: a sentence or two
 
 
-def _run_ids() -> list[str]:
+def _run_ids(news_dir) -> list[str]:
     """Run identifiers, newest first. Only the timestamped ones are real runs."""
     ids = set()
-    for f in NEWS_DIR.glob('news_full_news_*_global.md'):
+    for f in _news_dir(news_dir).glob('news_full_news_*_global.md'):
         m = re.search(r'news_full_news_(\d{8}_\d{6})_global\.md$', f.name)
         if m:
             ids.add(m.group(1))
     return sorted(ids, reverse=True)
 
 
-def runs_for(day: str, lookahead_days: int = 2) -> list[str]:
+def runs_for(day: str, news_dir, lookahead_days: int = 2) -> list[str]:
     """Runs that can plausibly cover a release on ``day``.
 
     A release is commented on after it happens, so the useful runs are the ones
@@ -48,7 +62,7 @@ def runs_for(day: str, lookahead_days: int = 2) -> list[str]:
     d = date.fromisoformat(day)
     limite = d + timedelta(days=lookahead_days)
     out = []
-    for rid in _run_ids():
+    for rid in _run_ids(news_dir):
         try:
             stamp = datetime.strptime(rid, '%Y%m%d_%H%M%S').date()
         except ValueError:
@@ -58,7 +72,7 @@ def runs_for(day: str, lookahead_days: int = 2) -> list[str]:
     return out
 
 
-def read_daily_digest(day: str) -> str:
+def read_daily_digest(day: str, news_dir) -> str:
     """Read the news digests covering a given day (YYYY-MM-DD).
 
     This is the first place to look: it is already filtered for market
@@ -68,13 +82,13 @@ def read_daily_digest(day: str) -> str:
     Args:
         day: the release date, as YYYY-MM-DD.
     """
-    runs = runs_for(day)
+    runs = runs_for(day, news_dir)
     if not runs:
         return f"No news run covering {day}."
     pieces = []
     for rid in runs[:2]:                      # the run of the day and the next one
         for pattern in (f'digest_delta_*{rid}*.md', f'news_digest_*{rid}*.md'):
-            for f in sorted(NEWS_DIR.glob(pattern)):
+            for f in sorted(_news_dir(news_dir).glob(pattern)):
                 pieces.append(f"--- {f.name}\n{f.read_text(encoding='utf-8', errors='replace')}")
     if not pieces:
         return f"No digest file for the runs covering {day}."
@@ -82,7 +96,7 @@ def read_daily_digest(day: str) -> str:
     return text[:DIGEST_CAP]
 
 
-def search_collected_articles(query: str, day: str) -> str:
+def search_collected_articles(query: str, day: str, news_dir) -> str:
     """Search the articles already crawled for that day, without going online.
 
     Use this when the digest does not mention the release: the material is
@@ -93,7 +107,7 @@ def search_collected_articles(query: str, day: str) -> str:
         query: words to look for, e.g. "jobless claims 209,000".
         day: the release date, as YYYY-MM-DD.
     """
-    runs = runs_for(day)
+    runs = runs_for(day, news_dir)
     if not runs:
         return f"No news run covering {day}."
     parole = [w for w in re.split(r'[\s,]+', query.lower()) if len(w) > 2]
@@ -106,7 +120,7 @@ def search_collected_articles(query: str, day: str) -> str:
     # inflation" anchored on "german" returned a typhoon report.
     corpus = []
     for rid in runs[:2]:
-        for f in sorted(NEWS_DIR.glob(f'news_full_news_{rid}_*.md')):
+        for f in sorted(_news_dir(news_dir).glob(f'news_full_news_{rid}_*.md')):
             corpus.append((f.name, f.read_text(encoding='utf-8', errors='replace')))
     if not corpus:
         return f"No collected articles for {day}."
@@ -163,13 +177,19 @@ def search_collected_articles(query: str, day: str) -> str:
 
 
 if __name__ == '__main__':
-    import sys
-    giorno = sys.argv[1] if len(sys.argv) > 1 else '2026-08-13'
-    print('runs:', runs_for(giorno))
-    d = read_daily_digest(giorno)
+    import argparse
+
+    ap = argparse.ArgumentParser(description='Probe the local sources for one day.')
+    ap.add_argument('day', nargs='?', default='2026-08-13')
+    ap.add_argument('--news-dir', required=True,
+                    help='where run_news_crawl.py writes news_full_news_*.md')
+    args = ap.parse_args()
+
+    print('runs:', runs_for(args.day, args.news_dir))
+    d = read_daily_digest(args.day, args.news_dir)
     print(f'\ndigest: {len(d)} char')
     print(d[:400])
     for q in ['jobless claims 209,000', 'UK GDP monthly', 'German CPI inflation']:
-        r = search_collected_articles(q, giorno)
+        r = search_collected_articles(q, args.day, args.news_dir)
         print(f"\n--- '{q}': {len(r)} char")
         print(r[:260].replace('\n', ' '))

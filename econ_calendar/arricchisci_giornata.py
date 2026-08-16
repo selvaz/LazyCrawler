@@ -19,15 +19,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import traceback
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 
 import duckdb
-
-sys.path.insert(0, r'C:/Users/Administrator/Documents/GitHub/market-data-hub')
-sys.path.insert(0, str(Path(__file__).parent))
 
 TIERS = ("T1", "T2")
 
@@ -69,7 +64,7 @@ def salvage(result):
     Either way the searches have already been paid for; discarding the answer
     over its shape would be the expensive choice.
     """
-    from agente_release import Enrichment, formatter
+    from .agente_release import Enrichment, formatter
 
     text = (result.text() or "").strip()
     if not text:
@@ -136,9 +131,22 @@ def save(con, event: dict, result, run_id: str | None, attempts: int = 1) -> str
     return via
 
 
-def enrich_day(con, day: date, *, regenerate=False, limit=None,
-               search_cap=None) -> tuple[int, int]:
-    from agente_release import describe, nuovo_evento, release_agent, ricerche_fatte
+def enrich_day(con, day: date, *, news_dir, news_db=None, regenerate=False,
+               limit=None, search_cap=None) -> tuple[int, int]:
+    """Enrich a day's T1/T2 releases.
+
+    `news_dir` is where the news crawl writes its markdown, and `news_db` the
+    crawler database web searches persist into. Both are arguments rather than
+    module constants: they used to be one machine's absolute paths, which made
+    this importable only there and, worse, silent about it -- a missing
+    directory returns nothing and reads exactly like a quiet day.
+
+    The import is deferred because the agent module reaches lazybridge, which
+    needs Python >= 3.11, and nothing else in this file does.
+    """
+    from .agente_release import configura, describe, nuovo_evento, release_agent, ricerche_fatte
+
+    configura(news_dir=news_dir, news_db=news_db)
 
     events = to_enrich(con, day, regenerate=regenerate)
     if limit:
@@ -184,6 +192,14 @@ def enrich_day(con, day: date, *, regenerate=False, limit=None,
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="prova_integrata.duckdb")
+    ap.add_argument("--news-dir", required=True,
+                    help="where run_news_crawl.py writes news_full_news_*.md; "
+                         "there is no default, because a wrong one returns "
+                         "nothing and looks like a quiet day")
+    ap.add_argument("--news-db", default=None,
+                    help="crawler database web searches persist into "
+                         "(news.db). Without it every page fetched is "
+                         "discarded when the search closes.")
     ap.add_argument("--day", default=str(date.today() - timedelta(days=1)))
     ap.add_argument("--regenerate", action="store_true",
                     help="redo events already enriched today")
@@ -195,6 +211,7 @@ if __name__ == "__main__":
 
     con = duckdb.connect(args.db)
     ok, failed = enrich_day(con, date.fromisoformat(args.day),
+                            news_dir=args.news_dir, news_db=args.news_db,
                             regenerate=args.regenerate, limit=args.limit,
                             search_cap=args.search_cap)
     con.close()
