@@ -287,6 +287,10 @@ def render_html(day: date, rows: list[dict], consensus_source: str, summary=None
         bottoni = '<button class="active" data-tier="all">all</button>' + "".join(
             f'<button data-tier="{t}">{LABEL[t]}</button>' for t in presenti
         )
+        # Emitted once, immediately above the list it filters. It used to be
+        # interpolated both before and after the summary, which put two
+        # elements with id="filters" in the page: the script binds its listener
+        # through getElementById, so the second bar was visible and inert.
         filtri = (
             f'<div class="filter-bar"><div class="toggle-group" id="filters">{bottoni}</div></div>'
         )
@@ -302,7 +306,6 @@ def render_html(day: date, rows: list[dict], consensus_source: str, summary=None
      Consensus from <b>{_e(consensus_source)}</b>: a single source, so that
      expectations from different providers are never compared.
      {f"{enriched} enriched with press coverage." if enriched else ""}</p>
-  {filtri}
   {_summary_block(summary)}
   {filtri}
   {body}

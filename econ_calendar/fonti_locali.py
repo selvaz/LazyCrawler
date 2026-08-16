@@ -56,11 +56,16 @@ def _run_ids(news_dir) -> list[str]:
 
 
 def runs_for(day: str, news_dir, lookahead_days: int = 2) -> list[str]:
-    """Runs that can plausibly cover a release on ``day``.
+    """Runs that can plausibly cover a release on ``day``, oldest first.
 
     A release is commented on after it happens, so the useful runs are the ones
     from that day and the following ones -- the morning digest of day+1 covers
     the previous afternoon. Runs before the release are useless by construction.
+
+    Chronological, not newest-first. The callers take the first few, and the
+    ones that matter most are the earliest in the window: the release day
+    itself, then the morning after. Newest-first put day+2 at the front, which
+    on a backfill is exactly the run least likely to mention the release.
     """
     d = date.fromisoformat(day)
     limite = d + timedelta(days=lookahead_days)
@@ -72,7 +77,29 @@ def runs_for(day: str, news_dir, lookahead_days: int = 2) -> list[str]:
             continue
         if d <= stamp <= limite:
             out.append(rid)
-    return out
+    return sorted(out)
+
+
+def _primi_giorni(runs: list[str], giorni: int = 2) -> list[str]:
+    """The runs belonging to the first ``giorni`` calendar days in ``runs``.
+
+    Slicing the list itself counted *runs*, not days. The news crawl does three
+    cycles a day, so `runs[:2]` was two cycles of one day -- and, when the
+    window started at day+2 because the earlier days had no crawl, two cycles
+    that could not mention the release at all. Selecting by date keeps the
+    intent the old comment stated ("the run of the day and the next one")
+    whatever the cycle count turns out to be.
+    """
+    visti: list[str] = []
+    scelti: list[str] = []
+    for rid in runs:
+        giorno = rid.split("_")[0]
+        if giorno not in visti:
+            if len(visti) >= giorni:
+                break
+            visti.append(giorno)
+        scelti.append(rid)
+    return scelti
 
 
 def read_daily_digest(day: str, news_dir) -> str:
@@ -89,7 +116,7 @@ def read_daily_digest(day: str, news_dir) -> str:
     if not runs:
         return f"No news run covering {day}."
     pieces = []
-    for rid in runs[:2]:  # the run of the day and the next one
+    for rid in _primi_giorni(runs):
         for pattern in (f"digest_delta_*{rid}*.md", f"news_digest_*{rid}*.md"):
             for f in sorted(_news_dir(news_dir).glob(pattern)):
                 pieces.append(f"--- {f.name}\n{f.read_text(encoding='utf-8', errors='replace')}")
@@ -122,7 +149,7 @@ def search_collected_articles(query: str, day: str, news_dir) -> str:
     # monthly" anchored on "gdp" returned Indian trade figures, and "German CPI
     # inflation" anchored on "german" returned a typhoon report.
     corpus = []
-    for rid in runs[:2]:
+    for rid in _primi_giorni(runs):
         for f in sorted(_news_dir(news_dir).glob(f"news_full_news_{rid}_*.md")):
             corpus.append((f.name, f.read_text(encoding="utf-8", errors="replace")))
     if not corpus:

@@ -153,3 +153,97 @@ def test_the_tools_do_not_ask_the_model_for_configuration():
             assert "news_dir" not in nomi, (
                 f"{nodo.name} espone news_dir allo schema dello strumento"
             )
+
+
+# ---------------------------------------------------------------------------
+# The four defects the review found in the ported code. They were in the
+# original files, not introduced by the port, and each is pinned here.
+# ---------------------------------------------------------------------------
+
+
+def test_runs_are_chosen_by_coverage_date_not_by_global_recency(tmp_path):
+    """`runs[:2]` counted runs, not days.
+
+    The crawl does three cycles a day, so two runs could be two cycles of the
+    same day -- and on a backfill, both from day+2, which is the run least
+    likely to mention a release from two days earlier. The release day then
+    contributed nothing and the agent fell through to a web search or a false
+    `not_found`.
+    """
+    from econ_calendar.fonti_locali import _primi_giorni, runs_for
+
+    for stamp in (
+        "20260813_070000",
+        "20260813_130000",
+        "20260813_230000",
+        "20260814_070000",
+        "20260815_070000",
+    ):
+        (tmp_path / f"news_full_news_{stamp}_global.md").write_text("x", encoding="utf-8")
+
+    runs = runs_for("2026-08-13", tmp_path)
+    assert runs == sorted(runs), "i run devono essere cronologici, non dal piu' recente"
+    assert runs[0].startswith("20260813"), "il giorno del rilascio deve venire per primo"
+
+    scelti = _primi_giorni(runs)
+    giorni = {r.split("_")[0] for r in scelti}
+    assert giorni == {"20260813", "20260814"}, (
+        "devono essere il giorno del rilascio e il successivo, non i due run piu' recenti"
+    )
+    assert len(scelti) == 4, "tutti i cicli di quei due giorni, non due run"
+
+
+def test_save_returns_the_enrichment_it_persisted():
+    """The caller used to call `salvage` a second time to get the payload back.
+
+    That is a second nondeterministic model call, paid for, which could also
+    return nothing and raise *after* the row was inserted -- counting the event
+    failed while its note sat persisted, so later runs skipped it.
+    """
+    import ast
+
+    fonte = (PKG / "arricchisci_giornata.py").read_text(encoding="utf-8")
+    albero = ast.parse(fonte)
+    save = next(n for n in ast.walk(albero) if isinstance(n, ast.FunctionDef) and n.name == "save")
+    ritorni = [ast.unparse(n.value) for n in ast.walk(save) if isinstance(n, ast.Return)]
+    # ast.unparse renders `return via, p` as `(via, p)`
+    assert "(via, p)" in ritorni, "save non restituisce piu' il payload insieme al verdetto"
+
+    enrich = next(
+        n for n in ast.walk(albero) if isinstance(n, ast.FunctionDef) and n.name == "enrich_day"
+    )
+    corpo = ast.unparse(enrich)
+    assert "salvage(result)[0]" not in corpo, "enrich_day rifa' salvage per il payload"
+
+
+def test_the_fallback_agent_is_actually_reachable():
+    """It was defined and referenced nowhere.
+
+    The module documents it as the last resort for exactly the case where the
+    primary agent delivers nothing usable -- and that case skipped the release
+    instead.
+    """
+    import ast
+
+    fonte = (PKG / "arricchisci_giornata.py").read_text(encoding="utf-8")
+    assert "fallback_agent" in fonte, "il fallback non e' raggiungibile da nessuna parte"
+    albero = ast.parse(fonte)
+    enrich = next(
+        n for n in ast.walk(albero) if isinstance(n, ast.FunctionDef) and n.name == "enrich_day"
+    )
+    chiamate = {ast.unparse(n.func) for n in ast.walk(enrich) if isinstance(n, ast.Call)}
+    assert "fallback_agent" in chiamate, "enrich_day non invoca il fallback"
+    # and its output must be distinguishable from a reviewed one
+    assert "not reviewed" in ast.unparse(enrich).lower() or "FALLBACK" in ast.unparse(enrich)
+
+
+def test_the_tier_filter_is_rendered_once():
+    """Two elements shared id="filters"; the script binds through
+    getElementById, so the second bar was visible and did nothing."""
+    fonte = (PKG / "render_report.py").read_text(encoding="utf-8")
+    corpo = fonte.split('return f"""<!doctype html>')[1]
+    assert corpo.count("{filtri}") == 1, "la barra dei filtri e' interpolata piu' di una volta"
+    # counted in the emitted markup, not in the file: the comment explaining
+    # this defect names the id too, and a test that counts prose is a test that
+    # goes red when someone documents something.
+    assert corpo.count('id="filters"') == 0, "l'id e' cablato nel template invece che nella barra"

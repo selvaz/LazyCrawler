@@ -113,13 +113,23 @@ def _come_enrichment(payload, modello):
         return None
 
 
-def save(con, event: dict, result, run_id: str | None, attempts: int = 1) -> str | None:
-    """Persist the enrichment. Returns how it was obtained, or None if nothing was."""
+def save(con, event: dict, result, run_id: str | None, attempts: int = 1):
+    """Persist the enrichment.
+
+    Returns ``(how it was obtained, the enrichment)``, or ``(None, None)``.
+
+    The payload comes back with the verdict because the caller needs it to
+    report what was found, and recomputing it meant calling `salvage` a second
+    time -- a second nondeterministic model call, paid for, which could also
+    return nothing and raise *after* the row had already been inserted. The
+    event was then counted as failed while its note sat persisted, so the next
+    run skipped it.
+    """
     p, via = result.payload, "direct"
     if p is None:
         p, via = salvage(result)
     if p is None:
-        return None
+        return None, None
     con.execute(
         """
         INSERT OR REPLACE INTO calendar_event_notes
@@ -143,7 +153,7 @@ def save(con, event: dict, result, run_id: str | None, attempts: int = 1) -> str
             run_id,
         ],
     )
-    return via
+    return via, p
 
 
 def enrich_day(
@@ -160,7 +170,14 @@ def enrich_day(
     The import is deferred because the agent module reaches lazybridge, which
     needs Python >= 3.11, and nothing else in this file does.
     """
-    from .agente_release import configura, describe, nuovo_evento, release_agent, ricerche_fatte
+    from .agente_release import (
+        configura,
+        describe,
+        fallback_agent,
+        nuovo_evento,
+        release_agent,
+        ricerche_fatte,
+    )
 
     configura(news_dir=news_dir, news_db=news_db)
 
@@ -180,22 +197,37 @@ def enrich_day(
         partito = datetime.now(timezone.utc)
         try:
             result = release_agent(describe(e))
-            via = save(con, e, result, run_id=f"enrichment-{day}")
+            via, p = save(con, e, result, run_id=f"enrichment-{day}")
             costo = (
                 f"  [{ricerche_fatte()} searches, "
                 f"{(datetime.now(timezone.utc) - partito).total_seconds():.0f}s]"
             )
+            if via is None:
+                # The declared last resort, actually reached. `fallback_agent`
+                # was defined and referenced nowhere, so the path the module
+                # documents for exactly this case did not exist -- the release
+                # was skipped instead. Its result is deliberately NOT put
+                # through the reviewer, and is recorded as unverified, so a
+                # reader can tell it apart from a judged one.
+                try:
+                    ripiego = fallback_agent(describe(e))
+                    via, p = save(con, e, ripiego, run_id=f"enrichment-{day}")
+                    if via is not None:
+                        via = "fallback"
+                except Exception as exc:
+                    print(f"      fallback failed too: {exc}", flush=True)
+                    via = None
             if via is None:
                 failed += 1
                 print(
                     f"      no usable output, not even after reshaping; skipped{costo}", flush=True
                 )
                 continue
-            p = result.payload if via == "direct" else salvage(result)[0]
             recuperato = {
                 "direct": "",
                 "json": " (json recovered from text)",
                 "haiku": " (prose reshaped by haiku)",
+                "fallback": " (FALLBACK, not reviewed)",
             }[via]
             print(
                 f"      {len(p.commentary)} commentary{recuperato}"
