@@ -38,6 +38,15 @@ dependencies = [
 # SMART mode: extraction/selection via LazyBridge. Also install the provider extra.
 # LazyBridge requires Python >=3.11, so on 3.10 only pure/ml mode is available.
 smart = ["lazybridge>=0.9; python_version >= '3.11'"]
+# The economic-calendar enrichment (econ_calendar/). duckdb because it reads the
+# calendar the collection half writes, lazybridge because the enrichment is an
+# agent -- and it is an extra, not a dependency, because nothing else in this
+# package reads a DuckDB file or needs an LLM. CI does not install it, which is
+# what keeps the modules honest about importing without it.
+calendar = [
+    "duckdb>=1.0",
+    "lazybridge>=0.9; python_version >= '3.11'",
+]
 # PDF extraction (remote): PyMuPDF primary, pypdf fallback, pdfplumber tables.
 pdf = ["pymupdf>=1.23", "pypdf>=4.0", "pdfplumber>=0.10"]
 # WebSearch via DuckDuckGo. certifi backs the CA-bundle fallback in
