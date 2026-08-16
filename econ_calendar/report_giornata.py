@@ -12,8 +12,6 @@ import os
 from datetime import date, timedelta
 from pathlib import Path
 
-import duckdb
-
 MARK = {"T1": "\u25cf", "T2": "\u25cb", "T3": "\u00b7"}
 AREAS = {
     "US": "United States",
@@ -123,6 +121,14 @@ def compose_text(day: date, rows: list[dict]) -> str:
 
 
 if __name__ == "__main__":
+    # duckdb arrives with the `calendar` extra, which CI deliberately does not
+    # install: nothing else in this repository reads a DuckDB file. It is
+    # imported here rather than at module level so the functions above -- which
+    # are handed an open connection and never open one themselves -- can be
+    # imported and tested without it. Deferral, not a fallback: this still
+    # fails loudly and immediately when the extra is missing.
+    import duckdb
+
     p = argparse.ArgumentParser()
     p.add_argument("--db", default="prova_integrata.duckdb")
     p.add_argument("--day", default=str(date.today() - timedelta(days=1)))

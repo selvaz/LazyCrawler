@@ -23,8 +23,6 @@ import json
 import traceback
 from datetime import date, datetime, timedelta, timezone
 
-import duckdb
-
 TIERS = ("T1", "T2")
 
 
@@ -216,6 +214,14 @@ def enrich_day(
 
 
 if __name__ == "__main__":
+    # duckdb arrives with the `calendar` extra, which CI deliberately does not
+    # install: nothing else in this repository reads a DuckDB file. It is
+    # imported here rather than at module level so the functions above -- which
+    # are handed an open connection and never open one themselves -- can be
+    # imported and tested without it. Deferral, not a fallback: this still
+    # fails loudly and immediately when the extra is missing.
+    import duckdb
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="prova_integrata.duckdb")
     ap.add_argument(

@@ -15,8 +15,6 @@ import os
 from datetime import date, timedelta
 from pathlib import Path
 
-import duckdb
-
 from .arricchisci_giornata import enrich_day
 from .render_report import render_html
 from .report_giornata import compose_text, day_rows
@@ -36,6 +34,14 @@ def send(path: Path, caption: str) -> None:
 
 
 if __name__ == "__main__":
+    # duckdb arrives with the `calendar` extra, which CI deliberately does not
+    # install: nothing else in this repository reads a DuckDB file. It is
+    # imported here rather than at module level so the functions above -- which
+    # are handed an open connection and never open one themselves -- can be
+    # imported and tested without it. Deferral, not a fallback: this still
+    # fails loudly and immediately when the extra is missing.
+    import duckdb
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="prova_integrata.duckdb")
     ap.add_argument(
