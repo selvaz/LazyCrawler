@@ -10,6 +10,7 @@ Deliberately not a judge and not a researcher. It has no tools: if a number is
 not in the material it was given, it cannot go and find one, which is the point.
 A summary that invents a figure is worse than no summary.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,20 +22,23 @@ from pydantic import BaseModel, Field
 
 class ExecutiveSummary(BaseModel):
     headline: str = Field(
-        description="One sentence: what the day amounted to, for someone who "
-                    "reads nothing else")
+        description="One sentence: what the day amounted to, for someone who reads nothing else"
+    )
     key_points: list[str] = Field(
         default_factory=list,
         description="Two to four points, each naming the release and the number "
-                    "that matters. No filler.")
+        "that matters. No filler.",
+    )
     implications: str = Field(
         description="What follows for policy expectations or positioning, "
-                    "stated with the uncertainty it deserves")
+        "stated with the uncertainty it deserves"
+    )
     caveats: str | None = Field(
         None,
         description="Where the data itself is weak: expectations that diverged "
-                    "across sources, values the sources disagree on, releases "
-                    "with no coverage found")
+        "across sources, values the sources disagree on, releases "
+        "with no coverage found",
+    )
 
 
 INSTRUCTIONS = """You write the opening summary of a daily macro calendar report, for a
@@ -60,7 +64,7 @@ summary_agent = Agent(
     engine=ClaudeCodeEngine(
         model="sonnet",
         system=INSTRUCTIONS,
-        web=False,          # it summarises what is there; it does not go looking
+        web=False,  # it summarises what is there; it does not go looking
         max_turns=1,
     ),
     output=ExecutiveSummary,
@@ -72,23 +76,27 @@ def _material(day: date, rows: list[dict]) -> str:
     """Everything the summary is allowed to know."""
     parts = [f"Releases of {day:%d %B %Y}.", ""]
     for r in rows:
-        lines = [f"[{r['criticality']}] {r['area']} - {r['name']}"
-                 f"{' (' + r['reference_period'] + ')' if r.get('reference_period') not in (None, '', '-', 'N/D') else ''}"
-                 f" at {r['ora']} UTC"]
+        lines = [
+            f"[{r['criticality']}] {r['area']} - {r['name']}"
+            f"{' (' + r['reference_period'] + ')' if r.get('reference_period') not in (None, '', '-', 'N/D') else ''}"
+            f" at {r['ora']} UTC"
+        ]
         lines.append(f"  actual: {r.get('actual') or 'not published'}")
-        lo, hi = r.get('consensus_low'), r.get('consensus_high')
+        lo, hi = r.get("consensus_low"), r.get("consensus_high")
         if lo is not None and hi is not None and abs(lo - hi) > 0.02 * max(abs(lo), abs(hi), 1e-9):
-            lines.append(f"  expectations DIVERGED across sources: {lo:g} to {hi:g}"
-                         f" - surprise not computable")
-        elif r.get('consensus'):
+            lines.append(
+                f"  expectations DIVERGED across sources: {lo:g} to {hi:g}"
+                f" - surprise not computable"
+            )
+        elif r.get("consensus"):
             lines.append(f"  consensus: {r['consensus']} (from {r.get('consensus_source')})")
-        if r.get('previous'):
+        if r.get("previous"):
             lines.append(f"  previous: {r['previous']}")
-        if r.get('values_agree') is False:
+        if r.get("values_agree") is False:
             lines.append(f"  WARNING: the {r.get('n_sources')} sources disagree on the value")
-        if r.get('drivers'):
+        if r.get("drivers"):
             lines.append(f"  drivers: {r['drivers'][:600]}")
-        raw = r.get('commentary_json')
+        raw = r.get("commentary_json")
         if raw:
             try:
                 for c in json.loads(raw)[:3]:
@@ -119,6 +127,6 @@ def build_summary(day: date, rows: list[dict]):
     if i < 0 or j <= i:
         return None
     try:
-        return ExecutiveSummary.model_validate_json(testo[i:j + 1])
+        return ExecutiveSummary.model_validate_json(testo[i : j + 1])
     except Exception:
         return None

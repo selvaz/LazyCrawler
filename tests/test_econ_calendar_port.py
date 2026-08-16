@@ -5,6 +5,7 @@ Nine files arrived here copied verbatim from a session temp directory. Their
 own README listed what had to change before any of it could run; these tests
 pin each of those items, so none of them can come back quietly.
 """
+
 from __future__ import annotations
 
 import ast
@@ -20,9 +21,17 @@ SORGENTI = sorted(PKG.glob("*.py"))
 
 def test_the_package_exists_and_has_every_file():
     assert SORGENTI, "il pacchetto econ_calendar non c'e'"
-    attesi = {"__init__", "agente_release", "arricchisci_giornata",
-              "domini_bloccati", "fonti_locali", "render_report",
-              "report_giornata", "run_week", "sintesi"}
+    attesi = {
+        "__init__",
+        "agente_release",
+        "arricchisci_giornata",
+        "domini_bloccati",
+        "fonti_locali",
+        "render_report",
+        "report_giornata",
+        "run_week",
+        "sintesi",
+    }
     assert {f.stem for f in SORGENTI} == attesi
 
 
@@ -41,20 +50,27 @@ def test_no_absolute_path_is_inserted_on_import():
             bersaglio = ast.unparse(nodo.func)
             assert bersaglio != "sys.path.insert", f"{f.name} inserisce ancora nel path"
             assert not bersaglio.endswith("path.append"), f"{f.name} appende al path"
-        assert "C:/Users" not in f.read_text(encoding="utf-8"), \
+        assert "C:/Users" not in f.read_text(encoding="utf-8"), (
             f"{f.name} contiene ancora un percorso assoluto di questa macchina"
+        )
 
 
 def test_intra_package_imports_are_relative():
     """They were flat -- `from fonti_locali import ...` -- which only resolved
     because the file's own directory had been put on the path."""
-    interni = {"agente_release", "arricchisci_giornata", "domini_bloccati",
-               "fonti_locali", "render_report", "report_giornata", "sintesi"}
+    interni = {
+        "agente_release",
+        "arricchisci_giornata",
+        "domini_bloccati",
+        "fonti_locali",
+        "render_report",
+        "report_giornata",
+        "sintesi",
+    }
     for f in SORGENTI:
         for nodo in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
             if isinstance(nodo, ast.ImportFrom) and nodo.module in interni:
-                assert nodo.level > 0, \
-                    f"{f.name}: `from {nodo.module} import ...` e' ancora piatto"
+                assert nodo.level > 0, f"{f.name}: `from {nodo.module} import ...` e' ancora piatto"
 
 
 def test_the_claude_code_engine_comes_from_lazybridge():
@@ -108,15 +124,21 @@ def test_the_heavy_import_stays_lazy():
     """lazybridge needs Python >= 3.11 and market-data-hub tests on 3.9. The
     rest of the package -- report, HTML, local sources -- must import without
     it, which is the same shape this repository already uses for `smart`."""
-    for nome in ("fonti_locali", "render_report", "report_giornata",
-                 "arricchisci_giornata", "domini_bloccati"):
+    for nome in (
+        "fonti_locali",
+        "render_report",
+        "report_giornata",
+        "arricchisci_giornata",
+        "domini_bloccati",
+    ):
         modulo = importlib.import_module(f"econ_calendar.{nome}")
         albero = ast.parse(Path(modulo.__file__).read_text(encoding="utf-8"))
-        for nodo in albero.body:          # solo il livello di modulo
+        for nodo in albero.body:  # solo il livello di modulo
             if isinstance(nodo, (ast.Import, ast.ImportFrom)):
                 sorgente = ast.unparse(nodo)
-                assert "lazybridge" not in sorgente, \
+                assert "lazybridge" not in sorgente, (
                     f"{nome} importa lazybridge a livello di modulo: {sorgente}"
+                )
 
 
 def test_the_tools_do_not_ask_the_model_for_configuration():
@@ -126,8 +148,8 @@ def test_the_tools_do_not_ask_the_model_for_configuration():
     testo = (PKG / "agente_release.py").read_text(encoding="utf-8")
     albero = ast.parse(testo)
     for nodo in ast.walk(albero):
-        if isinstance(nodo, ast.FunctionDef) and nodo.name in ("_leggi_digest",
-                                                               "_cerca_articoli"):
+        if isinstance(nodo, ast.FunctionDef) and nodo.name in ("_leggi_digest", "_cerca_articoli"):
             nomi = {a.arg for a in nodo.args.args}
-            assert "news_dir" not in nomi, \
+            assert "news_dir" not in nomi, (
                 f"{nodo.name} espone news_dir allo schema dello strumento"
+            )

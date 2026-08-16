@@ -22,6 +22,7 @@ Two constraints learned by measuring, not by assuming:
     quote the release -- and do: the richest breakdown of any run so far was
     India's CPI, whose ministry never answered once.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,7 +41,7 @@ from .fonti_locali import read_daily_digest, search_collected_articles
 # error reaches the report unseen, so it runs on the subscription through the
 # Claude Agent SDK rather than metered API calls.
 MODEL = "deepseek-v4-flash"
-TEXT_CAP = 4000          # per page: beyond this the context fills with boilerplate
+TEXT_CAP = 4000  # per page: beyond this the context fills with boilerplate
 
 
 class Commentary(BaseModel):
@@ -51,21 +52,25 @@ class Commentary(BaseModel):
     summary: str = Field(description="What it says, in one or two sentences")
     relevance_evidence: str = Field(
         description="The element in the text proving it discusses THIS release: "
-                    "the printed value, the reference period, or the release date")
+        "the printed value, the reference period, or the release date"
+    )
 
 
 class Enrichment(BaseModel):
     commentary: list[Commentary] = Field(
         default_factory=list,
-        description="Only commentary on this release. Better none than a generic one.")
+        description="Only commentary on this release. Better none than a generic one.",
+    )
     drivers: Optional[str] = Field(
-        None, description="What moved the number: components, line items, base effects")
+        None, description="What moved the number: components, line items, base effects"
+    )
     components: Optional[str] = Field(
-        None, description="How the indicator is built and which sub-series weigh most")
+        None, description="How the indicator is built and which sub-series weigh most"
+    )
     technical_source: Optional[str] = Field(
-        None, description="URL of the issuing agency's release, if found")
-    not_found: Optional[str] = Field(
-        None, description="What could not be retrieved, and why")
+        None, description="URL of the issuing agency's release, if found"
+    )
+    not_found: Optional[str] = Field(None, description="What could not be retrieved, and why")
 
 
 # Per-release search budget. Counting and capping are deliberately separate:
@@ -74,7 +79,7 @@ class Enrichment(BaseModel):
 # spans the verify retries too: the budget belongs to the release, not to one
 # attempt at it.
 _ricerche = 0
-CAP_RICERCHE: Optional[int] = None      # None = count, do not refuse
+CAP_RICERCHE: Optional[int] = None  # None = count, do not refuse
 
 #: Where the news crawl's markdown lives, and the crawler database web searches
 #: persist into. Both are set by `configura()` before an agent is built. They
@@ -110,7 +115,8 @@ def _news_dir_richiesta() -> Path:
             "econ_calendar.agente_release.configura(news_dir=...) has not been "
             "called. The tools read one machine's news directory and there is "
             "no default: a wrong guess would return empty results that look "
-            "like a quiet day.")
+            "like a quiet day."
+        )
     return _NEWS_DIR
 
 
@@ -161,10 +167,12 @@ def search_web(query: str, window: str = "w") -> str:
     """
     global _ricerche
     if CAP_RICERCHE is not None and _ricerche >= CAP_RICERCHE:
-        return (f"Search budget for this release is spent ({CAP_RICERCHE} searches). "
-                "This is deliberate, not a failure: conclude with the material you "
-                "already have. If it is not enough, say so in `not_found` and state "
-                "what you searched for. Do not call this tool again.")
+        return (
+            f"Search budget for this release is spent ({CAP_RICERCHE} searches). "
+            "This is deliberate, not a failure: conclude with the material you "
+            "already have. If it is not enough, say so in `not_found` and state "
+            "what you searched for. Do not call this tool again."
+        )
     _ricerche += 1
     # The crawler skips blacklisted domains before the fetch. Without this the
     # same refusing sites were retried on every event: 601 wasted round trips
@@ -179,13 +187,18 @@ def search_web(query: str, window: str = "w") -> str:
     # -- that reads markdown files off disk, not the database. The two are
     # separate jobs and only this one is done here.
     with WebSearch(db=_NEWS_DB) as search:
-        outcome = search.run(query, mode="ml", timelimit=window, max_results=4,
-                             overrides={"blacklist": domini_bloccati()})
+        outcome = search.run(
+            query,
+            mode="ml",
+            timelimit=window,
+            max_results=4,
+            overrides={"blacklist": domini_bloccati()},
+        )
     chunks = []
     for p in outcome.get("results") or []:
         text = (getattr(p, "text", "") or "").strip()
         if not text:
-            continue          # 403 or empty page: no point feeding it to the model
+            continue  # 403 or empty page: no point feeding it to the model
         chunks.append(
             f"--- {getattr(p, 'url', '')}\n"
             f"title: {getattr(p, 'title', '') or ''}\n"
@@ -280,7 +293,7 @@ formatter = Agent(
     engine=ClaudeCodeEngine(
         model="haiku",
         system=FORMAT,
-        web=False,          # it reshapes text, it does not go looking for more
+        web=False,  # it reshapes text, it does not go looking for more
         max_turns=1,
     ),
     output=Enrichment,
@@ -293,7 +306,7 @@ reviewer = Agent(
         model="sonnet",
         system=REVIEW,
         reasoning_effort="medium",
-        web=False,          # the reviewer judges what it is given; it does not search
+        web=False,  # the reviewer judges what it is given; it does not search
         max_turns=1,
     ),
     name="relevance_reviewer",
@@ -347,8 +360,8 @@ fallback_agent = Agent(
     engine=ClaudeCodeEngine(
         model="sonnet",
         system=FALLBACK,
-        web=True,           # cerca da se', senza la cascata di strumenti locali
-        max_turns=14,       # il percorso principale falliva proprio per turni finiti
+        web=True,  # cerca da se', senza la cascata di strumenti locali
+        max_turns=14,  # il percorso principale falliva proprio per turni finiti
     ),
     output=Enrichment,
     name="release_fallback",
@@ -379,9 +392,13 @@ if __name__ == "__main__":
     import json
 
     sample = {
-        "name": "Initial Jobless Claims", "area": "US",
-        "release_utc": "2026-08-13 12:30 UTC", "reference_period": "week to 8 August",
-        "actual": "209K", "consensus": "213 K", "previous": "199 K",
+        "name": "Initial Jobless Claims",
+        "area": "US",
+        "release_utc": "2026-08-13 12:30 UTC",
+        "reference_period": "week to 8 August",
+        "actual": "209K",
+        "consensus": "213 K",
+        "previous": "199 K",
         "agency": "Dept. of Labor",
     }
     result = release_agent(describe(sample))
