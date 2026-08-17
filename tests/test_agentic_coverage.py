@@ -14,16 +14,22 @@ class FinancialArticle(BaseModel):
     headline: str
 
 
-def _tools(db_factory, **kwargs):
+def _tools(db_factory=None, **kwargs):
     # `db` must be explicit: CrawlerTools() falls back to
-    # LAZYCRAWLER_NEWS_DB/LAZYTOOLS_NEWS_DB when neither `db` nor a `db_path`
-    # override is given, and that env var is set at User level on the
-    # machines these tests run on, pointing at the real production news DB.
-    # Without this, the test writes/reads rows against production, poisoning
-    # a later run of itself within the source TTL (D1 in
+    # LAZYCRAWLER_NEWS_DB when neither `db` nor a `db_path` override is
+    # given, and that env var is set at User level on the machines these
+    # tests run on, pointing at the real production news DB. Without this,
+    # the test writes/reads rows against production, poisoning a later run
+    # of itself within the source TTL (D1 in
     # ecosystem-cleanup/docs/deferred-fixes.md). `db_factory` (tests/conftest.py)
     # builds one on a tmp_path file and closes it in fixture teardown.
-    kwargs.setdefault("db", db_factory())
+    #
+    # `db_factory=None` is only for the one test that means to exercise the
+    # real no-db default (the in-memory fallback) instead of routing around
+    # it -- that test deletes the env var itself rather than calling this
+    # with a factory.
+    if db_factory is not None:
+        kwargs.setdefault("db", db_factory())
     return CrawlerTools(
         crawler_cfg=CrawlerConfig(max_depth=1, respect_robots=False),
         http_cfg=HTTPConfig(verify_ssl=False, link_delay=0),
@@ -33,10 +39,19 @@ def _tools(db_factory, **kwargs):
     )
 
 
-def test_default_memory_db_keeps_retrievable_text(stub_fetch, db_factory):
+def test_default_memory_db_keeps_retrievable_text(stub_fetch, monkeypatch):
+    # This test's whole point is the no-db, no-env-var default (CrawlerTools
+    # falls back to an in-memory :memory: cache), so it must NOT go through
+    # db_factory like the others below -- doing so would make this test pass
+    # even if that in-memory fallback were broken. Deleting the env var
+    # (rather than routing through _tools()/db_factory) is what keeps this on
+    # the real default while still not touching production if the var
+    # happens to be set on the machine running it. Flagged by Codex review on
+    # the PR that first introduced db_factory here.
+    monkeypatch.delenv("LAZYCRAWLER_NEWS_DB", raising=False)
     body = "long retained content " * 100
     stub_fetch(body=body)
-    tools = _tools(db_factory)
+    tools = _tools()
     try:
         out = json.loads(tools.web_crawl("https://e.org/retained", depth=0))
         assert out["pages"][0]["full_text_available"] is True
