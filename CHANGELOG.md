@@ -8,6 +8,41 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-08-18
+
+### Added
+- **Economic release monitor** (`run_econ_monitor.py` + wrapper): scheduled
+  BLS/BEA/Census release tracking with cursor state in `ECON_STATE_DB`.
+- **Multi-engine digests with cycle tagging**: `make_news_report.py
+  --digest-engines claude,deepseek --cycle morning|europeclose|usclose`
+  stores every digest in `DIGESTS_DB` keyed `UNIQUE(session_id, engine)`.
+- **Digest delta report** (`make_digest_delta_report.py` + wrapper): what is
+  new in the latest morning digest relative to the last N evening digests.
+- **Economic-calendar enrichment** ported out of its scratchpad into
+  `econ_calendar/` (extra `[calendar]`: duckdb + lazybridge).
+- **DataSpace adapter** (`lazycrawler.dataspace_source.CrawlerSource`,
+  extra `[lazydataspace]`, pinned as an immutable git ref): registers the
+  crawl cache as a `lazydataspace` Source with a schema-validating,
+  read-only health probe.
+- **`DBConfig(read_only=True)`**: opens the cache `mode=ro` and skips every
+  constructor write (WAL pragma, DDL, migrations, FTS build) — a query-only
+  consumer works against a read-only mount and cannot mint an empty
+  database at a mistyped path. `sqlite_ro_uri()` percent-encodes paths.
+
+### Changed
+- The news, digest and econ-state databases resolve from the environment
+  (`LAZYCRAWLER_NEWS_DB`, `DIGESTS_DB`, `ECON_STATE_DB`) instead of
+  checkout-relative paths — a pinned runtime worktree can no longer split
+  the live history away from the declared files.
+- The scheduled wrappers state which interpreter and which scripts they run
+  (`-Python`, explicit leaf names) instead of assuming them.
+
+### Fixed
+- The test suite no longer falls back to the production news DB when the
+  environment leaks `LAZYCRAWLER_NEWS_DB`/`LAZYTOOLS_NEWS_DB`.
+- Seven findings from the crawler's first external review (econ + news
+  paths), including source-failure visibility in the calendar collector.
+
 ## [0.18.0] — 2026-08-02
 
 ### Added
