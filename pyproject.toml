@@ -47,6 +47,17 @@ calendar = [
     "duckdb>=1.0",
     "lazybridge>=0.9; python_version >= '3.11'",
 ]
+# Registers this repo's crawl cache as a Source (lazycrawler.dataspace_source)
+# so a cross-repository workflow can check every source's readiness together
+# before it starts writing. The distribution is `lazydataspace`, not
+# `dataspace` -- that name belongs to an unrelated project on PyPI, and it is
+# not published anywhere, so this is an immutable git ref rather than a bare
+# name a squatter could claim (same pin LazyStats carries). Optional on
+# purpose: nothing else in the package imports it, so the repo installs and
+# runs standalone without it, and a test enforces that.
+lazydataspace = [
+    "lazydataspace @ git+https://github.com/selvaz/DataSpace.git@4c2b71c2e59ea3e7e003d06e6b9b54354edea07e ; python_version >= '3.11'",
+]
 # PDF extraction (remote): PyMuPDF primary, pypdf fallback, pdfplumber tables.
 pdf = ["pymupdf>=1.23", "pypdf>=4.0", "pdfplumber>=0.10"]
 # WebSearch via DuckDuckGo. certifi backs the CA-bundle fallback in
@@ -86,7 +97,7 @@ domains = ["tldextract>=5"]
 news = ["feedparser>=6.0", "PyYAML>=6.0"]
 # Everything. Self-referential so it can never drift from the extras above.
 all = [
-    "lazycrawler[smart,pdf,search,js,excel,dates,markdown,image,ml,nlp,async,domains,news]",
+    "lazycrawler[smart,pdf,search,js,excel,dates,markdown,image,ml,nlp,async,domains,news,lazydataspace]",
 ]
 # Development: tests, coverage, lint/format, build & publish tooling.
 dev = [
