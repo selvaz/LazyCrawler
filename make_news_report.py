@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -50,9 +51,14 @@ from artifact_registry import register_report_artifact  # noqa: E402
 from lazycrawler import CrawlerDB, DBConfig  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_DB = ROOT / "news.db"
+#: Both resolved from the environment first, falling back to the paths beside
+#: this script -- see run_news_crawl.py for why. DIGESTS_DB matters most: it
+#: had no command-line override at all, so unlike the news database it could
+#: not even be repointed by the caller, and every digest written from a pinned
+#: runtime worktree became invisible to readers of the declared path.
+DEFAULT_DB = Path(os.environ.get("LAZYCRAWLER_NEWS_DB") or ROOT / "news.db")
 REPORT_DIR = ROOT / "reports" / "news"
-DIGESTS_DB = REPORT_DIR / "digests.db"
+DIGESTS_DB = Path(os.environ.get("DIGESTS_DB") or REPORT_DIR / "digests.db")
 DIGEST_MODEL = "deepseek-v4-flash"
 #: Recognised --cycle values -- the three scheduled tasks in
 #: setup_scheduler.ps1. Kept loose (validated only where it matters, e.g.

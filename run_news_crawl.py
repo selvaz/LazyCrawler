@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import calendar
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -33,7 +34,14 @@ from lazycrawler.http import HTTPClient
 from news_sources import load_sources
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_DB = ROOT / "news.db"
+#: Resolved from the environment first, falling back to the path beside this
+#: script. The fallback is what this always did; the variable is what lets a
+#: deployment say where its data lives. Without it the database follows the
+#: CHECKOUT rather than the deployment, so running the same job from a pinned
+#: runtime worktree silently starts a second, separate archive -- which is
+#: exactly what happened here on 2026-08-14: four days of crawls landed in the
+#: worktree's own news.db while every reader still pointed at the original.
+DEFAULT_DB = Path(os.environ.get("LAZYCRAWLER_NEWS_DB") or ROOT / "news.db")
 REPORT_DIR = ROOT / "reports" / "news"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 
