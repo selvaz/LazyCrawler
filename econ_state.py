@@ -18,7 +18,9 @@ from pathlib import Path
 #: than an archive, so a second copy does not merely hide data: each copy
 #: advances its own cursor, and whichever runs next re-reports or skips
 #: releases according to a cursor the other one moved.
-DEFAULT_STATE_DB = Path(os.environ.get("ECON_STATE_DB") or Path(__file__).resolve().parent / "econ_state.db")
+DEFAULT_STATE_DB = Path(
+    os.environ.get("ECON_STATE_DB") or Path(__file__).resolve().parent / "econ_state.db"
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS indicator_state (
