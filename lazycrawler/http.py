@@ -748,7 +748,7 @@ class HTTPClient:
             return False
 
     @staticmethod
-    def _decode(body: bytes, content_type: str) -> str:
+    def _decode(body: bytes, content_type: str, *, _confirmed_not_binary: bool = False) -> str:
         enc = HTTPClient._charset_dichiarato(content_type, body)
         if enc:
             try:
@@ -767,7 +767,16 @@ class HTTPClient:
         # extracted title -- a real, previously unnoticed corruption class.
         # charset_normalizer ships as a requests dependency already, so this
         # adds no new install surface.
-        if not HTTPClient._looks_binary(body):
+        #
+        # _confirmed_not_binary lets fetch() (which already ran this same
+        # is_binary() check over the whole body, up to the 5 MB cap, to
+        # decide whether to gate the response at all) skip paying for that
+        # scan a second time here -- a real Codex-review finding: without
+        # it, a headerless text response was fully re-scanned for binary-ness
+        # twice, plus a third full-body pass in from_bytes() below. Standalone
+        # callers (including the tests that exercise this directly) don't
+        # pass it, so they still get the independent, correct check.
+        if _confirmed_not_binary or not HTTPClient._looks_binary(body):
             try:
                 from charset_normalizer import from_bytes
 
@@ -845,7 +854,8 @@ class HTTPClient:
                 # unconditionally could drop a page with perfectly valid
                 # (if noisy or legacy) declared-charset text on a false
                 # positive from the heuristic.
-                if not self._charset_dichiarato(ctype, body) and self._looks_binary(body):
+                dichiarato = self._charset_dichiarato(ctype, body)
+                if not dichiarato and self._looks_binary(body):
                     # content_type is caller-supplied (the server's own
                     # header) and can simply be wrong -- a real Codex-review
                     # finding: decoding a mislabeled binary payload with
@@ -861,7 +871,12 @@ class HTTPClient:
                     )
                     return FetchResult(status=status, content_type=ctype, final_url=final_url)
 
-                html = self._decode(body, ctype)
+                # not dichiarato here means the is_binary() check above ran
+                # and returned False (a truthy dichiarato skips straight past
+                # it) -- reuse that result instead of paying for a second
+                # full-body binary scan plus a third full-body sniff pass
+                # inside _decode() for the same response.
+                html = self._decode(body, ctype, _confirmed_not_binary=not dichiarato)
                 return FetchResult(
                     html=html,
                     text=self._extract_text(html),
