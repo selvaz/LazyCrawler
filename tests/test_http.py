@@ -124,6 +124,95 @@ def test_decode_falls_back_on_unknown_charset():
     assert HTTPClient._decode("ünïcode".encode("utf-8"), "text/html; charset=utf-8") == "ünïcode"
 
 
+def test_decode_falls_back_on_a_registered_but_not_text_codec():
+    """A real Codex-review finding: codecs.lookup() (used to pre-validate a
+    declared charset) accepts bytes-to-bytes-only registry codecs like
+    "base64" -- but bytes.decode("base64") itself then refuses with its OWN
+    LookupError ("not a text encoding"). Pre-validation succeeding does not
+    guarantee the actual decode call will; this must still fall through to
+    sniffing rather than raise and lose an otherwise good 200 response."""
+    body = "café résumé".encode("utf-8")
+    assert HTTPClient._decode(body, "text/html; charset=base64") == "café résumé"
+
+
+def test_decode_sniffs_the_real_charset_when_the_header_is_silent():
+    """Measured live: a German site (goldesel.de) served Windows-1252 with
+    no charset in its Content-Type header at all. The old code then always
+    guessed utf-8, and errors="replace" silently turned every accented
+    letter into "�" -- "Cloud wächst 45%" came back as "Cloud w�chst
+    45%" in a real extracted page title, with no warning anywhere that
+    anything had gone wrong."""
+    corpo = "Alibaba: Cloud wächst 45%".encode("cp1252")
+    assert HTTPClient._decode(corpo, "text/html") == "Alibaba: Cloud wächst 45%"
+
+
+def test_decode_sniffs_charset_from_a_bare_content_type_with_no_charset_param():
+    """The same silent-header case, but with a Content-Type present and just
+    missing the charset parameter -- must not be treated as "charset=" found
+    (it isn't) and must still fall through to sniffing, not a blind utf-8
+    guess."""
+    corpo = "Ökonomie größer wächst".encode("iso-8859-1")
+    assert HTTPClient._decode(corpo, "text/html; boundary=something") == "Ökonomie größer wächst"
+
+
+def test_decode_honors_the_pages_own_meta_charset_declaration():
+    """A real Codex-review finding: byte 0x97 (an earlier version of this
+    test used an em dash there) decodes to the SAME em dash under both
+    windows-1252 AND windows-1250, so it never actually proved the meta
+    declaration -- as opposed to generic statistical sniffing -- drove the
+    result. Byte 0x9C is genuinely different between them (U+0153 "œ" vs
+    U+015B "ś"): the SAME raw byte, declared two different ways, must
+    decode two different (and each individually correct) ways --
+    conclusive proof the <meta charset=...> declaration itself (what
+    charset_normalizer's preemptive_behaviour looks for), not luck,
+    determined the outcome."""
+    corpo = bytes([0x9C])
+    pagina_1252 = b'<html><head><meta charset="windows-1252"></head><body>' + corpo + b"</body></html>"
+    pagina_1250 = b'<html><head><meta charset="windows-1250"></head><body>' + corpo + b"</body></html>"
+    assert chr(0x153) in HTTPClient._decode(pagina_1252, "text/html")  # U+0153 "oe" ligature
+    assert chr(0x15B) in HTTPClient._decode(pagina_1250, "text/html")  # U+015B "s" with acute
+
+
+def test_decode_strips_quotes_around_a_declared_charset(monkeypatch):
+    """A real Codex-review finding: charset="windows-1252" (quoted, valid
+    per RFC 7231) was treated as an unknown codec name (the literal quote
+    characters are not part of any codec name) and silently routed to
+    sniffing instead of using the authoritative, explicitly-declared
+    charset. Asserted two ways: the decoded text is correct, AND sniffing
+    was never even invoked -- "Grüße" alone could otherwise pass this test
+    for the wrong reason (sniffing guessing right by coincidence) without
+    proving the quotes were actually stripped."""
+    import charset_normalizer
+
+    chiamato = {"n": 0}
+    originale = charset_normalizer.from_bytes
+
+    def _spia(*a, **k):
+        chiamato["n"] += 1
+        return originale(*a, **k)
+
+    monkeypatch.setattr(charset_normalizer, "from_bytes", _spia)
+    corpo = "Grüße".encode("windows-1252")
+    assert HTTPClient._decode(corpo, 'text/html; charset="windows-1252"') == "Grüße"
+    assert chiamato["n"] == 0
+
+
+def test_decode_does_not_sniff_plausible_text_out_of_binary_content():
+    """A real Codex-review finding: content_type is caller-supplied and can
+    be wrong -- a binary payload mislabeled as text/html must not have
+    from_bytes()'s fallback matching turn arbitrary bytes into a plausible-
+    looking (but meaningless) string that then gets indexed as real page
+    content. is_binary() (stricter than from_bytes() alone -- fallback
+    matching disabled) gates this."""
+    spazzatura = bytes(range(256)) * 4
+    risultato = HTTPClient._decode(spazzatura, "text/html")
+    # Not asserting an exact string (that's an implementation detail of the
+    # utf-8-replace fallback) -- asserting it did NOT get treated as a
+    # confident text match, i.e. it's dominated by replacement characters
+    # rather than resembling coherent text.
+    assert risultato.count("�") > len(risultato) / 4
+
+
 def test_fetch_retries_then_succeeds(monkeypatch):
     client = HTTPClient(HTTPConfig(max_retries=3, backoff_base_sec=0, verify_ssl=False))
     calls = {"n": 0}
@@ -353,6 +442,107 @@ def test_fetch_returns_pdf_bytes_by_content_type(monkeypatch):
     fr = client.fetch("https://e.org/doc")
     assert fr.content == b"%PDF-1.7 minimal"
     assert fr.html is None  # text extraction skipped for PDFs
+
+
+def test_fetch_skips_indexing_binary_content_mislabeled_as_html(monkeypatch):
+    """A real Codex-review finding: content_type is the server's own header
+    and can simply be wrong. Decoding a binary payload with
+    errors="replace" still hands fetch()'s caller A string -- with nothing
+    to say it isn't real page text, it would otherwise reach
+    _extract_text() and be indexed as if it were. html/text must stay None,
+    the same 'nothing usable' shape a permanent HTTP error already returns."""
+    client = HTTPClient(HTTPConfig(verify_ssl=False))
+    spazzatura = bytes(range(256)) * 4
+
+    class _Resp:
+        status_code = 200
+        headers = {"Content-Type": "text/html"}
+        content = spazzatura
+        text = "garbage"
+        is_redirect = False
+        url = "https://e.org/blob"
+
+        def iter_content(self, chunk_size=0):
+            yield self.content
+
+        def close(self):
+            pass
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(client._session, "get", lambda url, **kw: _Resp())
+    fr = client.fetch("https://e.org/blob")
+    assert fr.status == 200
+    assert fr.html is None
+    assert fr.text is None
+
+
+def test_fetch_trusts_a_declared_charset_over_the_binary_heuristic(monkeypatch):
+    """A real Codex-review finding: is_binary() is a heuristic and can
+    misfire on legitimate but noisy/legacy text -- it must never be
+    consulted (let alone override) when the server has already told us,
+    explicitly, how to decode the body. Forces is_binary() to say "yes,
+    this is binary" and confirms an explicitly declared charset still
+    wins -- the page is decoded, not dropped."""
+    client = HTTPClient(HTTPConfig(verify_ssl=False))
+    monkeypatch.setattr(HTTPClient, "_looks_binary", staticmethod(lambda body: True))
+
+    class _Resp:
+        status_code = 200
+        headers = {"Content-Type": "text/html; charset=windows-1252"}
+        content = "Grüße".encode("windows-1252")
+        text = "garbage"
+        is_redirect = False
+        url = "https://e.org/page"
+
+        def iter_content(self, chunk_size=0):
+            yield self.content
+
+        def close(self):
+            pass
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(client._session, "get", lambda url, **kw: _Resp())
+    fr = client.fetch("https://e.org/page")
+    assert fr.html == "Grüße"
+
+
+def test_fetch_still_gates_binary_content_declared_with_a_bogus_charset(monkeypatch):
+    """A real Codex-review finding: a registered-but-not-text codec
+    (charset=base64) used to make fetch()'s own binary gate look
+    "authoritative" and skip is_binary() entirely, even for genuinely
+    binary content -- the bogus declaration itself is never actually
+    decode-usable, so it must not be trusted as if it were. The declared
+    codec being bogus is exactly the case fetch()'s binary gate must still
+    catch; html/text must stay None, not fall through to a UTF-8-replaced
+    garbage string that reaches _extract_text()."""
+    client = HTTPClient(HTTPConfig(verify_ssl=False))
+    spazzatura = bytes(range(256)) * 4
+
+    class _Resp:
+        status_code = 200
+        headers = {"Content-Type": "text/html; charset=base64"}
+        content = spazzatura
+        text = "garbage"
+        is_redirect = False
+        url = "https://e.org/blob"
+
+        def iter_content(self, chunk_size=0):
+            yield self.content
+
+        def close(self):
+            pass
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(client._session, "get", lambda url, **kw: _Resp())
+    fr = client.fetch("https://e.org/blob")
+    assert fr.html is None
+    assert fr.text is None
 
 
 # -- robots --------------------------------------------------------------------

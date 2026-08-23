@@ -32,6 +32,10 @@ dependencies = [
     "beautifulsoup4>=4.11",
     "trafilatura>=1.6",
     "pydantic>=2.0",
+    # Already installed transitively via requests; declared explicitly
+    # because http.py now imports it directly to sniff a response's real
+    # encoding when the server's HTTP header doesn't declare one.
+    "charset-normalizer>=3.0",
 ]
 
 [project.optional-dependencies]
