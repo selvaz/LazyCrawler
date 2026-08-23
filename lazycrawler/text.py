@@ -220,13 +220,22 @@ def extract_canonical_url(html: str, base_url: str) -> Optional[str]:
 
 
 def extract_page_title(html: str) -> str:
-    """Title from <title> (or <h1> fallback)."""
+    """Title from <title> (or <h1> fallback).
+
+    Unescaped before returning -- measured live: a real page's own source
+    carried its title as literal numeric entities ("w&#xE4;chst"), not raw
+    accented bytes, so callers that don't separately unescape (most don't;
+    this is the shared extraction path) got that entity text verbatim
+    instead of the actual word ("wächst").
+    """
+    import html as _html
+
     m = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
     if m:
-        return re.sub(r"<[^>]+>", "", m.group(1)).strip()
+        return _html.unescape(re.sub(r"<[^>]+>", "", m.group(1)).strip())
     m = re.search(r"<h1[^>]*>(.*?)</h1>", html, re.IGNORECASE | re.DOTALL)
     if m:
-        return re.sub(r"<[^>]+>", "", m.group(1)).strip()
+        return _html.unescape(re.sub(r"<[^>]+>", "", m.group(1)).strip())
     return ""
 
 

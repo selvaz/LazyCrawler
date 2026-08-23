@@ -7,6 +7,7 @@ from lazycrawler.http import compile_exclude
 from lazycrawler.text import (
     extract_candidate_links,
     extract_canonical_url,
+    extract_page_title,
     extract_published_datetime,
     preprocess_text,
 )
@@ -74,6 +75,26 @@ def test_canonical_url():
 
 def test_canonical_url_absent():
     assert extract_canonical_url("<html></html>", "https://e.org/p") is None
+
+
+def test_extract_page_title_unescapes_numeric_entities():
+    """Measured live: a real page's own <title> carried numeric HTML
+    entities ("w&#xE4;chst"), not raw accented characters -- without
+    unescaping, a caller sees the literal entity text, not the actual word
+    ("wächst"), for every accented title from a site that serves them
+    this way (common in German/French-language markup)."""
+    html = "<title>Cloud w&#xE4;chst 45% &#x2013; KI-CapEx dr&#xFC;ckt</title>"
+    assert extract_page_title(html) == "Cloud wächst 45% – KI-CapEx drückt"
+
+
+def test_extract_page_title_unescapes_named_entities_too():
+    html = "<title>Tom &amp; Jerry &quot;Classic&quot;</title>"
+    assert extract_page_title(html) == 'Tom & Jerry "Classic"'
+
+
+def test_extract_page_title_falls_back_to_h1_and_still_unescapes():
+    html = "<html><body><h1>Caf&eacute; Numbers</h1></body></html>"
+    assert extract_page_title(html) == "Café Numbers"
 
 
 def test_published_datetime_from_meta():

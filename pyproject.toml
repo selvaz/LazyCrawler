@@ -32,6 +32,15 @@ dependencies = [
     "beautifulsoup4>=4.11",
     "trafilatura>=1.6",
     "pydantic>=2.0",
+    # Already installed transitively via requests (which only requires
+    # >=2, <4); declared explicitly, and floored at 3.2 specifically,
+    # because http.py's _looks_binary() calls charset_normalizer.is_binary()
+    # -- an API that does not exist before 3.2.0. A real Codex-review
+    # finding: on an environment that resolves an older 3.0.x/3.1.x transitive
+    # pin, that call raises ImportError, which _looks_binary() swallows and
+    # returns False from -- silently treating every headerless response as
+    # confirmed non-binary instead of actually checking.
+    "charset-normalizer>=3.2",
 ]
 
 [project.optional-dependencies]
