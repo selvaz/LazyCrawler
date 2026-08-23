@@ -167,8 +167,12 @@ def test_decode_honors_the_pages_own_meta_charset_declaration():
     charset_normalizer's preemptive_behaviour looks for), not luck,
     determined the outcome."""
     corpo = bytes([0x9C])
-    pagina_1252 = b'<html><head><meta charset="windows-1252"></head><body>' + corpo + b"</body></html>"
-    pagina_1250 = b'<html><head><meta charset="windows-1250"></head><body>' + corpo + b"</body></html>"
+    pagina_1252 = (
+        b'<html><head><meta charset="windows-1252"></head><body>' + corpo + b"</body></html>"
+    )
+    pagina_1250 = (
+        b'<html><head><meta charset="windows-1250"></head><body>' + corpo + b"</body></html>"
+    )
     assert chr(0x153) in HTTPClient._decode(pagina_1252, "text/html")  # U+0153 "oe" ligature
     assert chr(0x15B) in HTTPClient._decode(pagina_1250, "text/html")  # U+015B "s" with acute
 

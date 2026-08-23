@@ -713,7 +713,7 @@ class HTTPClient:
         """
         if "charset=" not in content_type:
             return None
-        enc = content_type.split("charset=")[-1].split(";")[0].strip().strip('"\'')
+        enc = content_type.split("charset=")[-1].split(";")[0].strip().strip("\"'")
         if not enc:
             return None
         try:
@@ -854,7 +854,11 @@ class HTTPClient:
                     # but real page content. html/text stay None, the same
                     # "nothing usable" shape a 4xx status already returns,
                     # so this can never reach _extract_text()/indexing.
-                    log.info("fetch: %s looks like binary content mislabeled as %r - skipping", url, ctype)
+                    log.info(
+                        "fetch: %s looks like binary content mislabeled as %r - skipping",
+                        url,
+                        ctype,
+                    )
                     return FetchResult(status=status, content_type=ctype, final_url=final_url)
 
                 html = self._decode(body, ctype)
