@@ -383,15 +383,12 @@ class _AsyncHTTPClient:
                         content_type=content_type,
                         final_url=current,
                     )
-                enc = None
-                if "charset=" in content_type:
-                    enc = content_type.split("charset=")[-1].split(";")[0].strip() or None
-                try:
-                    html = body.decode(enc or "utf-8", errors="replace")
-                except LookupError:
-                    # Unknown charset token: don't let a good response be retried
-                    # into a fetch_error (parity with HTTPClient._decode).
-                    html = body.decode("utf-8", errors="replace")
+                # Shared with the sync client: a real Codex-review finding on
+                # the sync fix noted this async path still hand-rolled its own
+                # decode and so still corrupted a headerless non-UTF-8 page
+                # ("wächst" -> "w�chst") that HTTPClient._decode now sniffs
+                # correctly via the page's own declared/meta charset.
+                html = HTTPClient._decode(body, content_type)
                 text = self._extract(html)
                 return _AsyncFetchResult(html=html, text=text, status=status, final_url=current)
         log.warning("async: too many redirects (> %d) for %s", cfg.max_redirects, url)

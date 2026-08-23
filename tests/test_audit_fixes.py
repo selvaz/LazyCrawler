@@ -265,6 +265,29 @@ def test_async_body_capped_while_streaming(monkeypatch):
     assert len(fr.html) <= 1000
 
 
+def test_async_sniffs_charset_when_header_is_silent(monkeypatch):
+    """A real Codex-review finding: the sync HTTPClient learned to sniff a
+    page's real charset (BOM / <meta charset>) when the HTTP header is
+    silent, but _fetch_once still hand-rolled its own utf-8-or-declared-
+    charset decode and so still corrupted a headerless Windows-1252 page
+    ("wächst" -> "w�chst"). It must go through the same shared decoder."""
+    import lazycrawler.async_crawler as ac
+
+    async def no_block(url: str) -> bool:
+        return False
+
+    monkeypatch.setattr(ac, "_is_blocked_async", no_block)
+
+    body = "Alibaba: Cloud wächst 45%".encode("cp1252")
+
+    def ok():
+        return _FakeResp(200, {"Content-Type": "text/html"}, body=body)  # no charset param
+
+    client = _make_async_client(monkeypatch, {"https://headerless.example/": ok})
+    fr = asyncio.run(client._fetch_once("https://headerless.example/"))
+    assert fr.html == "Alibaba: Cloud wächst 45%"
+
+
 @requires_aiohttp
 def test_async_preserves_provenance(monkeypatch):
     import lazycrawler.async_crawler as ac
