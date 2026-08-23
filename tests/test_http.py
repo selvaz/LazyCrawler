@@ -146,6 +146,34 @@ def test_decode_sniffs_the_real_charset_when_the_header_is_silent():
     assert HTTPClient._decode(corpo, "text/html") == "Alibaba: Cloud wächst 45%"
 
 
+def test_decode_tolerates_a_byte_cap_that_splits_a_utf8_character():
+    """A real Codex-review finding: a max_html_bytes/max_pdf_bytes cap can
+    truncate a body mid-way through a multibyte UTF-8 character. Handing
+    that truncated tail to charset_normalizer's statistical sniffer let it
+    get fooled into picking an unrelated legacy encoding for the *whole*
+    body (measured: it chose UTF-16BE for an otherwise valid, all-German
+    UTF-8 page cut one byte into an "ä") -- corrupting every character,
+    strictly worse than the old always-UTF-8-with-replace behavior, which
+    only mangled the one incomplete trailing character. A body that is
+    valid UTF-8 except for an incomplete tail must still decode as UTF-8."""
+    testo = "Cloud wächst und wächst, Ökonomie größer, Ünïcode überall"
+    corpo = testo.encode("utf-8")
+    taglio = corpo.find("ä".encode("utf-8")) + 1  # cut inside that multibyte char
+    troncato = corpo[:taglio]
+    risultato = HTTPClient._decode(troncato, "text/html")
+    assert risultato.startswith("Cloud w")
+    assert risultato.count("�") <= 1  # only the incomplete tail char, nothing else
+
+
+def test_decode_still_sniffs_when_body_is_not_utf8_at_all():
+    """Companion to the truncation-tolerance test above: a genuinely
+    non-UTF-8 body (not just cut short) must still fall through to
+    sniffing/meta-charset detection as before -- the tail-truncation
+    check must not swallow real Windows-1252 content."""
+    corpo = "Alibaba: Cloud wächst 45%".encode("cp1252")
+    assert not HTTPClient._utf8_only_truncated_at_tail(corpo)
+
+
 def test_decode_sniffs_charset_from_a_bare_content_type_with_no_charset_param():
     """The same silent-header case, but with a Content-Type present and just
     missing the charset parameter -- must not be treated as "charset=" found

@@ -748,6 +748,24 @@ class HTTPClient:
             return False
 
     @staticmethod
+    def _utf8_only_truncated_at_tail(body: bytes) -> bool:
+        """True iff dropping at most the last 3 bytes (the longest possible
+        incomplete UTF-8 sequence -- a 4-byte codepoint missing its tail)
+        makes the rest decode as strict, valid UTF-8. This distinguishes "the
+        whole body really is UTF-8, just cut off mid-character by a byte cap"
+        from content that genuinely isn't UTF-8 at all (which stays invalid
+        no matter how many trailing bytes are dropped)."""
+        for cut in (1, 2, 3):
+            if cut >= len(body):
+                break
+            try:
+                body[: len(body) - cut].decode("utf-8")
+                return True
+            except UnicodeDecodeError:
+                continue
+        return False
+
+    @staticmethod
     def _decode(body: bytes, content_type: str, *, _confirmed_not_binary: bool = False) -> str:
         enc = HTTPClient._charset_dichiarato(content_type, body)
         if enc:
@@ -759,9 +777,27 @@ class HTTPClient:
                 # should not fire in practice -- kept in case some codec
                 # behaves differently on a longer input than the sample.
                 pass
-        # The HTTP header declared no usable charset -- sniff the body itself
-        # (a BOM, or the page's own <meta charset> declaration) rather than
-        # blindly guessing UTF-8. Measured live: a German site with no header
+        # No usable declared charset. A response body is frequently a
+        # max_html_bytes/max_pdf_bytes-truncated prefix, not the full page,
+        # and a cap can land mid-way through a multibyte UTF-8 sequence --
+        # a real Codex-review finding: handing that to the statistical
+        # sniffer below let it get fooled into picking an unrelated legacy
+        # encoding for the *entire* body (measured: charset_normalizer chose
+        # UTF-16BE for an otherwise valid, all-German UTF-8 page truncated
+        # one byte into an "ä"), corrupting every character -- strictly
+        # worse than the old always-UTF-8 behavior, which only mangled the
+        # one incomplete trailing character. Try a strict whole-body UTF-8
+        # decode first: if it succeeds outright, or fails only because the
+        # last 1-3 bytes are an incomplete tail sequence (the exact shape a
+        # byte cap produces), trust UTF-8 and never reach the sniffer at all.
+        try:
+            return body.decode("utf-8")
+        except UnicodeDecodeError:
+            if HTTPClient._utf8_only_truncated_at_tail(body):
+                return body.decode("utf-8", errors="replace")
+        # Still no usable charset -- sniff the body itself (a BOM, or the
+        # page's own <meta charset> declaration) rather than blindly
+        # guessing UTF-8. Measured live: a German site with no header
         # charset served Windows-1252, and UTF-8-with-errors="replace" then
         # silently turned every accented letter ("wächst") into "�" in every
         # extracted title -- a real, previously unnoticed corruption class.
