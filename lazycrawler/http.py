@@ -751,10 +751,19 @@ class HTTPClient:
     def _utf8_only_truncated_at_tail(body: bytes) -> bool:
         """True iff dropping at most the last 3 bytes (the longest possible
         incomplete UTF-8 sequence -- a 4-byte codepoint missing its tail)
-        makes the rest decode as strict, valid UTF-8. This distinguishes "the
-        whole body really is UTF-8, just cut off mid-character by a byte cap"
-        from content that genuinely isn't UTF-8 at all (which stays invalid
-        no matter how many trailing bytes are dropped)."""
+        makes the rest decode as strict, valid UTF-8.
+
+        Only meaningful together with the caller's own confirmation that the
+        body was actually cut short by a byte cap (see ``_decode``'s
+        ``_may_be_truncated``) -- a real Codex-review finding: a single
+        orphaned tail byte that happens to be a valid UTF-8 lead byte (e.g.
+        the 0xE9 in Windows-1252 "caf\xe9" / "café") is indistinguishable,
+        by byte pattern alone, from a genuinely truncated multibyte UTF-8
+        character -- both are "one lead byte, zero of its continuation bytes
+        present". Checking the byte shape can rule out content that isn't
+        even a plausible truncation (e.g. an invalid start byte deep inside
+        the tail), but cannot by itself prove truncation happened; only the
+        cap bookkeeping in ``fetch()`` can."""
         for cut in (1, 2, 3):
             if cut >= len(body):
                 break
@@ -766,7 +775,13 @@ class HTTPClient:
         return False
 
     @staticmethod
-    def _decode(body: bytes, content_type: str, *, _confirmed_not_binary: bool = False) -> str:
+    def _decode(
+        body: bytes,
+        content_type: str,
+        *,
+        _confirmed_not_binary: bool = False,
+        _may_be_truncated: bool = False,
+    ) -> str:
         enc = HTTPClient._charset_dichiarato(content_type, body)
         if enc:
             try:
@@ -777,24 +792,28 @@ class HTTPClient:
                 # should not fire in practice -- kept in case some codec
                 # behaves differently on a longer input than the sample.
                 pass
-        # No usable declared charset. A response body is frequently a
-        # max_html_bytes/max_pdf_bytes-truncated prefix, not the full page,
-        # and a cap can land mid-way through a multibyte UTF-8 sequence --
-        # a real Codex-review finding: handing that to the statistical
-        # sniffer below let it get fooled into picking an unrelated legacy
-        # encoding for the *entire* body (measured: charset_normalizer chose
-        # UTF-16BE for an otherwise valid, all-German UTF-8 page truncated
-        # one byte into an "ä"), corrupting every character -- strictly
-        # worse than the old always-UTF-8 behavior, which only mangled the
-        # one incomplete trailing character. Try a strict whole-body UTF-8
-        # decode first: if it succeeds outright, or fails only because the
-        # last 1-3 bytes are an incomplete tail sequence (the exact shape a
-        # byte cap produces), trust UTF-8 and never reach the sniffer at all.
-        try:
-            return body.decode("utf-8")
-        except UnicodeDecodeError:
-            if HTTPClient._utf8_only_truncated_at_tail(body):
-                return body.decode("utf-8", errors="replace")
+        # No usable declared charset. When the caller confirms this body was
+        # cut short by its own max_html_bytes/max_pdf_bytes cap (fetch() sets
+        # _may_be_truncated when the read hit the cap), a byte cap can land
+        # mid-way through a multibyte UTF-8 sequence -- a real Codex-review
+        # finding: handing that truncated tail to the statistical sniffer
+        # below let it get fooled into picking an unrelated legacy encoding
+        # for the *entire* body (measured: charset_normalizer chose UTF-16BE
+        # for an otherwise valid, all-German UTF-8 page truncated one byte
+        # into an "ä"), corrupting every character -- strictly worse than the
+        # old always-UTF-8 behavior, which only mangled the one incomplete
+        # trailing character. A second real Codex-review finding: this must
+        # stay gated on actual confirmed truncation, not just "does the tail
+        # look droppable" -- a full, untruncated Windows-1252 response like
+        # "caf\xe9" also has a droppable single tail byte (0xE9 is itself a
+        # valid, if lone, UTF-8 lead byte) and would otherwise be wrongly
+        # swallowed as UTF-8 before ever reaching charset detection.
+        if _may_be_truncated:
+            try:
+                return body.decode("utf-8")
+            except UnicodeDecodeError:
+                if HTTPClient._utf8_only_truncated_at_tail(body):
+                    return body.decode("utf-8", errors="replace")
         # Still no usable charset -- sniff the body itself (a BOM, or the
         # page's own <meta charset> declaration) rather than blindly
         # guessing UTF-8. Measured live: a German site with no header
@@ -874,9 +893,8 @@ class HTTPClient:
                 ctype = (resp.headers.get("Content-Type") or "").lower()
                 final_url = resp.url  # last hop after redirects (for robots/provenance)
                 looks_pdf = "application/pdf" in ctype or url.lower().split("?")[0].endswith(".pdf")
-                body = self._read_capped(
-                    resp, cfg.max_pdf_bytes if looks_pdf else cfg.max_html_bytes
-                )
+                cap = cfg.max_pdf_bytes if looks_pdf else cfg.max_html_bytes
+                body = self._read_capped(resp, cap)
                 resp.close()
                 if looks_pdf or body[:5] == b"%PDF-":
                     # PDF: hand the bytes straight to the PDF pipeline (no re-download).
@@ -911,8 +929,17 @@ class HTTPClient:
                 # and returned False (a truthy dichiarato skips straight past
                 # it) -- reuse that result instead of paying for a second
                 # full-body binary scan plus a third full-body sniff pass
-                # inside _decode() for the same response.
-                html = self._decode(body, ctype, _confirmed_not_binary=not dichiarato)
+                # inside _decode() for the same response. len(body) >= cap
+                # is _read_capped's own truncation signal (it always returns
+                # at most cap bytes): only then may _decode tolerate an
+                # incomplete trailing UTF-8 sequence as a truncation artifact
+                # rather than real (if legacy-encoded) content.
+                html = self._decode(
+                    body,
+                    ctype,
+                    _confirmed_not_binary=not dichiarato,
+                    _may_be_truncated=len(body) >= cap,
+                )
                 return FetchResult(
                     html=html,
                     text=self._extract_text(html),

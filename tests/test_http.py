@@ -155,12 +155,15 @@ def test_decode_tolerates_a_byte_cap_that_splits_a_utf8_character():
     UTF-8 page cut one byte into an "ä") -- corrupting every character,
     strictly worse than the old always-UTF-8-with-replace behavior, which
     only mangled the one incomplete trailing character. A body that is
-    valid UTF-8 except for an incomplete tail must still decode as UTF-8."""
+    valid UTF-8 except for an incomplete tail must still decode as UTF-8
+    when the caller (fetch(), via len(body) >= cap) confirms it was
+    actually cut short by the byte cap -- see the next test for why this
+    must be gated rather than inferred from the tail bytes alone."""
     testo = "Cloud wächst und wächst, Ökonomie größer, Ünïcode überall"
     corpo = testo.encode("utf-8")
     taglio = corpo.find("ä".encode("utf-8")) + 1  # cut inside that multibyte char
     troncato = corpo[:taglio]
-    risultato = HTTPClient._decode(troncato, "text/html")
+    risultato = HTTPClient._decode(troncato, "text/html", _may_be_truncated=True)
     assert risultato.startswith("Cloud w")
     assert risultato.count("�") <= 1  # only the incomplete tail char, nothing else
 
@@ -172,6 +175,26 @@ def test_decode_still_sniffs_when_body_is_not_utf8_at_all():
     check must not swallow real Windows-1252 content."""
     corpo = "Alibaba: Cloud wächst 45%".encode("cp1252")
     assert not HTTPClient._utf8_only_truncated_at_tail(corpo)
+
+
+def test_decode_does_not_tolerate_a_droppable_tail_without_confirmed_truncation():
+    """A real Codex-review finding on the truncation-tolerance fix itself: a
+    single orphaned tail byte that happens to be a valid UTF-8 lead byte is
+    indistinguishable, by byte shape alone, from a genuinely truncated
+    multibyte character. Windows-1252 "...café" ends in 0xE9 ('é'), which is
+    ALSO a valid (if lone) 3-byte UTF-8 lead byte -- dropping it leaves valid
+    ASCII, so the byte-pattern check alone would wrongly call this
+    "truncated UTF-8" and swallow it as "...caf" + replacement char, never
+    reaching charset detection. Without _may_be_truncated (the default),
+    _decode must not take that shortcut and must still sniff. (Body is a
+    full sentence, not a bare 4 bytes -- the statistical sniffer needs
+    enough signal to identify a legacy encoding correctly regardless of this
+    fix; a too-short body is a separate, pre-existing sniffing limitation.)"""
+    testo = "Please come visit our lovely little downtown cafe shop and grab a nice warm café"
+    corpo = testo.encode("cp1252")
+    assert HTTPClient._utf8_only_truncated_at_tail(corpo)  # the ambiguous byte shape alone
+    risultato = HTTPClient._decode(corpo, "text/html")  # but not confirmed truncated
+    assert risultato == testo  # sniffed correctly, not swallowed as "...caf�"
 
 
 def test_decode_sniffs_charset_from_a_bare_content_type_with_no_charset_param():
@@ -448,6 +471,36 @@ def test_fetch_caps_html_bytes(monkeypatch):
     fr = client.fetch("https://e.org/big")
     assert fr.html is not None
     assert len(fr.html.encode("utf-8", "replace")) <= 100  # body hard-capped
+
+
+def test_fetch_tolerates_the_cap_splitting_a_utf8_character(monkeypatch):
+    """End-to-end wiring check for the truncation-tolerance fix: fetch()
+    itself must recognize (via len(body) >= cap) that _read_capped cut the
+    body short, and pass that confirmation through to _decode -- not just
+    the unit-level _decode() call the other truncation test exercises."""
+    testo = "Cloud wächst und wächst, Ökonomie größer, Ünïcode überall wächst weiter"
+    corpo = testo.encode("utf-8")
+    taglio = corpo.find("ä".encode("utf-8")) + 1  # land exactly mid-character
+    client = HTTPClient(HTTPConfig(verify_ssl=False, max_html_bytes=taglio))
+
+    class _Resp:
+        status_code = 200
+        is_redirect = False
+        headers = {"Content-Type": "text/html"}
+        url = "https://e.org/de"
+
+        def iter_content(self, chunk_size=0):
+            for i in range(0, len(corpo), 8):
+                yield corpo[i : i + 8]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(client._session, "get", lambda url, **kw: _Resp())
+    fr = client.fetch("https://e.org/de")
+    assert fr.html is not None
+    assert fr.html.startswith("Cloud w")
+    assert fr.html.count("�") <= 1
 
 
 def test_fetch_returns_pdf_bytes_by_content_type(monkeypatch):
