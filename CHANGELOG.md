@@ -8,6 +8,37 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.1] — 2026-08-23
+
+### Fixed
+- **Headerless non-UTF-8 pages were silently corrupted.** When a server's
+  `Content-Type` declared no charset at all, the body was always decoded as
+  UTF-8 with `errors="replace"`, turning every accented character into "�"
+  (measured live: a German page's "wächst" came back as "w�chst"). `_decode`
+  now sniffs the real charset (BOM, `<meta charset>`, statistical detection)
+  via `charset_normalizer` when the header is silent, and does the same in
+  the async crawler's `_fetch_once`, which had its own, separately corrupted
+  decode path.
+- **`extract_page_title()` never unescaped HTML entities.** A page whose own
+  `<title>`/`<h1>` markup used numeric or named entities (`w&#xE4;chst`,
+  `&amp;`) returned the literal entity text instead of the real characters.
+- **A byte cap could corrupt an entire page, not just the truncated tail.**
+  When `max_html_bytes`/`max_pdf_bytes` cut a body mid-way through a
+  multibyte UTF-8 character, the new sniffing path above could get fooled
+  into picking an unrelated legacy encoding for the *whole* body (measured:
+  `charset_normalizer` chose UTF-16BE for an otherwise-valid, all-German
+  UTF-8 page truncated one byte into an "ä") — worse than the old
+  always-UTF-8 behavior, which only damaged the one incomplete character.
+  Detection is gated on `fetch()`'s own confirmation that the cap was
+  actually hit, not inferred from the tail bytes alone (a lone valid UTF-8
+  lead byte at the end of a legacy-encoded body, e.g. Windows-1252 "café",
+  is otherwise indistinguishable from a genuine truncation).
+- Redundant binary-detection scanning: a headerless text response was
+  scanned for binary-ness twice plus sniffed a third time; the result is
+  now computed once and threaded through.
+- `charset-normalizer` dependency floor raised to `>=3.2` — `is_binary()`
+  (used by the binary-content gate above) does not exist before 3.2.0.
+
 ## [0.19.0] — 2026-08-18
 
 ### Added
