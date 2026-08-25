@@ -8,6 +8,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.2] — 2026-08-25
+
+### Fixed
+- **The `claude`-engine news digest reported the previous calendar day.**
+  The morning news-crawl job runs at 23:00 on this host's own clock so it
+  lands at 07:00 in Ireland (see `setup_scheduler.ps1`); `ClaudeCodeEngine`
+  reports "today" from that same host clock with no override, so it was
+  consistently one day behind the digest the `deepseek` engine wrote for
+  the same articles. `make_news_report.py`'s `claude` digest agent now
+  passes an explicit Europe/Dublin-based date via `system=`.
+
 ## [0.19.1] — 2026-08-23
 
 ### Fixed
