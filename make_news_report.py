@@ -44,6 +44,7 @@ import sys
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -66,6 +67,14 @@ DIGEST_MODEL = "deepseek-v4-flash"
 #: this is also passed for ad-hoc manual runs that have no fixed cycle.
 CYCLES = ("morning", "europeclose", "usclose")
 UNKNOWN_REGION = "unclassified"
+#: The scheduler runs the morning cycle at 23:00 on this host's own (Pacific)
+#: clock so it lands at 07:00 in Ireland (see setup_scheduler.ps1) -- meaning
+#: the host's local calendar date is still "yesterday" at the moment it fires.
+#: ClaudeCodeEngine has no other source of "today" -- the Claude Code CLI it
+#: launches reads its own process's local OS clock -- so left alone it wrote
+#: the wrong day into the digest. DeepSeek's plain API call carries no such
+#: local-machine date at all, which is why only the Claude digest showed this.
+DIGEST_REFERENCE_TZ = ZoneInfo("Europe/Dublin")
 
 DIGEST_PROMPT = """\
 You are a buy-side macro/portfolio analyst preparing a same-day briefing for
@@ -275,8 +284,22 @@ def _digest_agent(engine_name: str, cost_session):
         # LazyBridge for the auth model. web=False: this
         # is a closed-book synthesis over the article summaries already
         # assembled in `items` below -- it should not go browse the web.
+        #
+        # system=: overrides the Claude Code CLI's own self-reported date,
+        # which otherwise comes from this host's local OS clock (Pacific) --
+        # see DIGEST_REFERENCE_TZ above for why that clock reads "yesterday"
+        # every morning run.
+        today = datetime.now(DIGEST_REFERENCE_TZ).date().isoformat()
         return Agent(
-            engine=ClaudeCodeEngine(model="sonnet", web=False),
+            engine=ClaudeCodeEngine(
+                model="sonnet",
+                web=False,
+                system=(
+                    f"Today's date is {today} (Europe/Dublin). Use this as "
+                    "'today' for this report, not any other date your "
+                    "environment may suggest."
+                ),
+            ),
             name="news_digest_writer_claude",
             session=cost_session,
         )
