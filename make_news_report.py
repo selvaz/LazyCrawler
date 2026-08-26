@@ -231,12 +231,21 @@ def generate_index_summaries(pages: list[dict], cost_session=None) -> None:
     class Summaries(BaseModel):
         summaries: list[str]
 
-    agent = Agent(
-        engine=_bounded_engine(),
-        name="news_index_summarizer",
-        session=cost_session,
-        output=Summaries,
-    )
+    # Guarded like the per-chunk call below, and for the same reason. The
+    # engine this now builds resolves its provider eagerly, so an absent
+    # DEEPSEEK_API_KEY raises *here* rather than at the first call -- which
+    # would take the whole report down, when the contract of this function
+    # has always been that a summariser it cannot use leaves the extracted
+    # summaries in place and lets the regional reports be written anyway.
+    try:
+        agent = Agent(
+            engine=_bounded_engine(),
+            name="news_index_summarizer",
+            session=cost_session,
+            output=Summaries,
+        )
+    except Exception:
+        return
 
     chunk_size = 40
     for start in range(0, len(targets), chunk_size):
