@@ -232,7 +232,10 @@ def generate_index_summaries(pages: list[dict], cost_session=None) -> None:
         summaries: list[str]
 
     agent = Agent(
-        model=DIGEST_MODEL, name="news_index_summarizer", session=cost_session, output=Summaries
+        engine=_bounded_engine(),
+        name="news_index_summarizer",
+        session=cost_session,
+        output=Summaries,
     )
 
     chunk_size = 40
@@ -273,6 +276,42 @@ DIGEST_ENGINES = ("claude", "deepseek")
 DEFAULT_DIGEST_ENGINES = ("claude",)
 
 
+#: Per-HTTP-operation deadline (seconds) for every DeepSeek call this script
+#: makes.  Normal calls here finish in 15-30s.
+_HTTP_TIMEOUT_SECONDS = 90.0
+
+
+def _bounded_engine():
+    """An LLMEngine whose DeepSeek calls cannot hang indefinitely.
+
+    LazyBridge's own ``request_timeout`` is an ``asyncio.wait_for`` around the
+    provider call, and on 2026-08-26 that deadline demonstrably failed to
+    fire: a ``news_index_summarizer`` call ran for 5626 seconds and then
+    returned *successfully*, with ``request_timeout=120.0`` in force and no
+    error or retry recorded.  An asyncio deadline can only act if the
+    cancellation it requests is actually honoured; a timeout on the HTTP
+    client acts one layer down, aborting the socket operation itself, so it
+    does not depend on that.  Both are kept -- ``request_timeout`` still
+    covers the cheap case, this covers the case that got us.
+
+    ``max_retries=0`` disables the *OpenAI SDK's* own retries so they cannot
+    silently multiply LazyBridge's; LazyBridge remains the single owner of
+    retry policy.
+    """
+    from lazybridge import LLMEngine
+    from lazybridge.core.providers import DeepSeekProvider
+
+    provider = DeepSeekProvider(
+        model=DIGEST_MODEL,
+        timeout=_HTTP_TIMEOUT_SECONDS,
+        max_retries=0,
+    )
+    # provider= is typed ``str | None`` upstream but accepts a constructed
+    # provider; this is the only way to reach the client's own timeout from
+    # outside LazyBridge today.
+    return LLMEngine(DIGEST_MODEL, provider=provider)  # type: ignore[arg-type]
+
+
 def _digest_agent(engine_name: str, cost_session):
     from lazybridge import Agent
 
@@ -304,7 +343,11 @@ def _digest_agent(engine_name: str, cost_session):
             session=cost_session,
         )
     if engine_name == "deepseek":
-        return Agent(model=DIGEST_MODEL, name="news_digest_writer_deepseek", session=cost_session)
+        return Agent(
+            engine=_bounded_engine(),
+            name="news_digest_writer_deepseek",
+            session=cost_session,
+        )
     raise ValueError(f"Unknown digest engine {engine_name!r}; expected one of {DIGEST_ENGINES}")
 
 
