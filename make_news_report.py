@@ -338,6 +338,19 @@ def _digest_agent(engine_name: str, cost_session):
                     "'today' for this report, not any other date your "
                     "environment may suggest."
                 ),
+                # This writer sat at 63-78s for a week, then ran 89.2s and
+                # 112.3s on 2026-08-26 -- 94% of the 120s default it was
+                # silently taking.  The next slow run would not have been a
+                # slow digest, it would have been no digest.  300s is ~2.7x
+                # the observed maximum: wide enough that ordinary variance
+                # cannot reach it, and the outer process deadline (the job
+                # runner's timeout_hours tree-kill) is the real guarantee
+                # anyway, so a tight bound here buys nothing and costs runs.
+                #
+                # This deadline covers the whole retry loop rather than each
+                # attempt, so max_retries does not multiply it.
+                request_timeout=300.0,
+                max_retries=3,
             ),
             name="news_digest_writer_claude",
             session=cost_session,
