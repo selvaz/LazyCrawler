@@ -8,6 +8,36 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.3] — 2026-08-28
+
+### Fixed
+- **`preprocess_text`'s pipe-nav filter backtracked catastrophically and froze
+  the interpreter.** `_PIPE_NAV` let `|` be matched by both its prefix and its
+  repeated group, so a long, period-free, pipe-heavy line that does *not* match
+  sent the engine through exponentially many ways to split it — measured on
+  `' | '`-joined 21-character cells: 0.09s at 20 cells, 1.4s at 25, 14.8s at
+  30, 62.5s at 33, roughly 1.6x per added cell. A Wikipedia "list of largest
+  banks" table row is exactly that shape.
+
+  The cost was not a slow page. `re` holds the GIL for the whole match, so a
+  worker thread in this state freezes the whole interpreter: a caller bounding
+  the work with `thread.join(timeout=60)` got no protection at all, because its
+  main thread could not be scheduled to time out. Measured directly, a
+  `join(timeout=3.0)` around such a match returned after 91.5s. A scheduled job
+  burned 7474s of CPU inside `preprocess_text` and produced nothing.
+
+  Excluding `|` from the segment classes is what the pattern already meant — a
+  nav line is pipe-*separated* — and makes matching linear: 5599 characters in
+  1.5ms.
+
+  **Behaviour note:** this cannot leave classification identical, because the
+  old prefix's ability to swallow pipes was itself part of what matched. A nav
+  line with a cell longer than 60 characters (for example a long page title
+  followed by short nav cells) is now **kept** rather than stripped. The
+  alternative — widening the bound — would instead start stripping lines like
+  `A | B | <long> | C` that the old pattern kept, and gutting article text is
+  the worse of the two mistakes.
+
 ## [0.19.2] — 2026-08-25
 
 ### Fixed
