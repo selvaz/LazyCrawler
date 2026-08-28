@@ -195,7 +195,11 @@ def test_pipe_nav_does_not_backtrack_catastrophically():
     try:
         esito = subprocess.run(
             [sys.executable, "-c", programma, os.path.abspath(text_mod.__file__)],
-            cwd=radice, capture_output=True, timeout=30, env=ambiente)
+            cwd=radice,
+            capture_output=True,
+            timeout=30,
+            env=ambiente,
+        )
     except subprocess.TimeoutExpired:
         raise AssertionError(
             "pipe-nav matching did not finish in 30s on a 60-cell line: "
