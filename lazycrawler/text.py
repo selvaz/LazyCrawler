@@ -69,7 +69,36 @@ def _looks_boilerplate_line(stripped: str) -> bool:
     return len(stripped) <= 40 or len(stripped.split()) <= 4
 
 
-_PIPE_NAV = re.compile(r"^[^.\n]{0,200}(\|[^.\n]{0,60}){2,}$")
+# The segment classes exclude "|" deliberately. Allowing it made the prefix
+# and the repeated group both able to match a pipe, so a long, period-free,
+# pipe-heavy line that does NOT match sent the engine through exponentially
+# many ways to split it. Measured on ' | '-joined 21-character cells: 0.09s at
+# 20 cells, 1.4s at 25, 14.8s at 30, 62.5s at 33 -- a factor of ~1.6 per added
+# cell, so a 45-cell line is hours. A Wikipedia "list of largest banks" table
+# row is exactly that shape. Because `re` holds the GIL for a match, this froze
+# the whole interpreter rather than merely slowing one page down -- callers
+# that bound this work with a thread and join(timeout=) got no protection at
+# all, since their main thread could not be scheduled to time it out.
+# Excluding "|" from the segments is what the pattern already meant (a nav
+# line is pipe-SEPARATED), and makes the match linear: 200 cells in 0.6ms.
+#
+# Excluding "|" cannot leave classification exactly as it was, because the old
+# prefix's ability to swallow pipes was itself part of what the pattern
+# matched. The segment bound picks which way the residue falls:
+#
+#   {0,60}  -- "Home | <70 chars> | About | Contact" is now KEPT (the old
+#              pattern stripped it by absorbing the long segment into the
+#              200-char prefix). A nav line survives as content.
+#   {0,200} -- that line is stripped again, but "A | B | <100 chars> | C" is
+#              now stripped too, and the old pattern KEPT it. Article text
+#              gets gutted.
+#
+# 60 is the right side to err on, and this module already says so: the
+# _LINE_NOISE_SHORT note above refuses to drop a line that might be a real
+# sentence, "otherwise legitimate article text is gutted". A surviving nav
+# line costs a reader one junk line; a stripped paragraph costs them the
+# content they came for, silently.
+_PIPE_NAV = re.compile(r"^[^.|\n]{0,60}(\|[^.|\n]{0,60}){2,}$")
 _BREADCRUMB = re.compile(r"^[^.\n]{0,30}\s*[>»›]\s*[^.\n]{0,30}\s*[>»›]")
 _URL_ONLY = re.compile(r"^\s*https?://\S+\s*$")
 
