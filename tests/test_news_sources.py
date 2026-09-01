@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from news_sources import FIELDS, SourcesError, load_sources
+from news_sources import FIELDS, REGIONS, SourcesError, load_sources
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "news_sources.example.yaml"
@@ -66,13 +66,14 @@ class TestALoadedList:
 
     def test_every_field_is_carried_through(self, tmp_path):
         path = write(
-            tmp_path, [entry(lang="pt", mode="smart", region="latam", category="geopolitical")]
+            tmp_path,
+            [entry(lang="pt", mode="smart", region="south_america", category="geopolitical")],
         )
         source = load_sources(path)[0]
         assert (source.lang, source.mode, source.region, source.category) == (
             "pt",
             "smart",
-            "latam",
+            "south_america",
             "geopolitical",
         )
 
@@ -203,3 +204,27 @@ class TestOrdinaryImportsAreEnough:
         later."""
         source = (ROOT / f"{name}.py").read_text(encoding="utf-8")
         assert "noqa: E402" not in source
+
+
+class TestTheRegionVocabulary:
+    """The region names decide what a reader can ask the digest for.
+
+    ``us`` and ``latam`` were retired on 2026-09-01: ``us`` left no place to
+    file a Canadian or Mexican story, and ``latam`` put Mexico City and
+    Buenos Aires in one bucket. Both are easy to reintroduce by habit, so
+    their absence is asserted rather than assumed.
+    """
+
+    @pytest.mark.parametrize("retired", ["us", "latam"])
+    def test_retired_region_names_are_gone(self, retired):
+        assert retired not in REGIONS
+
+    @pytest.mark.parametrize("region", ["north_america", "central_america", "south_america"])
+    def test_the_americas_are_three_separate_regions(self, region):
+        assert region in REGIONS
+
+    @pytest.mark.parametrize("retired", ["us", "latam"])
+    def test_a_retired_region_is_refused(self, tmp_path, retired):
+        path = write(tmp_path, [entry(region=retired)])
+        with pytest.raises(SourcesError, match="region"):
+            load_sources(path)

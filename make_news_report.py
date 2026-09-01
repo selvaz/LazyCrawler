@@ -110,12 +110,12 @@ News items ({n} total):
 #: having reorganised the report.
 GEO_COUNTRY_SECTIONS = (
     "Top stories",
-    "US",
+    "North & Central America",
+    "South America",
     "Europe",
     "Asia",
     "MENA",
     "Africa",
-    "Latin America",
 )
 ASSET_CLASS_SECTIONS = (
     "Cross-asset / Geopolitical",
@@ -175,12 +175,16 @@ STRUCTURE -- follow it exactly. Use these section headings, spelled exactly
 as written, as second-level Markdown headings (`## `), in this order:
 
 ## Top stories
-## US
+## North & Central America
+## South America
 ## Europe
 ## Asia
 ## MENA
 ## Africa
-## Latin America
+
+`North & Central America` covers the United States, Canada, Mexico, Central
+America and the Caribbean. `South America` is separate and must not absorb
+Mexico or the Caribbean under a catch-all "Latin America" reading.
 
 Do not add sections, rename them, reorder them, or nest them differently.
 Do not write a title, a preamble, or a closing summary -- the document
@@ -190,11 +194,15 @@ Within the structure:
 - "Top stories": 3-6 bullets, the single most important developments across
   all regions today, regardless of where they happened.
 - Every other section: use third-level headings (`### `) named after a
-  COUNTRY (`### Japan`, `### Germany`) for country-specific stories, and
-  exactly `### Regional` for cross-border items that belong to no single
-  country. Do not name a third-level heading after a theme, a sector or an
-  event -- `### Rates`, `### Politics` and `### Other` are all wrong;
-  country name or `### Regional`, nothing else.
+  COUNTRY for country-specific stories, and exactly `### Regional` for
+  cross-border items that belong to no single country. In `North & Central
+  America` that means `### United States`, `### Canada`, `### Mexico`,
+  `### Costa Rica` and so on -- never one undifferentiated heading for the
+  whole section, and never the United States standing in for the continent.
+  Elsewhere likewise: `### Japan`, `### Germany`, `### Brazil`. Do not name
+  a third-level heading after a theme, a sector or an event -- `### Rates`,
+  `### Politics` and `### Other` are all wrong; country name or
+  `### Regional`, nothing else.
 - Within each country/region group, lead with whatever is most likely to
   matter for asset allocation, and note the prevailing sentiment/tone.
 - Do not repeat a story across sections, and do not repeat it twice inside
