@@ -36,7 +36,23 @@ MODES = ("ml", "smart")
 #: Closed vocabularies. Both are used to group a digest, and a free-text
 #: value cannot be grouped — it just quietly forms a category of one.
 CATEGORIES = ("financial", "central_bank", "geopolitical")
-REGIONS = ("global", "us", "europe", "asia", "africa", "latam", "mena")
+#: ``us`` became ``north_america`` and ``latam`` split in two on 2026-09-01.
+#: The old names described the sources a desk happened to have rather than
+#: the world: ``us`` had no room for Canada or Mexico, so a North American
+#: story either got filed under a heading that excluded its own country or
+#: was not collected at all, and ``latam`` put Mexico City, San José and
+#: Buenos Aires in one bucket. A desk reading the digest could not ask
+#: "what happened in North America" and get an answer.
+REGIONS = (
+    "global",
+    "north_america",
+    "central_america",
+    "south_america",
+    "europe",
+    "asia",
+    "africa",
+    "mena",
+)
 
 #: Every field a source must carry, in the order they are written.
 FIELDS = ("name", "url", "category", "region", "lang", "mode")
@@ -47,7 +63,7 @@ class NewsSource:
     name: str
     url: str
     category: str  # "financial" | "central_bank" | "geopolitical"
-    region: str  # "global" | "us" | "europe" | "asia" | "africa" | "latam" | "mena"
+    region: str  # one of REGIONS
     lang: str  # ISO 639-1
     mode: str  # "ml" | "smart"
 

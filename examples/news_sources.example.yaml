@@ -29,6 +29,6 @@ sources:
   - name: Example Local Daily
     url: https://example.invalid/feeds/local.xml
     category: geopolitical
-    region: latam
+    region: south_america
     lang: pt
     mode: smart
