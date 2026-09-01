@@ -16,16 +16,19 @@ writes, under reports/news/:
                                       region/category), not from the page
                                       row itself (LazyCrawler's own schema
                                       has no region column).
-  - news_digest_<session>.md         a DeepSeek-written executive digest,
-                                      grouped by theme (not region), built
-                                      from the per-article
-                                      summaries/sentiment/topics already
-                                      extracted at crawl time (ml
+  - news_digest_<session>.md         an executive digest built from the
+                                      per-article summaries/sentiment/topics
+                                      already extracted at crawl time (ml
                                       TextRank/VADER or smart DeepSeek) --
                                       this call does NOT re-read raw article
                                       text, so it stays a small, cheap
                                       synthesis step regardless of how many
-                                      articles were crawled.
+                                      articles were crawled. Structure
+                                      depends on (cycle, engine) -- see
+                                      `_select_digest_format`: morning/claude
+                                      and usclose are grouped by theme,
+                                      morning/deepseek by geography, and
+                                      europeclose by asset class.
 
 Usage:
     python make_news_report.py
@@ -99,6 +102,286 @@ Write a concise executive digest in Markdown:
 News items ({n} total):
 {items}
 """
+
+#: The fixed section skeletons, named once and shared by the prompt that
+#: asks for them and the header that announces them. A reader gets the same
+#: sections in the same order every day, and when one is missing that is
+#: information ("nothing material in Credit today") rather than the model
+#: having reorganised the report.
+GEO_COUNTRY_SECTIONS = (
+    "Top stories",
+    "US",
+    "Europe",
+    "Asia",
+    "MENA",
+    "Africa",
+    "Latin America",
+)
+ASSET_CLASS_SECTIONS = (
+    "Cross-asset / Geopolitical",
+    "Rates & Central Banks",
+    "Equities",
+    "FX",
+    "Commodities",
+    "Credit",
+)
+
+#: Shared verbatim by both fixed-skeleton prompts, so the two cannot drift
+#: apart on the one rule that decides whether the report can be trusted at
+#: all. A digest is read as a record of what was published; a plausible
+#: number the model supplied itself is indistinguishable from a reported
+#: one once it is on the page, and downstream it would travel into
+#: digests.db, into the delta report, and into the committee's context as
+#: fact. Inference stays allowed -- and stays labelled: the desk rule this
+#: encodes is "never invent data, hypotheses yes if well-founded".
+NO_FABRICATION_RULE = """\
+- NEVER invent anything. Every fact, figure, price, percentage, date, name,
+  institution and quotation you write must come from the news items below.
+  If the items do not give a number or a detail, say it was not reported --
+  do not supply a plausible one, do not round or extrapolate one, and do not
+  fill a gap from your own background knowledge or from what such a story
+  usually contains. If the items conflict, report the disagreement rather
+  than resolving it into a single invented figure.
+- Do not report an event that is not in the items, however likely it seems
+  as a consequence of what is. Do not upgrade a report, a plan, an
+  expectation or a proposal into an accomplished fact: keep the items' own
+  hedging ("expected", "reportedly", "due today") instead of dropping it.
+- Analysis and inference ARE allowed and wanted -- reading transmission,
+  weighing significance, connecting two items -- provided they rest on what
+  the items actually say and are written as your reading rather than as
+  reported fact. Attribute a claim to the source that made it whenever it
+  is that source's assertion rather than an established fact.
+"""
+
+#: morning/deepseek only -- see `_select_digest_format`. Deliberately
+#: different from DIGEST_PROMPT rather than a second run of the same
+#: synthesis: two engines writing the same theme-grouped digest on the same
+#: article pool produced near-duplicate reading, not a second opinion. This
+#: gives the morning cycle two genuinely different views of the same crawl
+#: instead.
+GEO_COUNTRY_DIGEST_PROMPT = (
+    """\
+You are a buy-side macro/portfolio analyst preparing a same-day briefing for
+a portfolio manager who allocates across asset classes and regions. Below is
+a list of news items crawled in the last cycle (title, source, sentiment,
+topics, short summary) from financial wires, central banks, and geopolitical
+outlets spanning developed and emerging markets, including local-language
+sources translated at crawl time.
+
+Write a concise executive digest in Markdown, organised geographically
+rather than by theme.
+
+STRUCTURE -- follow it exactly. Use these section headings, spelled exactly
+as written, as second-level Markdown headings (`## `), in this order:
+
+## Top stories
+## US
+## Europe
+## Asia
+## MENA
+## Africa
+## Latin America
+
+Do not add sections, rename them, reorder them, or nest them differently.
+Do not write a title, a preamble, or a closing summary -- the document
+already has a header, so begin your output directly with `## Top stories`.
+
+Within the structure:
+- "Top stories": 3-6 bullets, the single most important developments across
+  all regions today, regardless of where they happened.
+- Every other section: use third-level headings (`### `) named after a
+  COUNTRY (`### Japan`, `### Germany`) for country-specific stories, and
+  exactly `### Regional` for cross-border items that belong to no single
+  country. Do not name a third-level heading after a theme, a sector or an
+  event -- `### Rates`, `### Politics` and `### Other` are all wrong;
+  country name or `### Regional`, nothing else.
+- Within each country/region group, lead with whatever is most likely to
+  matter for asset allocation, and note the prevailing sentiment/tone.
+- Do not repeat a story across sections, and do not repeat it twice inside
+  one section: place it once, where it originated, and cross-reference
+  briefly (e.g. "see US") if it has material knock-on effects elsewhere.
+- Include an item only if it plausibly matters to a portfolio manager
+  allocating across asset classes and regions. Obituaries, local crime,
+  sport, weather nuisance, transport accidents and domestic human-interest
+  stories do not qualify, however prominent in the crawl -- leave them out
+  entirely rather than filing them under a catch-all heading.
+- If nothing in today's crawl is material for a section, keep the heading
+  and write exactly `_Nothing material in this cycle._` under it. Never pad
+  a section just to fill it.
+- Write finished prose only. Never think out loud, never correct yourself
+  mid-sentence, never pose a question to yourself, and never comment on
+  whether an item belongs in a section -- decide, then write the result.
+- Be dense and factual, no filler, no restating the obvious.
+"""
+    + NO_FABRICATION_RULE
+    + """
+News items ({n} total):
+{items}
+"""
+)
+
+#: europeclose only -- see `_select_digest_format`. Section order is fixed
+#: and Cross-asset/Geopolitical comes first: that bucket is where the
+#: single most consequential story of a cycle usually lands (an event
+#: moving several asset classes at once), and reading it after five other
+#: sections buried it on the days it mattered most. Written with the
+#: Investment Committee's newsfeed context in mind (only usclose is read
+#: there today, but this format is deliberately the one a desk could route
+#: by asset class without re-parsing free prose), while staying disciplined
+#: about not crossing into investment advice.
+#:
+#: It carries no NEW/UPDATED tagging, deliberately. An earlier draft did,
+#: borrowed from `make_digest_delta_report.py` -- but that report is handed
+#: an explicit baseline of recent digests to diff against, and this one is
+#: shown a single cycle and nothing else. Asked to tag anyway, the model
+#: produced things like "[UPDATED: market pricing shift since Friday]",
+#: which reads as a comparison against a previous report it was never
+#: given. Novelty against recent coverage is the delta job's question, and
+#: it is the only one holding the evidence to answer it.
+ASSET_CLASS_DIGEST_PROMPT = (
+    """\
+You are a buy-side macro/portfolio analyst preparing a same-day briefing for
+a portfolio manager and, downstream, for an investment committee's tactical
+research process. Below is a list of news items crawled in the last cycle
+(title, source, sentiment, topics, short summary) from financial wires,
+central banks, and geopolitical outlets spanning developed and emerging
+markets, including local-language sources translated at crawl time.
+
+Write a concise executive digest in Markdown, organised by asset class
+rather than by theme or region.
+
+STRUCTURE -- follow it exactly. Use these section headings, spelled exactly
+as written, as second-level Markdown headings (`## `), in this order:
+
+## Cross-asset / Geopolitical
+## Rates & Central Banks
+## Equities
+## FX
+## Commodities
+## Credit
+
+Do not add sections, rename them, reorder them, or nest them differently.
+Do not write a title, a preamble, or a closing summary -- the document
+already has a header, so begin your output directly with
+`## Cross-asset / Geopolitical`. That first section is for macro and
+geopolitical developments that do not map cleanly onto one asset class, or
+that move several at once.
+
+Within each section:
+- List only the most important developments, not every article that
+  technically fits. Prioritise what the items themselves report as a
+  surprise against expectations (a print against its consensus, a decision
+  against what was signalled) and what has a plausible transmission channel
+  into that asset class.
+- Write each item as a single bullet, in this exact shape:
+    - **Headline of the development** -- the facts, with numbers and named
+      sources where the crawl gives them.
+      Impact: direction=<increase|decrease|steepen|flatten|widen|tighten|
+      mixed|indeterminate>, magnitude=<low|moderate|high>,
+      confidence=<low|medium|high>
+  Every item gets exactly one Impact line, with all three fields present,
+  using only the listed values. This is a conditional, disciplined read of
+  transmission, not a recommendation: never use buy/sell/hold,
+  overweight/underweight, position sizing, price targets, or entry/exit
+  levels. Market numbers are allowed only as documented facts or attributed
+  external forecasts, never as your own price prediction.
+- This is a single cycle's snapshot, and you have not been shown any earlier
+  report. Do not label an item as new, updated, unchanged or continuing
+  relative to previous coverage, and do not describe what has "changed
+  since" some earlier moment -- you have no baseline and would be inventing
+  one. Deciding what is genuinely new against recent coverage is a separate
+  report's job. Where an item's own source describes it as a continuation
+  ("a sixth consecutive day of strikes", "up from 2.9% in July"), report
+  that, because it is the source speaking rather than a comparison you made.
+- If two developments push the same asset class in different directions
+  (e.g. geopolitical risk-off vs. a hawkish central bank both touching
+  gold), say so explicitly instead of collapsing them into one call -- flag
+  the conflict rather than silently picking a winner.
+- If nothing in today's crawl is material for a section, keep the heading
+  and write exactly `_Nothing material in this cycle._` under it. Never pad
+  a section with weak or tangential items just to fill it.
+- Be dense and factual, no filler, no restating the obvious.
+"""
+    + NO_FABRICATION_RULE
+    + """
+The Impact line is subject to the same rule: it is your reading of
+transmission, never a reported figure, and its confidence field must fall to
+`low` when the items support the direction only weakly. Never state a price
+level, a spread or a yield in an Impact line unless the items reported it.
+
+News items ({n} total):
+{items}
+"""
+)
+
+
+#: The three digest formats, each as (prompt template, section skeleton).
+#: ``None`` sections means the format has no fixed skeleton -- the original
+#: thematic digest lets the model choose its own themes, and that is the
+#: point of it.
+DIGEST_FORMATS = {
+    "thematic": (DIGEST_PROMPT, None),
+    "geographic": (GEO_COUNTRY_DIGEST_PROMPT, GEO_COUNTRY_SECTIONS),
+    "asset-class": (ASSET_CLASS_DIGEST_PROMPT, ASSET_CLASS_SECTIONS),
+}
+
+
+def _select_digest_format(cycle: str | None, engine_name: str) -> str:
+    """Which of ``DIGEST_FORMATS`` writes this (cycle, engine) digest.
+
+    Keyed on cycle first, not engine: europeclose gets the asset-class
+    format regardless of which engine ever runs it, and it is cycle --
+    not engine -- that decides what a digest is *for*. The one
+    engine-level split is morning/deepseek, so the two engines that both
+    run that cycle stop writing near-duplicates of each other. Everything
+    else (morning/claude, usclose, any ad-hoc manual run with no cycle)
+    keeps the original theme-grouped digest -- usclose especially, since
+    `make_digest_delta_report.py` reads it as the baseline for the delta
+    report and expects that shape, and `newsfeed.py` in the Investment
+    Committee package already reads it as-is.
+    """
+    if cycle == "europeclose":
+        return "asset-class"
+    if cycle == "morning" and engine_name == "deepseek":
+        return "geographic"
+    return "thematic"
+
+
+def _digest_header(
+    session_id: str, *, cycle: str | None, engine_name: str, n_articles: int, digest_format: str
+) -> str:
+    """The report's masthead, written here rather than asked of the model.
+
+    A model told to "start with a title and some metadata" writes a
+    slightly different one every day -- different date format, different
+    field order, the article count occasionally wrong. Everything here is
+    known to this process, so none of it is worth a token of model
+    attention or a day's drift. The prompts for the fixed-skeleton formats
+    tell the model this header exists and to start at its first section.
+
+    Dated in Europe/Dublin for the reason DIGEST_REFERENCE_TZ documents:
+    this host's own clock still reads yesterday when the morning cycle
+    fires.
+    """
+    _, sections = DIGEST_FORMATS[digest_format]
+    today = datetime.now(DIGEST_REFERENCE_TZ).date().isoformat()
+    cycle_label = cycle or "ad-hoc"
+    lines = [
+        f"# News digest — {cycle_label} — {today}",
+        "",
+        f"**Structure:** {digest_format} | **Session:** `{session_id}` | "
+        f"**Engine:** {engine_name} | **Articles:** {n_articles}",
+    ]
+    if sections:
+        lines += [
+            "",
+            "**Sections:** "
+            + " · ".join(sections)
+            + ". A section with nothing material in this cycle says so rather than "
+            "being dropped or padded.",
+        ]
+    lines += ["", "---", ""]
+    return "\n".join(lines)
 
 
 def _latest_session_id(db: CrawlerDB) -> str | None:
@@ -189,12 +472,23 @@ def build_region_report(region: str, pages: list[dict], session_id: str) -> str:
 
 
 def _digest_input(pages: list[dict]) -> str:
+    """One line per article for the digest prompt.
+
+    Carries ``region`` -- the curated area from ``lazycrawler_sources.yaml``
+    via ``_enrich()``, not something the model has to re-derive from the
+    source name or article text -- because GEO_COUNTRY_DIGEST_PROMPT groups
+    by it directly. ``source_name`` (the curated label, e.g. "LiveMint -
+    Economy") replaces the bare domain for the same reason: more signal for
+    an editorial grouping than a raw hostname.
+    """
     lines = []
     for p in pages:
         topics = ", ".join((p.get("topics") or [])[:6])
         summary = (p.get("summary") or "")[:400]
+        source = p.get("source_name") or p.get("domain")
+        region = p.get("region") or "n/a"
         lines.append(
-            f"- [{p.get('domain')}] {p.get('title')} | sentiment={p.get('sentiment')} "
+            f"- [{region}/{source}] {p.get('title')} | sentiment={p.get('sentiment')} "
             f"| topics={topics} | summary={summary}"
         )
     return "\n".join(lines)
@@ -373,9 +667,19 @@ def _digest_agent(engine_name: str, cost_session):
     raise ValueError(f"Unknown digest engine {engine_name!r}; expected one of {DIGEST_ENGINES}")
 
 
-def build_digest(pages: list[dict], cost_session=None, engine_name: str = "claude") -> str:
+def build_digest(
+    pages: list[dict], cost_session=None, engine_name: str = "claude", cycle: str | None = None
+) -> str:
+    """The model's digest body, without the header -- see ``_digest_header``.
+
+    Returned bare so the caller decides whether to prepend the header: the
+    thematic format is read by `make_digest_delta_report.py` and by the
+    Investment Committee's `newsfeed.py`, both of which were built against
+    the un-headed text, so it stays exactly as it was.
+    """
     agent = _digest_agent(engine_name, cost_session)
-    prompt = DIGEST_PROMPT.format(n=len(pages), items=_digest_input(pages))
+    prompt_template, _ = DIGEST_FORMATS[_select_digest_format(cycle, engine_name)]
+    prompt = prompt_template.format(n=len(pages), items=_digest_input(pages))
     env = agent(prompt)
     return env.text()
 
@@ -416,7 +720,7 @@ def _digest_summary(digest_text: str, n_articles: int) -> str:
     """
     themes = _digest_themes(digest_text)
     if themes:
-        return f"Executive digest of {n_articles} articles grouped by theme: " + ", ".join(themes)
+        return f"Executive digest of {n_articles} articles covering: " + ", ".join(themes)
     return _digest_preview(digest_text)
 
 
@@ -670,6 +974,7 @@ def main() -> int:
         print(f"Full report [{region}]: {region_path} ({len(region_pages)} articles)")
         _register_region_artifact(session_id, region, region_pages, region_path)
 
+    digest_failures: list[str] = []
     if not args.no_digest:
         # Single engine (the default) keeps the plain, unsuffixed filename
         # for backward compatibility with the scheduled pipeline and
@@ -679,12 +984,52 @@ def main() -> int:
         # up all of them.
         suffix_names = len(digest_engines) > 1
         for engine_name in digest_engines:
-            digest_text = build_digest(pages, cost_session=cost_session, engine_name=engine_name)
+            digest_format = _select_digest_format(args.cycle, engine_name)
+            digest_body = build_digest(
+                pages, cost_session=cost_session, engine_name=engine_name, cycle=args.cycle
+            )
+            # A failed model call comes back as an empty envelope, not an
+            # exception -- on 2026-09-01 DeepSeek answered 402 Insufficient
+            # Balance and this loop wrote a zero-length digest to disk and
+            # to digests.db without a word. An empty row there is worse
+            # than a missing one: `newsfeed.py` would hand it to the
+            # committee as that cycle's news, and
+            # `make_digest_delta_report.py` would diff against nothing.
+            # Skip the write and remember the failure for the exit code.
+            if not digest_body.strip():
+                print(
+                    f"DIGEST FAILED [{engine_name}, {digest_format}]: the engine returned "
+                    f"no text; nothing written to {DIGESTS_DB.name} for this engine.",
+                    file=sys.stderr,
+                )
+                digest_failures.append(engine_name)
+                continue
+            # The thematic digest is left exactly as the model wrote it:
+            # `make_digest_delta_report.py` reads it as the delta baseline
+            # and `newsfeed.py` feeds it to the committee, both built
+            # against the un-headed text. The two fixed-skeleton formats
+            # are new, so nothing downstream has an opinion about them yet.
+            digest_text = (
+                digest_body
+                if digest_format == "thematic"
+                else _digest_header(
+                    session_id,
+                    cycle=args.cycle,
+                    engine_name=engine_name,
+                    n_articles=len(pages),
+                    digest_format=digest_format,
+                )
+                + digest_body
+            )
             suffix = f"_{engine_name}" if suffix_names else ""
             digest_path = REPORT_DIR / f"news_digest_{session_id}{suffix}.md"
             digest_path.write_text(digest_text, encoding="utf-8")
-            print(f"Digest [{engine_name}]: {digest_path}")
-            _register_digest_artifact(session_id, digest_text, digest_path, len(pages))
+            print(f"Digest [{engine_name}, {digest_format}]: {digest_path}")
+            # Summarised from the body, not the headed text: the header's
+            # own `# News digest -- ...` line is a Markdown heading and
+            # would otherwise be picked up by `_digest_themes` as the
+            # report's first theme.
+            _register_digest_artifact(session_id, digest_body, digest_path, len(pages))
             save_digest_to_db(
                 DIGESTS_DB,
                 session_id=session_id,
@@ -701,7 +1046,16 @@ def main() -> int:
     cost_path.write_text(cost_text, encoding="utf-8")
     print(f"Cost report: {cost_path}")
 
+    # Printed before the exit code is decided, so the regional reports and
+    # the cost report -- which were written and are still worth having --
+    # are reported as done even on a digest failure.
     print(f"SESSION_ID={session_id}")
+    if digest_failures:
+        print(
+            f"One or more digests failed: {', '.join(digest_failures)}.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
