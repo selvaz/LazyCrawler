@@ -24,6 +24,7 @@ DIGEST_FORMATS = make_news_report.DIGEST_FORMATS
 GEO_COUNTRY_SECTIONS = make_news_report.GEO_COUNTRY_SECTIONS
 _digest_header = make_news_report._digest_header
 _select_digest_format = make_news_report._select_digest_format
+_session_date = make_news_report._session_date
 
 
 @pytest.mark.parametrize(
@@ -127,6 +128,33 @@ def test_header_for_thematic_format_omits_a_section_list():
         digest_format="thematic",
     )
     assert "**Sections:**" not in header
+
+
+def test_session_date_comes_from_the_session_not_the_clock():
+    """--session-id rebuilds an older crawl, and the masthead it writes is
+    persisted to digests.db. Dating that from the clock would stamp today
+    onto a report of last week's news."""
+    assert _session_date("news_20260723_070000") == "2026-07-23"
+    assert _session_date("news_20260901_200016") == "2026-09-01"
+
+
+def test_session_date_falls_back_to_today_when_unparseable():
+    from datetime import datetime
+
+    today = datetime.now(make_news_report.DIGEST_REFERENCE_TZ).date().isoformat()
+    assert _session_date("hand_named_session") == today
+    assert _session_date("news_notadate_070000") == today
+
+
+def test_header_is_dated_from_the_session():
+    header = _digest_header(
+        "news_20260723_070000",
+        cycle="morning",
+        engine_name="deepseek",
+        n_articles=12,
+        digest_format="geographic",
+    )
+    assert "2026-07-23" in header
 
 
 def test_header_labels_a_cycleless_run():

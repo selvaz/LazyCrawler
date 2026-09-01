@@ -347,6 +347,29 @@ def _select_digest_format(cycle: str | None, engine_name: str) -> str:
     return "thematic"
 
 
+def _session_date(session_id: str) -> str:
+    """The date the crawl ran, read off its own session id.
+
+    Session ids are ``news_YYYYMMDD_HHMMSS``, so the crawl's date is already
+    carried by the thing being reported on. Dating the masthead from the
+    clock instead would be right only while the report is built straight
+    after its crawl: ``--session-id`` exists precisely to rebuild an older
+    session, and that run would have stamped today onto a report of last
+    week's news -- and persisted it, since the header goes to the file and
+    into digests.db.
+
+    Falls back to today in Europe/Dublin for an id that does not carry a
+    parseable date (an ad-hoc session named by hand). Dublin rather than
+    the host clock for the reason DIGEST_REFERENCE_TZ documents: this host
+    still reads yesterday when the morning cycle fires.
+    """
+    part = session_id.removeprefix("news_").split("_")[0]
+    try:
+        return datetime.strptime(part, "%Y%m%d").date().isoformat()
+    except ValueError:
+        return datetime.now(DIGEST_REFERENCE_TZ).date().isoformat()
+
+
 def _digest_header(
     session_id: str, *, cycle: str | None, engine_name: str, n_articles: int, digest_format: str
 ) -> str:
@@ -358,16 +381,12 @@ def _digest_header(
     known to this process, so none of it is worth a token of model
     attention or a day's drift. The prompts for the fixed-skeleton formats
     tell the model this header exists and to start at its first section.
-
-    Dated in Europe/Dublin for the reason DIGEST_REFERENCE_TZ documents:
-    this host's own clock still reads yesterday when the morning cycle
-    fires.
     """
     _, sections = DIGEST_FORMATS[digest_format]
-    today = datetime.now(DIGEST_REFERENCE_TZ).date().isoformat()
+    date = _session_date(session_id)
     cycle_label = cycle or "ad-hoc"
     lines = [
-        f"# News digest — {cycle_label} — {today}",
+        f"# News digest — {cycle_label} — {date}",
         "",
         f"**Structure:** {digest_format} | **Session:** `{session_id}` | "
         f"**Engine:** {engine_name} | **Articles:** {n_articles}",
