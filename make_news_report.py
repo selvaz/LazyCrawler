@@ -4,9 +4,12 @@
 Reads every "done" page from the given (or latest) news_crawl session and
 writes, under reports/news/:
 
-  - news_full_<session>_<region>.md  one file per geographic region (us,
-                                      europe, asia, africa, latam, mena,
-                                      global) with every article's full
+  - news_full_<session>_<region>.md  one file per geographic region -- the
+                                      regions are `news_sources.REGIONS`,
+                                      not a list repeated here, because a
+                                      copy of a closed vocabulary is the one
+                                      that goes stale -- with every
+                                      article's full
                                       extracted text + metadata (source,
                                       published date, sentiment, topics,
                                       entities) -- the "entire news", not

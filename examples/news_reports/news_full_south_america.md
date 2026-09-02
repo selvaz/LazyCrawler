@@ -1,4 +1,4 @@
-# News crawl - latam - smoke_test
+# News crawl - south_america - smoke_test
 
 Generated: 2026-07-23T23:19:00 | 2 articles
 
