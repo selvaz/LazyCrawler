@@ -8,6 +8,41 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.4] — 2026-09-03
+
+### Added
+- **Digest structure is now chosen from (cycle, engine).** morning/deepseek
+  gets a geographic digest (top stories, then North & Central America /
+  South America / Europe / Asia / MENA / Africa, broken down by country);
+  europeclose gets an asset-class digest (Cross-asset/Geopolitical first,
+  then Rates & Central Banks, Equities, FX, Commodities, Credit, each item
+  carrying a direction/magnitude/confidence transmission read). Everything
+  else — morning/claude, usclose, ad-hoc manual runs — stays the original
+  theme-grouped digest, deliberately: `make_digest_delta_report` reads
+  usclose as its delta baseline and investmentcommittee's `newsfeed.py`
+  hands it to the committee, both built against that shape today. The
+  masthead (title, cycle, Dublin date, session, engine, article count,
+  section list) is now written by the report builder rather than asked of
+  the model, and a section with nothing material in it says so instead of
+  being dropped or padded.
+- The region vocabulary's `us`/`latam` split becomes `north_america` (US,
+  Canada, Mexico, Central America, Caribbean) and `south_america`, so the
+  geographic digest can report on North America without naming the whole
+  continent after one of its countries, and no longer files Mexico City
+  under the same heading as Buenos Aires.
+
+### Fixed
+- A failed digest model call returned an empty envelope rather than raising,
+  and the digest loop wrote the resulting zero-length text to disk and to
+  `digests.db` silently — `newsfeed.py` would have handed the committee an
+  empty cycle as that day's news. Now skipped, with the failure reported and
+  reflected in the exit code.
+- The report masthead is now dated from the session id (`news_YYYYMMDD_HHMMSS`)
+  rather than the wall clock, so rebuilding an older crawl with
+  `--session-id` no longer stamps today's date onto last week's news.
+- Docs and the shipped example report no longer name regions that stopped
+  existing after the `us`/`latam` rename.
+
 ## [0.19.3] — 2026-08-28
 
 ### Fixed
