@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lazycrawler"
-version = "0.19.4"
+version = "0.19.5"
 description = "Web crawler + search with three modes — pure (no-LLM), ml (local ML, no-LLM, zero tokens) and smart (LazyBridge LLM) — SQLite persistence and dedup."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -65,7 +65,7 @@ calendar = [
 # purpose: nothing else in the package imports it, so the repo installs and
 # runs standalone without it, and a test enforces that.
 lazydataspace = [
-    "lazydataspace @ git+https://github.com/selvaz/DataSpace.git@4c2b71c2e59ea3e7e003d06e6b9b54354edea07e ; python_version >= '3.11'",
+    "lazydataspace @ git+https://github.com/selvaz/DataSpace.git@v0.1.0 ; python_version >= '3.11'",
 ]
 # PDF extraction (remote): PyMuPDF primary, pypdf fallback, pdfplumber tables.
 pdf = ["pymupdf>=1.23", "pypdf>=4.0", "pdfplumber>=0.10"]
