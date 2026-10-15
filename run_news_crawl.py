@@ -31,6 +31,7 @@ import feedparser
 
 from lazycrawler import CrawlerConfig, CrawlerDB, DBConfig, LLMConfig, WebCrawler
 from lazycrawler.http import HTTPClient
+from news_costs import register_cost_session, resolve_cost_db_path
 from news_sources import load_sources
 
 ROOT = Path(__file__).resolve().parent
@@ -147,13 +148,15 @@ def main() -> int:
     # to every smart-mode agent LazyCrawler builds internally (via
     # LLMConfig.session). PageResult carries no cost/usage fields, so this is
     # the only way to recover what a run actually spent; make_news_report.py
-    # reopens the same DB (by session_id) to add the digest call's cost and
-    # write the final report.
+    # reopens the shared DB to add the digest call's cost. The side table
+    # links both processes' LazyBridge UUIDs to this news session_id.
     from lazybridge.session import Session
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    cost_db_path = REPORT_DIR / f"{session_id}_cost.db"
+    cost_db_path = resolve_cost_db_path(REPORT_DIR)
+    cost_db_path.parent.mkdir(parents=True, exist_ok=True)
     cost_session = Session(db=str(cost_db_path))
+    register_cost_session(cost_db_path, session_id, cost_session.session_id, "crawl")
 
     db = CrawlerDB(DBConfig(db_path=args.db, ttl_hours=6.0))
     ml_crawler = WebCrawler(

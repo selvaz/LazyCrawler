@@ -750,6 +750,15 @@ for real sample output (digest, per-region report, cost report).
 
 ### Per-run cost
 
+Both news jobs write their LazyBridge events to **one database**,
+`reports/news/news_costs.db`. Set `NEWS_COST_DB` to use a different path;
+give both jobs the same value. Its `news_cost_sessions` table maps each
+process's LazyBridge session UUID to the news run ID and records whether
+it came from `crawl` or `report`, with a UTC creation timestamp. Cost
+reports sum only events mapped to the requested news run, including both
+processes. Existing `<session>_cost.db` files are left untouched and are
+not read by the shared-database reports.
+
 Every LLM call (smart-mode extraction, index summaries, the digest) is
 tracked through a `lazybridge.session.Session` and rolled up into
 `news_cost_<session>.md` — typically **$0.15-0.30 per run** / **$0.50-0.75
