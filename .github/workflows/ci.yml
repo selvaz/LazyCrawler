@@ -36,7 +36,7 @@ jobs:
         # markdown and artifact-image paths run in CI. `async` (aiohttp) and
         # `domains` (tldextract) are included so the async redirect/SSRF hardening
         # and registrable-domain scope are exercised. `smart`/`all` pull
-        # lazybridge>=0.9 (Python >=3.11) and are integration-marked, so they are
+        # lazybridge>=1.8.1 (Python >=3.11) and are integration-marked, so they are
         # skipped here. `ml` (model2vec) is omitted: it would download a ~30MB
         # model over the network at test time; the offline lexical/structural
         # fallback path is what CI exercises. `js` (Playwright) is mocked in tests.
