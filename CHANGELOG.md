@@ -8,6 +8,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.6] — 2026-10-15
+
+### Fixed
+- `CrawlerDB` waits up to 60 s for another connection's write lock (was Python's 5 s): the shared
+  news cache logged "database is locked" every night and lost pages (#68).
+- The news jobs write one cost database (`news_costs.db`, `NEWS_COST_DB`) instead of a new
+  `<session>_cost.db` per run; events are attributed per news run (#69).
+
 ## [0.19.5] — 2026-10-14
 
 ### Changed
