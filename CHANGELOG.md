@@ -8,6 +8,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.5] — 2026-10-14
+
+### Changed
+- `lazydataspace` pinned to its `v0.1.0` release tag (same commit as before) for the
+  `ecosystem-2026.10` release train. No code change.
+
 ## [0.19.4] — 2026-09-03
 
 ### Added
