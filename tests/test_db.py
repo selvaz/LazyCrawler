@@ -158,3 +158,10 @@ def test_get_pages_by_session(tmp_db):
 def test_schema_user_version_set(tmp_db):
     v = int(tmp_db.conn.execute("PRAGMA user_version").fetchone()[0])
     assert v == tmp_db.SCHEMA_VERSION
+
+
+def test_writers_wait_for_another_connections_lock(tmp_path):
+    from lazycrawler.db import BUSY_TIMEOUT_S, CrawlerDB, DBConfig
+
+    db = CrawlerDB(DBConfig(db_path=str(tmp_path / "cache.db")))
+    assert db.conn.execute("PRAGMA busy_timeout").fetchone()[0] == int(BUSY_TIMEOUT_S * 1000)

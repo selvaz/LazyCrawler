@@ -40,6 +40,9 @@ from ._log import log
 from .config import DBConfig
 from .http import _quiet_close, get_base_domain, url_hash
 
+#: Seconds a writer waits for another connection's write lock before failing.
+BUSY_TIMEOUT_S = 60.0
+
 
 def utc_now_iso() -> str:
     """Current UTC date/time in ISO 8601."""
@@ -223,7 +226,13 @@ class CrawlerDB:
             self.conn.row_factory = sqlite3.Row
             self._finalizer = weakref.finalize(self, _quiet_close, self.conn)
             return
-        self.conn = sqlite3.connect(self.cfg.db_path, check_same_thread=False)
+        # Several processes and CrawlerDB objects share one cache file (the news DB is
+        # written by the news crawl, the calendar and the earnings jobs at once). With
+        # Python's default 5 s busy timeout a writer that waited behind another one got
+        # "database is locked" and the page was lost; writes are short, so wait longer.
+        self.conn = sqlite3.connect(
+            self.cfg.db_path, check_same_thread=False, timeout=BUSY_TIMEOUT_S
+        )
         self._lock = threading.RLock()
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL;")
