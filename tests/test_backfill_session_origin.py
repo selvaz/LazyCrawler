@@ -8,7 +8,13 @@ import sqlite3
 import pytest
 
 from lazycrawler import CrawlerDB, DBConfig
-from lazycrawler.backfill_session_origin import OriginRule, classify_sessions, load_rules, main
+from lazycrawler.backfill_session_origin import (
+    OriginRule,
+    _normalize_iso,
+    classify_sessions,
+    load_rules,
+    main,
+)
 from lazycrawler.db import _SCHEMA_SQL, BUSY_TIMEOUT_S
 
 
@@ -133,19 +139,110 @@ def test_cli_uses_normal_writer_and_migrates_legacy_db(tmp_path, capsys, monkeyp
     def writer(cfg):
         db = CrawlerDB(cfg)
         opened.append(cfg)
-        assert db.conn.execute("PRAGMA busy_timeout").fetchone()[0] == int(BUSY_TIMEOUT_S * 1000)
-        assert db.conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-        assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        if not cfg.read_only:
+            assert db.conn.execute("PRAGMA busy_timeout").fetchone()[0] == int(
+                BUSY_TIMEOUT_S * 1000
+            )
+            assert db.conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+            assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         return db
 
     monkeypatch.setattr("lazycrawler.backfill_session_origin.CrawlerDB", writer)
     rules_path = _rules(tmp_path, [{"origin": "job:legacy", "source": "crawl"}])
-    main(["--db", str(path), "--rules", str(rules_path)])
-    assert len(opened) == 1 and not opened[0].read_only
+    main(["--db", str(path), "--rules", str(rules_path), "--apply"])
+    assert [cfg.read_only for cfg in opened] == [True, False]
     assert json.loads(capsys.readouterr().out)["origins"] == {"job:legacy": 1}
     with CrawlerDB(DBConfig(db_path=str(path), read_only=True)) as db:
         assert db.conn.execute("PRAGMA user_version").fetchone()[0] == 3
-        assert db.get_session("old")["origin"] is None
+        assert db.get_session("old")["origin"] == "job:legacy"
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_dry_run_read_only_and_byte_identical(tmp_path, monkeypatch, capsys, legacy):
+    path = tmp_path / "snapshot#origin.db"
+    with sqlite3.connect(path) as con:
+        schema = _SCHEMA_SQL.replace(",\n  origin       TEXT", "") if legacy else _SCHEMA_SQL
+        con.executescript(schema)
+        con.execute(f"PRAGMA user_version={2 if legacy else 3}")
+        con.execute(
+            "INSERT INTO sessions (session_id, created_at, mode, source) VALUES ('old', '2026-01-01', 'pure', 'crawl')"
+        )
+    rules_path = _rules(tmp_path, [{"origin": "job:preview", "source": "crawl"}])
+    before = path.read_bytes(), path.stat().st_mtime_ns, set(tmp_path.iterdir())
+    sql = []
+
+    def reader(cfg):
+        assert cfg.read_only, "dry-run must never open the writer"
+        db = CrawlerDB(cfg)
+        db.conn.set_trace_callback(sql.append)
+        return db
+
+    monkeypatch.setattr("lazycrawler.backfill_session_origin.CrawlerDB", reader)
+    args = ["--db", str(path), "--rules", str(rules_path)]
+    if legacy:
+        with pytest.raises(SystemExit) as exc:
+            main(args)
+        assert exc.value.code == 2
+        assert "sessions.origin is missing (user_version=2)" in capsys.readouterr().err
+    else:
+        main(args)
+        assert json.loads(capsys.readouterr().out)["origins"] == {"job:preview": 1}
+    assert (path.read_bytes(), path.stat().st_mtime_ns, set(tmp_path.iterdir())) == before
+    assert all(statement.startswith(("SELECT", "PRAGMA")) for statement in sql)
+
+
+@pytest.mark.parametrize("apply", [False, True])
+@pytest.mark.parametrize("kind", ["empty", "foreign", "impostor", "view", "garbage"])
+def test_cli_refuses_non_crawler_files_without_writing(tmp_path, monkeypatch, apply, kind):
+    path = tmp_path / "foreign.db"
+    if kind in ("empty", "garbage"):
+        path.write_bytes(b"" if kind == "empty" else b"not SQLite")
+    else:
+        with sqlite3.connect(path) as con:
+            con.execute(
+                {
+                    "foreign": "CREATE TABLE other (value TEXT)",
+                    "impostor": "CREATE TABLE sessions (session_id TEXT)",
+                    "view": "CREATE VIEW sessions AS SELECT 1 AS session_id",
+                }[kind]
+            )
+    rules_path = _rules(tmp_path, [])
+    before = path.read_bytes(), set(tmp_path.iterdir())
+
+    def reader(cfg):
+        assert cfg.read_only, "invalid files must never open a writer"
+        return CrawlerDB(cfg)
+
+    monkeypatch.setattr("lazycrawler.backfill_session_origin.CrawlerDB", reader)
+    with pytest.raises(SystemExit) as exc:
+        main(["--db", str(path), "--rules", str(rules_path)] + (["--apply"] if apply else []))
+    assert exc.value.code == 2
+    assert (path.read_bytes(), set(tmp_path.iterdir())) == before
+
+
+def test_dry_run_does_not_acquire_writer_reservation(tmp_db, tmp_path, capsys):
+    _historical(tmp_db, "old", "2026-01-01")
+    rules_path = _rules(tmp_path, [{"source": "crawl", "origin": "job:preview"}])
+    tmp_db.conn.execute("BEGIN IMMEDIATE")
+    try:
+        assert main(["--db", tmp_db.cfg.db_path, "--rules", str(rules_path)]) == 0
+        assert json.loads(capsys.readouterr().out)["origins"] == {"job:preview": 1}
+    finally:
+        tmp_db.conn.rollback()
+
+
+@pytest.mark.parametrize("fraction", ["5", "12", "123", "1234", "12345", "123456", "1234567"])
+def test_fractional_seconds_normalized_for_python310(tmp_path, tmp_db, fraction):
+    microseconds = fraction[:6].ljust(6, "0")
+    start = f"2026-01-02T12:00:00.{fraction}Z"
+    assert _normalize_iso(start) == f"2026-01-02T12:00:00.{microseconds}+00:00"
+    _historical(tmp_db, "fraction", start)
+    rules = load_rules(
+        _rules(
+            tmp_path, [{"origin": "job:fraction", "start": start, "end": "2026-01-03T00:00:00Z"}]
+        )
+    )
+    assert classify_sessions(tmp_db, rules)["origins"] == {"job:fraction": 1}
 
 
 def test_backfill_respects_other_writer_lock(tmp_db):

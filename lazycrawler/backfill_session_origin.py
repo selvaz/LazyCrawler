@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
@@ -21,12 +22,20 @@ from .db import CrawlerDB, _parse_iso
 from .session_origin import valid_session_origin
 
 
+def _normalize_iso(value: str) -> str:
+    """Normalize Z and fractional seconds for Python 3.10's ISO parser."""
+    return re.sub(
+        r"(\d{2}:\d{2}:\d{2})[.,](\d+)",
+        lambda match: match[1] + "." + match[2][:6].ljust(6, "0"),
+        value.replace("Z", "+00:00"),
+    )
+
+
 def _utc_bound(value: object) -> datetime:
     if not isinstance(value, str):
         raise ValueError("time bounds must be UTC ISO 8601 strings")
     try:
-        # Python 3.10 does not accept the Z suffix directly.
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(_normalize_iso(value))
     except ValueError as exc:
         raise ValueError(f"invalid UTC time bound: {value!r}") from exc
     if dt.tzinfo is None or dt.utcoffset() != timedelta(0):
@@ -46,8 +55,7 @@ class OriginRule:
             return False
         if self.start is None and self.end is None:
             return True
-        # Stored Z timestamps also need normalization on Python 3.10.
-        timestamp = _parse_iso(created_at.replace("Z", "+00:00"))
+        timestamp = _parse_iso(_normalize_iso(created_at))
         if timestamp is None:
             return False
         return (self.start is None or timestamp >= self.start) and (
@@ -90,15 +98,16 @@ def load_rules(path: Path) -> list[OriginRule]:
 def classify_sessions(db: CrawlerDB, rules: Sequence[OriginRule], *, apply: bool = False) -> dict:
     """Preview or atomically apply first-match rules to NULL origins only.
 
-    Use the normal writer's RLock and SQLite busy timeout. BEGIN IMMEDIATE
-    holds the writer reservation across selection and update, so concurrent
-    classifiers/writers cannot change the candidate set mid-transaction.
+    Preview uses only SELECT, including on read-only connections. Apply uses
+    the normal writer's RLock and SQLite busy timeout; BEGIN IMMEDIATE holds
+    the writer reservation across selection and update.
     """
     counts: Counter[str] = Counter()
     unmatched = 0
     with db._lock:
         try:
-            db.conn.execute("BEGIN IMMEDIATE")
+            if apply:
+                db.conn.execute("BEGIN IMMEDIATE")
             rows = db.conn.execute(
                 "SELECT session_id, created_at, source FROM sessions WHERE origin IS NULL"
             ).fetchall()
@@ -115,12 +124,28 @@ def classify_sessions(db: CrawlerDB, rules: Sequence[OriginRule], *, apply: bool
                     )
             if apply:
                 db.conn.commit()
-            else:
-                db.conn.rollback()
         except BaseException:
-            db.conn.rollback()
+            if apply:
+                db.conn.rollback()
             raise
     return {"origins": dict(sorted(counts.items())), "unmatched_null": unmatched}
+
+
+def _preflight(db: CrawlerDB, *, require_origin: bool) -> None:
+    """Reject foreign files before any writer is opened; report legacy schema."""
+    table = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions'"
+    ).fetchone()
+    columns = {row["name"] for row in db.conn.execute("PRAGMA table_info(sessions)")}
+    required = {"session_id", "created_at", "topic", "seed", "mode", "source"}
+    if table is None or not required <= columns:
+        raise ValueError("not a LazyCrawler database: missing or incompatible sessions table")
+    if require_origin and "origin" not in columns:
+        version = db.conn.execute("PRAGMA user_version").fetchone()[0]
+        raise ValueError(
+            f"sessions.origin is missing (user_version={version}); "
+            "dry-run cannot migrate; use --apply to migrate and classify"
+        )
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -135,10 +160,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         rules = load_rules(args.rules)
         if not args.db.is_file():
             raise ValueError(f"database must already exist: {args.db}")
-        # The regular writer performs migrations and configures WAL, foreign keys
-        # and busy timeout. No alternative sqlite connection or lock bypass.
-        with CrawlerDB(DBConfig(db_path=str(args.db), enable_fts=False)) as db:
-            result = classify_sessions(db, rules, apply=args.apply)
+        # mode=ro never runs DDL, migrations, journal-mode changes or write locks.
+        with CrawlerDB(DBConfig(db_path=str(args.db), read_only=True)) as db:
+            _preflight(db, require_origin=not args.apply)
+            if not args.apply:
+                result = classify_sessions(db, rules)
+        if args.apply:
+            # Only apply uses the regular writer, including migrations and locks.
+            with CrawlerDB(DBConfig(db_path=str(args.db), enable_fts=False)) as db:
+                result = classify_sessions(db, rules, apply=True)
     except (OSError, ValueError, sqlite3.Error) as exc:
         parser.exit(2, f"error: {exc}\n")
     print(json.dumps({"mode": "apply" if args.apply else "dry-run", **result}, sort_keys=True))

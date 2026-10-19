@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import sqlite3
@@ -119,14 +120,25 @@ def test_valid_origin_is_preserved(tmp_db, value):
 
 def test_production_filter(tmp_db):
     for i, origin in enumerate(
-        ["job:news", "job:calendar", "unknown", "interactive:test", "jobless"]
+        [
+            "job:news",
+            "job:calendar",
+            "unknown",
+            "interactive:test",
+            "jobless",
+            "JOB:news",
+            "Job:news",
+        ]
     ):
         tmp_db.create_session(str(i), origin=origin)
     tmp_db.conn.execute("UPDATE sessions SET origin=NULL WHERE session_id='4'")
     tmp_db.conn.commit()
     predicate = production_session_filter()
-    assert predicate == "origin LIKE 'job:%'"
-    rows = tmp_db.conn.execute(f"SELECT origin FROM sessions WHERE {predicate}").fetchall()
+    assert predicate == "s.origin GLOB 'job:*'"
+    # A second origin column must not make the helper ambiguous.
+    rows = tmp_db.conn.execute(
+        f"SELECT s.origin FROM sessions s CROSS JOIN (SELECT 'job:spoof' AS origin) other WHERE {predicate}"
+    ).fetchall()
     assert {r[0] for r in rows} == {"job:news", "job:calendar"}
 
 
@@ -177,19 +189,84 @@ def test_search_engines_persist_origin(tmp_db, stub_fetch, monkeypatch, engine, 
 
 
 @pytest.mark.parametrize("method", ["web_crawl", "web_crawl_many", "web_search"])
-def test_tool_entry_points_persist_origin(tmp_db, stub_fetch, monkeypatch, method):
+@pytest.mark.parametrize(
+    "origin, expected",
+    [
+        (None, "job:env"),
+        ("", "job:env"),
+        ("interactive:tool", "interactive:tool"),
+        ("job:host", "job:host"),
+        ("invalid label", "unknown"),
+        (0, "unknown"),
+    ],
+)
+def test_tool_entry_points_persist_origin(
+    tmp_db, stub_fetch, monkeypatch, method, origin, expected
+):
+    monkeypatch.setenv("LAZYCRAWLER_SESSION_ORIGIN", "job:env")
     stub_fetch()
     monkeypatch.setattr(
         "lazycrawler.search.search_ddg_urls", lambda *a, **kw: ["https://e.example/search"]
     )
     with CrawlerTools(
         db=tmp_db,
+        origin=origin,
         content="pure",
         enforce_ssrf_guard=False,
         crawler_cfg=CrawlerConfig(max_depth=0, respect_robots=False),
         http_cfg=HTTPConfig(allow_private_networks=True, link_delay=0),
     ) as tools:
         arg = ["https://e.example/a"] if method == "web_crawl_many" else "https://e.example/a"
-        output = json.loads(getattr(tools, method)(arg, origin="interactive:tool"))
+        tool = getattr(tools, method)
+        # These signatures are what Tool.wrap exposes to the LLM. Neither a
+        # spoofed production label nor an empty argument can override the host.
+        assert "origin" not in inspect.signature(tool).parameters
+        for spoof in ("job:spoofed", ""):
+            with pytest.raises(TypeError, match="origin"):
+                tool(arg, origin=spoof)
+        output = json.loads(tool(arg))
     assert output["found"] == 1
-    assert tmp_db.get_session(output["session_id"])["origin"] == "interactive:tool"
+    assert tmp_db.get_session(output["session_id"])["origin"] == expected
+
+
+@pytest.mark.parametrize("origin", [None, "job:explicit", ""])
+def test_reused_session_adopts_null_origin_only(tmp_db, monkeypatch, origin):
+    monkeypatch.setenv("LAZYCRAWLER_SESSION_ORIGIN", "job:env")
+    tmp_db.create_session("reused", topic="original", source="crawl")
+    tmp_db.conn.execute("UPDATE sessions SET origin=NULL WHERE session_id='reused'")
+    tmp_db.conn.commit()
+    original = tmp_db.get_session("reused")
+    tmp_db.create_session("reused", topic="replacement", source="search:duckduckgo", origin=origin)
+    expected = "unknown" if origin == "" else (origin or "job:env")
+    assert tmp_db.get_session("reused") == {**original, "origin": expected}
+    tmp_db.create_session("reused", origin="interactive:later")
+    assert tmp_db.get_session("reused")["origin"] == expected
+
+
+@pytest.mark.parametrize("existing", ["", "unknown", "interactive:research", "job:first"])
+def test_reused_session_preserves_any_non_null_origin(tmp_db, existing):
+    tmp_db.create_session("reused")
+    tmp_db.conn.execute("UPDATE sessions SET origin=? WHERE session_id='reused'", (existing,))
+    tmp_db.conn.commit()
+    tmp_db.create_session("reused", origin="job:later")
+    assert tmp_db.get_session("reused")["origin"] == existing
+
+
+def test_production_page_reached_by_at_least_one_job(tmp_db):
+    from lazycrawler.http import url_hash
+
+    for sid, origin in [("research", "interactive:research"), ("job", "job:news")]:
+        tmp_db.create_session(sid, origin=origin)
+    for name in ("shared", "research-only", "orphan"):
+        tmp_db.upsert_page({"url": f"https://e.example/{name}", "status": "done", "mode": "pure"})
+    shared = url_hash("https://e.example/shared")
+    tmp_db.add_edge("research", shared)
+    tmp_db.add_edge("job", shared)
+    tmp_db.add_edge("research", url_hash("https://e.example/research-only"))
+    rows = tmp_db.conn.execute(f"""
+        SELECT p.url_hash FROM pages p WHERE EXISTS (
+            SELECT 1 FROM crawl_edges e JOIN sessions s USING (session_id)
+            WHERE e.url_hash=p.url_hash AND {production_session_filter()}
+        )
+    """).fetchall()
+    assert [r[0] for r in rows] == [shared]

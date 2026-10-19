@@ -37,10 +37,10 @@ def resolve_session_origin(origin: Optional[str] = None) -> str:
 
 
 def production_session_filter() -> str:
-    """SQL predicate for sessions: ``origin LIKE 'job:%'``.
+    """Case-sensitive SQL predicate: ``s.origin GLOB 'job:*'``.
 
-    Use against the sessions table (or in a sessions subquery when joining
-    pages via crawl_edges). NULL, unknown and interactive labels are excluded.
-    This follows SQLite's LIKE semantics, including its default ASCII case folding.
+    Alias sessions as ``s`` in the query. A production page is reached by at
+    least one production session via crawl_edges, regardless of who fetched it
+    first. NULL, unknown, interactive and uppercase JOB: labels are excluded.
     """
-    return "origin LIKE 'job:%'"
+    return "s.origin GLOB 'job:*'"

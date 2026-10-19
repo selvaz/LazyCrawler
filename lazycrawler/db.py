@@ -300,11 +300,11 @@ class CrawlerDB:
         source: str = "crawl",
         origin: Optional[str] = None,
     ) -> str:
-        """Create (or ignore if existing) a session and return its id.
+        """Create a session, or adopt a NULL origin on an existing id.
 
         Origin resolves from the explicit value, LAZYCRAWLER_SESSION_ORIGIN,
         or ``unknown``. Invalid values warn and become ``unknown``. Reusing an
-        id preserves the original session, including its origin.
+        id fills a NULL origin only; non-NULL origins and other metadata stay intact.
         """
         origin = resolve_session_origin(origin)
         with self._lock:
@@ -312,6 +312,10 @@ class CrawlerDB:
                 "INSERT OR IGNORE INTO sessions (session_id, created_at, topic, seed, mode, source, origin) "
                 "VALUES (?,?,?,?,?,?,?)",
                 (session_id, utc_now_iso(), topic, seed, mode, source, origin),
+            )
+            self.conn.execute(
+                "UPDATE sessions SET origin=? WHERE session_id=? AND origin IS NULL",
+                (origin, session_id),
             )
             self.conn.commit()
         return session_id

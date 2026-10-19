@@ -10,13 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 - Session provenance in nullable `sessions.origin` (schema version 3, additive in-place migration).
-  Crawl, async crawl, search and tool APIs accept `origin=`; otherwise writers use
+  Crawl, async crawl and search APIs accept `origin=`; tools take the host label
+  on `CrawlerTools(origin=...)`, outside the LLM-visible signatures. Otherwise writers use
   `LAZYCRAWLER_SESSION_ORIGIN` or `unknown`. Invalid labels warn and fall back to `unknown`.
 - `CrawlerDB.get_session()` / `get_sessions()` expose origin, and
-  `production_session_filter()` supplies the reader contract `origin LIKE 'job:%'`.
+  `production_session_filter()` supplies the reader contract `s.origin GLOB 'job:*'`.
 - `python -m lazycrawler.backfill_session_origin --db ... --rules ...` previews
   rule-driven classification of historical NULL origins; `--apply` writes atomically
-  through the normal SQLite writer. See the database guide for rules and compatibility.
+  through the normal SQLite writer after a read-only schema preflight. Dry-run
+  never opens a writer and reports missing origin columns without migrating.
+  Foreign/empty databases are refused. See the database guide for rules and compatibility.
+
+### Fixed
+- Reusing a session ID adopts its resolved origin only when the stored origin is NULL;
+  non-NULL labels and other session metadata are preserved.
+- Production filtering qualifies `s.origin` and matches the lowercase `job:` prefix
+  case-sensitively. Production pages are reached by at least one production session.
+- Backfill bounds and stored timestamps normalize fractional seconds for Python 3.10.
 
 ## [0.19.6] — 2026-10-15
 

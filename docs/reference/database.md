@@ -131,7 +131,8 @@ Create a new session record. Returns `session_id`. Called automatically by `WebC
 
 Origin resolves from the explicit argument, `LAZYCRAWLER_SESSION_ORIGIN`, or
 `unknown`. Labels require 1–64 printable characters without whitespace; invalid
-values warn and become `unknown`. Reusing an ID preserves the existing session.
+values warn and become `unknown`. Reusing an ID fills a NULL origin with the resolved label; it preserves non-NULL
+origins and all other metadata.
 
 ### get_session() / get_sessions()
 
@@ -142,8 +143,9 @@ then `session_id`. Both expose `origin`; pre-v3 read-only DBs return `origin=Non
 ### production_session_filter()
 
 `from lazycrawler import production_session_filter` returns the SQL predicate
-`origin LIKE 'job:%'` for the sessions table. Use a join or subquery via
-`crawl_edges` when selecting pages. See the [database guide](../guides/database.md#session-origin-and-production-readers)
+`s.origin GLOB 'job:*'` for the sessions table aliased as `s`. Matching is case-sensitive. A production
+page is reached by at least one production session, using a join or subquery via
+`crawl_edges`; pages without edges are excluded. See the [database guide](../guides/database.md#session-origin-and-production-readers)
 for the production convention, schema version 3 compatibility and historical backfill CLI.
 
 ---

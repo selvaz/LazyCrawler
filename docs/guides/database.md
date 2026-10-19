@@ -125,12 +125,19 @@ an explicit `origin=` argument, then `LAZYCRAWLER_SESSION_ORIGIN`, then `"unknow
 `None` means no explicit argument. Empty strings are invalid rather than absent.
 Labels must contain 1–64 printable characters and no whitespace; invalid selected
 values log a warning and become `unknown`, even if a lower-priority value is valid.
-Existing session IDs retain their original metadata and origin when reused.
+Reusing an existing session ID fills its origin only when it is NULL, using the
+resolved label. Any non-NULL origin (including an empty legacy label) and other
+metadata stay intact. Use distinct IDs for runs with different provenance.
 
 `origin=` is optional on `CrawlerDB.create_session`, `WebCrawler.crawl` / `crawl_many`,
-`AsyncWebCrawler.crawl` / `crawl_many`, `WebSearch.run` (all engines, including Gemini),
-and `CrawlerTools.web_search` / `web_crawl` / `web_crawl_many`. The label describes
-the session's caller; `source` continues to describe the mechanism (`crawl`,
+`AsyncWebCrawler.crawl` / `crawl_many`, and `WebSearch.run` (all engines, including Gemini).
+For agent tools, set `CrawlerTools(origin="job:committee-search", ...)` in host
+code. The LLM-visible `web_search`, `web_crawl` and `web_crawl_many` signatures
+do not accept origin, so an agent cannot spoof a production label or override the
+host with an empty string. A None or empty constructor label falls back to the
+environment variable, then `unknown`; non-empty invalid labels still warn and
+become `unknown`. The label describes the session's caller; `source` continues
+to describe the mechanism (`crawl`,
 `search:duckduckgo`, etc.). For example:
 
 ```python
@@ -142,13 +149,15 @@ sessions = db.get_sessions()  # full dicts including origin, newest first
 Production launchers must set `LAZYCRAWLER_SESSION_ORIGIN` to a lowercase `job:`
 label, for example `job:news`, `job:calendar`, or `job:committee-search`. Interactive
 research should use another prefix, for example `interactive:research`.
-**The production contract for readers is `origin LIKE 'job:%'`.** The exported helper
-returns that SQL predicate, following SQLite's LIKE semantics (ASCII case-insensitive
-by default). NULL historical origins and `unknown` are excluded.
+**The production contract is a case-sensitive lowercase `job:` prefix.** The
+exported helper returns `s.origin GLOB 'job:*'`; alias the sessions table as `s`.
+NULL historical origins, `unknown`, `JOB:` and `Job:` labels are excluded.
 
 Pages are shared across sessions: filter through `crawl_edges` and `sessions`,
-using `EXISTS` to avoid duplicate pages. A page reached by both an interactive and
-a production session qualifies via its production edge:
+using `EXISTS` to avoid duplicate pages. **Production means reached by at least
+one production session.** A page fetched interactively first and later reached
+by a job qualifies via its production edge, including a job cache hit. This does
+not record who first fetched the page. Pages without any session edge are excluded:
 
 ```python
 from lazycrawler import production_session_filter
@@ -200,6 +209,7 @@ invalid origins, or invalid/reversed bounds fail before opening the DB. No rules
 are built in. Stored timestamps are compared as instants, including offset-aware
 timestamps; legacy naive stored timestamps are interpreted as UTC. Unparseable
 stored timestamps cannot match time rules, but can match source-only rules.
+Z suffixes and fractional seconds are normalized for Python 3.10 compatibility.
 
 ```bash
 python -m lazycrawler.backfill_session_origin --db /path/to/news.db --rules rules.json
@@ -210,11 +220,18 @@ The default previews classifications and prints JSON counts per matched origin
 plus `unmatched_null`. `--apply` writes the same classification in one transaction.
 Unmatched rows stay NULL; any non-NULL origin (including `unknown`) is preserved.
 Repeating an applied run reports no further matches for already classified rows.
-The target file must already exist. Both modes use `CrawlerDB`'s normal writer,
-WAL mode, shared connection lock, and 60-second SQLite busy timeout; a
-`BEGIN IMMEDIATE` reservation protects selection and updates from competing
-writers. **Dry-run does not write classifications, but opening an old file through
-the normal writer can migrate its schema and enable WAL.**
+The target file must already exist. Both modes first open it read-only (`mode=ro`)
+and require a real `sessions` table with LazyCrawler's core session columns;
+empty, foreign or incompatible databases are refused before opening a writer.
+Dry-run requires `sessions.origin`; if absent, it reports the schema version
+and explains that `--apply` is needed to migrate. **Dry-run never opens the
+writer, runs migrations, changes journal mode, or takes a write reservation.**
+Its counts come from a read snapshot and may change before a later apply.
+
+Only `--apply` opens `CrawlerDB`'s normal writer after preflight, migrating old
+LazyCrawler files as needed. It uses WAL mode, the shared connection lock and
+60-second SQLite busy timeout. A `BEGIN IMMEDIATE` reservation protects selection
+and updates from competing writers.
 
 ---
 
