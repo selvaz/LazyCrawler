@@ -96,6 +96,28 @@ def test_async_pure_mode_unchanged(monkeypatch):
     assert results[0].text
 
 
+@pytest.mark.parametrize("many", [False, True])
+@pytest.mark.parametrize("origin", [None, "interactive:async"])
+def test_async_session_origin(monkeypatch, tmp_db, many, origin):
+    _install(monkeypatch)
+    monkeypatch.setenv("LAZYCRAWLER_SESSION_ORIGIN", "job:async")
+    crawler = AsyncWebCrawler(
+        CrawlerConfig(max_depth=0, respect_robots=False),
+        HTTPConfig(allow_private_networks=True, link_delay=0),
+        db=tmp_db,
+    )
+
+    async def go():
+        try:
+            method = crawler.crawl_many if many else crawler.crawl
+            return await method([SEED] if many else SEED, session_id="origin", origin=origin)
+        finally:
+            await crawler.close()
+
+    assert asyncio.run(go())
+    assert tmp_db.get_session("origin")["origin"] == (origin or "job:async")
+
+
 # -- links="ml" best-first --------------------------------------------------
 
 

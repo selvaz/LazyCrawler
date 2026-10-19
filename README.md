@@ -4,6 +4,12 @@ A **generic** web crawler + search with **three modes** and SQLite persistence,
 built for the [LazyBridge](https://github.com/selvaz/LazyBridge) ecosystem.
 Works on any kind of web content — not tied to any domain.
 
+Sessions record their caller in `sessions.origin`: pass `origin=` to crawl/search
+APIs or set `LAZYCRAWLER_SESSION_ORIGIN`. Production jobs use a `job:` prefix;
+readers can use `production_session_filter()` (`origin LIKE 'job:%'`). See the
+[database guide](docs/guides/database.md#session-origin-and-production-readers)
+for validation, migration compatibility and the dry-run-first historical backfill CLI.
+
 There are **two independent knobs** (content / links), each taking one of
 **three values** — `pure`, `ml`, or `smart`:
 

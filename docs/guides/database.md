@@ -118,6 +118,104 @@ for row in rows:
     print(f"  {row[0]}: {row[2]} @ {row[1]}")
 ```
 
+### Session origin and production readers
+
+Every new session records who initiated it in `sessions.origin`. Resolution is:
+an explicit `origin=` argument, then `LAZYCRAWLER_SESSION_ORIGIN`, then `"unknown"`.
+`None` means no explicit argument. Empty strings are invalid rather than absent.
+Labels must contain 1–64 printable characters and no whitespace; invalid selected
+values log a warning and become `unknown`, even if a lower-priority value is valid.
+Existing session IDs retain their original metadata and origin when reused.
+
+`origin=` is optional on `CrawlerDB.create_session`, `WebCrawler.crawl` / `crawl_many`,
+`AsyncWebCrawler.crawl` / `crawl_many`, `WebSearch.run` (all engines, including Gemini),
+and `CrawlerTools.web_search` / `web_crawl` / `web_crawl_many`. The label describes
+the session's caller; `source` continues to describe the mechanism (`crawl`,
+`search:duckduckgo`, etc.). For example:
+
+```python
+crawler.crawl("https://example.com", origin="interactive:research", session_id="research-1")
+print(db.get_session("research-1")["origin"])
+sessions = db.get_sessions()  # full dicts including origin, newest first
+```
+
+Production launchers must set `LAZYCRAWLER_SESSION_ORIGIN` to a lowercase `job:`
+label, for example `job:news`, `job:calendar`, or `job:committee-search`. Interactive
+research should use another prefix, for example `interactive:research`.
+**The production contract for readers is `origin LIKE 'job:%'`.** The exported helper
+returns that SQL predicate, following SQLite's LIKE semantics (ASCII case-insensitive
+by default). NULL historical origins and `unknown` are excluded.
+
+Pages are shared across sessions: filter through `crawl_edges` and `sessions`,
+using `EXISTS` to avoid duplicate pages. A page reached by both an interactive and
+a production session qualifies via its production edge:
+
+```python
+from lazycrawler import production_session_filter
+
+rows = db.conn.execute(f"""
+    SELECT p.* FROM pages p
+    WHERE p.status = 'done' AND EXISTS (
+        SELECT 1 FROM crawl_edges e JOIN sessions s USING (session_id)
+        WHERE e.url_hash = p.url_hash AND {production_session_filter()}
+    )
+""").fetchall()
+```
+
+### Migration and older readers
+
+Schema version 3 adds nullable `sessions.origin TEXT` with no default using the
+existing `PRAGMA user_version` forward-migration mechanism. The regular writer
+opens old DBs and migrates them in place; existing rows remain NULL. Fresh DBs
+have the same schema. `DBConfig(read_only=True)` skips migrations; the new session
+read methods return `origin=None` when opening a pre-v3 file read-only.
+
+The previous version does not reject higher schema versions or downgrade
+`user_version`. Its queries and named-column inserts keep working on a v3 DB;
+older writers leave origin NULL. External SQL readers selecting existing columns
+also keep working. Consumers that unpack `SELECT *` positionally must account for
+the extra column. The package version is unchanged.
+
+### Classifying historical sessions
+
+Use an explicit JSON rules file to classify only sessions whose origin is NULL:
+
+```json
+[
+  {
+    "origin": "job:news",
+    "source": "crawl",
+    "start": "2026-10-01T00:00:00Z",
+    "end": "2026-10-10T00:00:00Z"
+  },
+  {"origin": "interactive:research", "source": "search:duckduckgo"}
+]
+```
+
+Each rule requires a valid origin and at least one of `source`, `start`, `end`.
+Source matches exactly. Time bounds must explicitly specify UTC (`Z` or `+00:00`);
+start is inclusive, end exclusive, and either bound can be omitted. All selectors
+within a rule must match; the first matching rule wins. Rules with unknown fields,
+invalid origins, or invalid/reversed bounds fail before opening the DB. No rules
+are built in. Stored timestamps are compared as instants, including offset-aware
+timestamps; legacy naive stored timestamps are interpreted as UTC. Unparseable
+stored timestamps cannot match time rules, but can match source-only rules.
+
+```bash
+python -m lazycrawler.backfill_session_origin --db /path/to/news.db --rules rules.json
+python -m lazycrawler.backfill_session_origin --db /path/to/news.db --rules rules.json --apply
+```
+
+The default previews classifications and prints JSON counts per matched origin
+plus `unmatched_null`. `--apply` writes the same classification in one transaction.
+Unmatched rows stay NULL; any non-NULL origin (including `unknown`) is preserved.
+Repeating an applied run reports no further matches for already classified rows.
+The target file must already exist. Both modes use `CrawlerDB`'s normal writer,
+WAL mode, shared connection lock, and 60-second SQLite busy timeout; a
+`BEGIN IMMEDIATE` reservation protects selection and updates from competing
+writers. **Dry-run does not write classifications, but opening an old file through
+the normal writer can migrate its schema and enable WAL.**
+
 ---
 
 ## Full-text search
