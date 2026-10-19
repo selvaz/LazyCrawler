@@ -183,12 +183,16 @@ class WebCrawler:
         topic: str = "",
         schema: Optional[type] = None,
         session_id: Optional[str] = None,
+        origin: Optional[str] = None,
         max_depth: Optional[int] = None,
         overrides: Optional[dict] = None,
         ml_overrides: Optional[dict] = None,
         refresh: bool = False,
     ) -> List[PageResult]:
         """Crawl a single URL (and its links up to max_depth).
+
+        ``origin`` labels the session caller; if None, use
+        LAZYCRAWLER_SESSION_ORIGIN or ``unknown``. Production labels start with ``job:``.
 
         ``max_depth`` overrides ``CrawlerConfig.max_depth`` for this call only.
         ``overrides`` / ``ml_overrides`` apply per-call config without mutating
@@ -208,6 +212,7 @@ class WebCrawler:
             topic=topic,
             schema=schema,
             session_id=session_id,
+            origin=origin,
             max_depth=max_depth,
             overrides=overrides,
             ml_overrides=ml_overrides,
@@ -224,13 +229,18 @@ class WebCrawler:
         topic: str = "",
         schema: Optional[type] = None,
         session_id: Optional[str] = None,
+        origin: Optional[str] = None,
         source: str = "crawl",
         max_depth: Optional[int] = None,
         overrides: Optional[dict] = None,
         ml_overrides: Optional[dict] = None,
         refresh: bool = False,
     ) -> List[PageResult]:
-        """Crawl a list of URLs sharing state (visited set, page counter)."""
+        """Crawl URLs sharing state (visited set, page counter).
+
+        ``origin`` labels the session caller; if None, use
+        LAZYCRAWLER_SESSION_ORIGIN or ``unknown``. Production labels start with ``job:``.
+        """
         content_mode: Mode = content or mode
         link_mode: Mode = links or mode
         eff_cfg = replace(self.cfg, **overrides) if overrides else self.cfg
@@ -257,6 +267,7 @@ class WebCrawler:
                 seed=urls[0] if urls else "",
                 mode=content_mode,
                 source=source,
+                origin=origin,
             )
 
         seeds = [(u, get_hostname(u)) for u in urls if not is_blacklisted_domain(u, self.blacklist)]

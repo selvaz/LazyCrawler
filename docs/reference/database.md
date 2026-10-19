@@ -53,6 +53,7 @@ cfg = DBConfig(
 | `seed` | TEXT | first seed URL |
 | `mode` | TEXT | `"pure"` / `"ml"` / `"smart"` |
 | `source` | TEXT | `"crawl"`, `"search:duckduckgo"`, etc. |
+| `origin` | TEXT nullable | caller label; production uses `job:` prefix; historical rows remain NULL |
 
 **`pages`** — global content cache, one row per unique URL (cross-session)
 
@@ -122,10 +123,31 @@ def create_session(
     seed: str,
     mode: str,
     source: str,
+    origin: str | None = None,
 ) -> str
 ```
 
 Create a new session record. Returns `session_id`. Called automatically by `WebCrawler` when a `db` is provided.
+
+Origin resolves from the explicit argument, `LAZYCRAWLER_SESSION_ORIGIN`, or
+`unknown`. Labels require 1–64 printable characters without whitespace; invalid
+values warn and become `unknown`. Reusing an ID fills a NULL origin with the resolved label; it preserves non-NULL
+origins and all other metadata.
+
+### get_session() / get_sessions()
+
+`db.get_session(session_id)` returns the complete session dict or `None`.
+`db.get_sessions()` returns all session dicts, ordered by the instant represented
+by `created_at` descending (`julianday`), then `session_id`. Both expose `origin`;
+pre-v3 read-only DBs return `origin=None`.
+
+### production_session_filter()
+
+`from lazycrawler import production_session_filter` returns the SQL predicate
+`s.origin GLOB 'job:*'` for the sessions table aliased as `s`. Matching is case-sensitive. A production
+page is reached by at least one production session, using a join or subquery via
+`crawl_edges`; pages without edges are excluded. See the [database guide](../guides/database.md#session-origin-and-production-readers)
+for the production convention, schema version 3 compatibility and historical backfill CLI.
 
 ---
 

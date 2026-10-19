@@ -39,6 +39,7 @@ from urllib.parse import quote
 from ._log import log
 from .config import DBConfig
 from .http import _quiet_close, get_base_domain, url_hash
+from .session_origin import resolve_session_origin
 
 #: Seconds a writer waits for another connection's write lock before failing.
 BUSY_TIMEOUT_S = 60.0
@@ -84,7 +85,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   topic        TEXT,
   seed         TEXT,
   mode         TEXT NOT NULL,
-  source       TEXT NOT NULL
+  source       TEXT NOT NULL,
+  origin       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pages (
@@ -256,7 +258,7 @@ class CrawlerDB:
 
     # -- Schema versioning / migrations ---------------------------------------
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def _migrate(self) -> None:
         """Apply forward migrations gated by ``PRAGMA user_version`` so each step
@@ -274,6 +276,13 @@ class CrawlerDB:
                 self.conn.execute("ALTER TABLE pages ADD COLUMN requested_url TEXT")
             except sqlite3.OperationalError:
                 log.debug("pages.requested_url already present (no migration needed)")
+        if version < 3:
+            try:
+                self.conn.execute("ALTER TABLE sessions ADD COLUMN origin TEXT")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+                log.debug("sessions.origin already present (no migration needed)")
         if version < self.SCHEMA_VERSION:
             self.conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
             self.conn.commit()
@@ -289,16 +298,49 @@ class CrawlerDB:
         seed: str = "",
         mode: str = "pure",
         source: str = "crawl",
+        origin: Optional[str] = None,
     ) -> str:
-        """Create (or ignore if existing) a session and return its id."""
+        """Create a session, or adopt a NULL origin on an existing id.
+
+        Origin resolves from the explicit value, LAZYCRAWLER_SESSION_ORIGIN,
+        or ``unknown``. Invalid values warn and become ``unknown``. Reusing an
+        id fills a NULL origin only; non-NULL origins and other metadata stay intact.
+        """
+        origin = resolve_session_origin(origin)
         with self._lock:
             self.conn.execute(
-                "INSERT OR IGNORE INTO sessions (session_id, created_at, topic, seed, mode, source) "
-                "VALUES (?,?,?,?,?,?)",
-                (session_id, utc_now_iso(), topic, seed, mode, source),
+                "INSERT OR IGNORE INTO sessions (session_id, created_at, topic, seed, mode, source, origin) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (session_id, utc_now_iso(), topic, seed, mode, source, origin),
+            )
+            self.conn.execute(
+                "UPDATE sessions SET origin=? WHERE session_id=? AND origin IS NULL",
+                (origin, session_id),
             )
             self.conn.commit()
         return session_id
+
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Session metadata including origin, or None if the id is unknown.
+
+        Read-only connections to pre-v3 databases expose origin as None without
+        migrating the file.
+        """
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {"origin": None, **dict(row)}
+
+    def get_sessions(self) -> List[Dict[str, Any]]:
+        """All session rows, including origin, newest first (then session id)."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM sessions ORDER BY julianday(created_at) DESC, session_id"
+            ).fetchall()
+        return [{"origin": None, **dict(row)} for row in rows]
 
     # -- Dedup level 1: URL + TTL --------------------------------------------
 

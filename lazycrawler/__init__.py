@@ -59,6 +59,7 @@ from .markdown import html_to_markdown, render_for_rag
 from .models import PageResult  # canonical location; crawler.py re-exports for compat
 from .presets import DEFAULT_PRESETS, CrawlPreset, resolve_presets
 from .search import WebSearch, search_brave_urls, search_ddg_urls, search_tavily_urls
+from .session_origin import production_session_filter
 from .tools import CrawlerTools
 
 __version__ = "0.14.0"
@@ -68,6 +69,7 @@ __all__ = [
     "AsyncWebCrawler",
     "WebSearch",
     "CrawlerDB",
+    "production_session_filter",
     "CrawlerTools",
     "PageResult",
     "Artifact",

@@ -202,6 +202,9 @@ def main() -> int:
                     mode=source.mode,
                     topic=f"{source.category} | {source.region} | {source.name}",
                     session_id=session_id,
+                    origin=os.environ.get(
+                        "LAZYCRAWLER_SESSION_ORIGIN", "job:lazycrawler-run_news_crawl"
+                    ),
                 )
                 r = results[0] if results else None
                 status = r.status if r else "no_result"

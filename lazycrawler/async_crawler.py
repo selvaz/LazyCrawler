@@ -642,12 +642,17 @@ class AsyncWebCrawler:
         topic: str = "",
         schema: Optional[type] = None,
         session_id: Optional[str] = None,
+        origin: Optional[str] = None,
         max_depth: Optional[int] = None,
         overrides: Optional[dict] = None,
         ml_overrides: Optional[dict] = None,
     ) -> List[PageResult]:
         """Crawl a URL and its links. ``mode``/``content``/``links`` accept
-        ``"pure"`` or ``"ml"`` (see the module docstring)."""
+        ``"pure"`` or ``"ml"`` (see the module docstring).
+
+        ``origin`` labels the session caller; if None, use
+        LAZYCRAWLER_SESSION_ORIGIN or ``unknown``. Production labels start with ``job:``.
+        """
         return await self.crawl_many(
             [url],
             mode=mode,
@@ -656,6 +661,7 @@ class AsyncWebCrawler:
             topic=topic,
             schema=schema,
             session_id=session_id,
+            origin=origin,
             max_depth=max_depth,
             overrides=overrides,
             ml_overrides=ml_overrides,
@@ -671,12 +677,17 @@ class AsyncWebCrawler:
         topic: str = "",
         schema: Optional[type] = None,
         session_id: Optional[str] = None,
+        origin: Optional[str] = None,
         source: str = "crawl",
         max_depth: Optional[int] = None,
         overrides: Optional[dict] = None,
         ml_overrides: Optional[dict] = None,
     ) -> List[PageResult]:
-        """Crawl multiple seed URLs sharing state (visited set, page counter)."""
+        """Crawl multiple seed URLs sharing state (visited set, page counter).
+
+        ``origin`` labels the session caller; if None, use
+        LAZYCRAWLER_SESSION_ORIGIN or ``unknown``. Production labels start with ``job:``.
+        """
         content_mode: Mode = content or mode
         link_mode: Mode = links or mode
         for which, m in (("content", content_mode), ("links", link_mode)):
@@ -710,6 +721,7 @@ class AsyncWebCrawler:
                 seed=urls[0] if urls else "",
                 mode=content_mode,
                 source=source,
+                origin=origin,
             )
 
         seeds = [

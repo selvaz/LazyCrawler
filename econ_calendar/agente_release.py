@@ -25,6 +25,7 @@ Two constraints learned by measuring, not by assuming:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -193,6 +194,7 @@ def search_web(query: str, window: str = "w") -> str:
             timelimit=window,
             max_results=4,
             overrides={"blacklist": domini_bloccati()},
+            origin=os.environ.get("LAZYCRAWLER_SESSION_ORIGIN", "job:lazycrawler-agente_release"),
         )
     chunks = []
     for p in outcome.get("results") or []:

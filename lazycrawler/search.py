@@ -408,6 +408,7 @@ class WebSearch:
         content: Optional[str] = None,
         links: Optional[str] = None,
         session_id: Optional[str] = None,
+        origin: Optional[str] = None,
         max_results: Optional[int] = None,
         overrides: Optional[dict] = None,
         ml_overrides: Optional[dict] = None,
@@ -417,6 +418,9 @@ class WebSearch:
     ) -> dict:
         """
         Run search + crawl.
+
+        ``origin`` labels the session caller; if None, use
+        LAZYCRAWLER_SESSION_ORIGIN or ``unknown``. Production labels start with ``job:``.
 
         ``mode`` sets both content and links; ``content=`` / ``links=`` override
         independently (see WebCrawler). ``overrides`` is a per-call dict of
@@ -451,7 +455,9 @@ class WebSearch:
         )
 
         if engine == "gemini":
-            results = self._run_gemini(query, topic, content_mode)
+            results = self._run_gemini(
+                query, topic, content_mode, session_id=session_id, origin=origin
+            )
         elif engine == "brave":
             results = self._run_brave(
                 query,
@@ -465,6 +471,7 @@ class WebSearch:
                 eff_timelimit,
                 refresh,
                 schema,
+                origin=origin,
             )
         elif engine == "tavily":
             results = self._run_tavily(
@@ -479,6 +486,7 @@ class WebSearch:
                 eff_timelimit,
                 refresh,
                 schema,
+                origin=origin,
             )
         else:
             results = self._run_duckduckgo(
@@ -493,6 +501,7 @@ class WebSearch:
                 eff_timelimit,
                 refresh,
                 schema,
+                origin=origin,
             )
 
         pages_found = sum(1 for r in results if r.status == "done")
@@ -520,6 +529,7 @@ class WebSearch:
         timelimit=None,
         refresh=False,
         schema=None,
+        origin=None,
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
         scfg = self.search_cfg
@@ -543,6 +553,7 @@ class WebSearch:
             links=link_mode,
             topic=topic,
             session_id=session_id,
+            origin=origin,
             source="search:duckduckgo",
             overrides=overrides,
             ml_overrides=ml_overrides,
@@ -565,6 +576,7 @@ class WebSearch:
         timelimit=None,
         refresh=False,
         schema=None,
+        origin=None,
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
         scfg = self.search_cfg
@@ -588,6 +600,7 @@ class WebSearch:
             links=link_mode,
             topic=topic,
             session_id=session_id,
+            origin=origin,
             source="search:brave",
             overrides=overrides,
             ml_overrides=ml_overrides,
@@ -610,6 +623,7 @@ class WebSearch:
         timelimit=None,
         refresh=False,
         schema=None,
+        origin=None,
     ) -> List[PageResult]:
         n_results = self.search_cfg.n_results if max_results is None else max(1, int(max_results))
         scfg = self.search_cfg
@@ -632,6 +646,7 @@ class WebSearch:
             links=link_mode,
             topic=topic,
             session_id=session_id,
+            origin=origin,
             source="search:tavily",
             overrides=overrides,
             ml_overrides=ml_overrides,
@@ -641,7 +656,9 @@ class WebSearch:
 
     # -- Gemini grounded (answer mode) ----------------------------------------
 
-    def _run_gemini(self, query, topic, content_mode) -> List[PageResult]:
+    def _run_gemini(
+        self, query, topic, content_mode, *, session_id=None, origin=None
+    ) -> List[PageResult]:
         mode = content_mode
         try:
             from lazybridge import Agent, LLMEngine, NativeTool
@@ -686,8 +703,10 @@ class WebSearch:
         )
         # optional persistence
         if self.db is not None:
-            sid = self.crawler._default_session_id(topic, mode)
-            self.db.create_session(sid, topic=topic, seed=query, mode=mode, source="search:gemini")
+            sid = session_id or self.crawler._default_session_id(topic, mode)
+            self.db.create_session(
+                sid, topic=topic, seed=query, mode=mode, source="search:gemini", origin=origin
+            )
             self.db.upsert_page(
                 {
                     "url": url,

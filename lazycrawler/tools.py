@@ -162,6 +162,9 @@ class CrawlerTools:
     enforce_ssrf_guard : bool
         Force the SSRF guard ON for the tool path (default True). Set False to
         allow crawling internal/private hosts (honors your ``http_cfg``).
+    origin : str, optional
+        Host-controlled session label, never exposed to the agent. None or an
+        empty string falls back to LAZYCRAWLER_SESSION_ORIGIN, then unknown.
     verbose : bool
         If True, print concise progress messages for interactive use.
     """
@@ -181,6 +184,8 @@ class CrawlerTools:
         search_cfg: Optional[SearchConfig] = None,
         enforce_ssrf_guard: bool = True,
         verbose: bool = False,
+        *,
+        origin: Optional[str] = None,
     ):
         self._owns_db = db is None
         if db is not None:
@@ -196,6 +201,8 @@ class CrawlerTools:
                 )
                 resolved = ":memory:"
             self.db = CrawlerDB(DBConfig(db_path=resolved))
+        # Only the host sets provenance; tool calls cannot override it.
+        self._origin = None if origin == "" else origin
         self.content = content
         self.links = links
         self.topic = topic
@@ -407,6 +414,7 @@ class CrawlerTools:
                 links=links,
                 max_results=n,
                 session_id=sid,
+                origin=self._origin,
                 overrides=overrides,
                 ml_overrides=ml_overrides,
                 timelimit=timelimit,
@@ -486,6 +494,7 @@ class CrawlerTools:
                 links=links,
                 topic=topic or self.topic,
                 session_id=sid,
+                origin=self._origin,
                 max_depth=eff_depth,
                 overrides=overrides,
                 ml_overrides=ml_overrides,
@@ -572,6 +581,7 @@ class CrawlerTools:
                 topic=topic or self.topic,
                 schema=schema_type,
                 session_id=sid,
+                origin=self._origin,
                 max_depth=eff_depth,
                 overrides=(p.crawl_overrides() if p else None),
                 ml_overrides=(p.ml_overrides() if p else None),

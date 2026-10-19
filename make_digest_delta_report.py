@@ -148,7 +148,12 @@ def build_delta_report(baseline: list[dict], query: dict) -> str:
     # the prompt tells the model to prefer both over its own native web
     # tools. web=True on the engine keeps native WebSearch/WebFetch
     # available as the last-resort fallback the prompt describes.
-    crawler_tools = CrawlerTools(db=CrawlerDB(DBConfig(db_path=str(DEFAULT_DB))))
+    crawler_tools = CrawlerTools(
+        db=CrawlerDB(DBConfig(db_path=str(DEFAULT_DB))),
+        origin=os.environ.get(
+            "LAZYCRAWLER_SESSION_ORIGIN", "job:lazycrawler-make_digest_delta_report"
+        ),
+    )
     try:
         agent = Agent(
             engine=ClaudeCodeEngine(model="sonnet", web=True),
