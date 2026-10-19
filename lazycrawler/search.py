@@ -455,7 +455,9 @@ class WebSearch:
         )
 
         if engine == "gemini":
-            results = self._run_gemini(query, topic, content_mode, origin=origin)
+            results = self._run_gemini(
+                query, topic, content_mode, session_id=session_id, origin=origin
+            )
         elif engine == "brave":
             results = self._run_brave(
                 query,
@@ -654,7 +656,9 @@ class WebSearch:
 
     # -- Gemini grounded (answer mode) ----------------------------------------
 
-    def _run_gemini(self, query, topic, content_mode, *, origin=None) -> List[PageResult]:
+    def _run_gemini(
+        self, query, topic, content_mode, *, session_id=None, origin=None
+    ) -> List[PageResult]:
         mode = content_mode
         try:
             from lazybridge import Agent, LLMEngine, NativeTool
@@ -699,7 +703,7 @@ class WebSearch:
         )
         # optional persistence
         if self.db is not None:
-            sid = self.crawler._default_session_id(topic, mode)
+            sid = session_id or self.crawler._default_session_id(topic, mode)
             self.db.create_session(
                 sid, topic=topic, seed=query, mode=mode, source="search:gemini", origin=origin
             )

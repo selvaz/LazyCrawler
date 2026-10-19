@@ -137,8 +137,9 @@ origins and all other metadata.
 ### get_session() / get_sessions()
 
 `db.get_session(session_id)` returns the complete session dict or `None`.
-`db.get_sessions()` returns all session dicts, ordered by `created_at` descending
-then `session_id`. Both expose `origin`; pre-v3 read-only DBs return `origin=None`.
+`db.get_sessions()` returns all session dicts, ordered by the instant represented
+by `created_at` descending (`julianday`), then `session_id`. Both expose `origin`;
+pre-v3 read-only DBs return `origin=None`.
 
 ### production_session_filter()
 

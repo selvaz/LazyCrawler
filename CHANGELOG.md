@@ -22,6 +22,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   Foreign/empty databases are refused. See the database guide for rules and compatibility.
 
 ### Fixed
+- Bundled news crawls, calendar enrichment searches and delta-report agent searches
+  default to `job:lazycrawler-<script name>` when `LAZYCRAWLER_SESSION_ORIGIN` is
+  unset; explicitly configured values still win.
+- Gemini search honors the requested session ID, so the tool's returned ID resolves
+  to the persisted session and its page provenance.
+- Session listing orders offset-aware timestamps by their instant using `julianday`.
 - Reusing a session ID adopts its resolved origin only when the stored origin is NULL;
   non-NULL labels and other session metadata are preserved.
 - Production filtering qualifies `s.origin` and matches the lowercase `job:` prefix

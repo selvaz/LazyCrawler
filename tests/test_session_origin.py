@@ -155,22 +155,27 @@ def test_sync_crawlers_persist_origin(tmp_db, make_crawler, stub_fetch, monkeypa
     assert tmp_db.get_session("sync")["origin"] == (origin or "job:sync")
 
 
+@pytest.fixture
+def gemini_answer(monkeypatch):
+    fake_agent = MagicMock()
+    fake_agent.return_value.return_value.text.return_value = "Grounded answer"
+    monkeypatch.setitem(
+        sys.modules,
+        "lazybridge",
+        SimpleNamespace(
+            Agent=fake_agent,
+            LLMEngine=MagicMock(),
+            NativeTool=SimpleNamespace(GOOGLE_SEARCH="search"),
+        ),
+    )
+
+
 @pytest.mark.parametrize("engine", ["duckduckgo", "brave", "tavily", "gemini"])
 @pytest.mark.parametrize("origin", [None, "interactive:explicit"])
-def test_search_engines_persist_origin(tmp_db, stub_fetch, monkeypatch, engine, origin):
+def test_search_engines_persist_origin(tmp_db, stub_fetch, monkeypatch, engine, origin, request):
     monkeypatch.setenv("LAZYCRAWLER_SESSION_ORIGIN", "job:search")
     if engine == "gemini":
-        fake_agent = MagicMock()
-        fake_agent.return_value.return_value.text.return_value = "Grounded answer"
-        monkeypatch.setitem(
-            sys.modules,
-            "lazybridge",
-            SimpleNamespace(
-                Agent=fake_agent,
-                LLMEngine=MagicMock(),
-                NativeTool=SimpleNamespace(GOOGLE_SEARCH="search"),
-            ),
-        )
+        request.getfixturevalue("gemini_answer")
     else:
         monkeypatch.setattr(
             f"lazycrawler.search.search_{'ddg' if engine == 'duckduckgo' else engine}_urls",
@@ -186,6 +191,48 @@ def test_search_engines_persist_origin(tmp_db, stub_fetch, monkeypatch, engine, 
         out = search.run("test", origin=origin)
     assert out["pages_found"] == 1
     assert tmp_db.get_sessions()[0]["origin"] == (origin or "job:search")
+
+
+@pytest.mark.parametrize("session_id", [None, "requested-session"])
+def test_gemini_persists_requested_session_id(tmp_db, gemini_answer, session_id):
+    with WebSearch(SearchConfig(engine="gemini"), db=tmp_db) as search:
+        out = search.run("test", session_id=session_id, origin="job:gemini")
+    assert out["pages_found"] == 1
+    sessions = tmp_db.get_sessions()
+    assert len(sessions) == 1
+    stored_id = sessions[0]["session_id"]
+    assert stored_id == session_id if session_id else bool(stored_id)
+    assert sessions[0]["origin"] == "job:gemini"
+    assert len(tmp_db.get_pages(session_id=stored_id)) == 1
+
+
+def test_gemini_tool_returns_persisted_session_id(tmp_db, gemini_answer):
+    with CrawlerTools(
+        db=tmp_db,
+        search_cfg=SearchConfig(engine="gemini"),
+        content="pure",
+        origin="job:gemini-tool",
+    ) as tools:
+        out = json.loads(tools.web_search("test"))
+        session = tmp_db.get_session(out["session_id"])
+        assert session is not None and session["origin"] == "job:gemini-tool"
+        assert out["found"] == 1
+        assert json.loads(tools.get_session_pages(out["session_id"]))["found"] == 1
+    assert len(tmp_db.get_sessions()) == 1
+
+
+def test_sessions_ordered_by_timestamp_instant(tmp_db):
+    timestamps = {
+        "older": "2026-01-02T12:00:00+14:00",  # Jan 1, 22:00 UTC
+        "newer": "2026-01-02T01:00:00-02:00",  # Jan 2, 03:00 UTC
+        "tie-a": "2026-01-01T23:00:00-01:00",  # Jan 2, 00:00 UTC
+        "tie-b": "2026-01-02T02:00:00+02:00",  # same instant, ordered by id
+    }
+    for sid, timestamp in timestamps.items():
+        tmp_db.create_session(sid)
+        tmp_db.conn.execute("UPDATE sessions SET created_at=? WHERE session_id=?", (timestamp, sid))
+    tmp_db.conn.commit()
+    assert [s["session_id"] for s in tmp_db.get_sessions()] == ["newer", "tie-a", "tie-b", "older"]
 
 
 @pytest.mark.parametrize("method", ["web_crawl", "web_crawl_many", "web_search"])

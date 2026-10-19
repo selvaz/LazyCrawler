@@ -338,7 +338,7 @@ class CrawlerDB:
         """All session rows, including origin, newest first (then session id)."""
         with self._lock:
             rows = self.conn.execute(
-                "SELECT * FROM sessions ORDER BY created_at DESC, session_id"
+                "SELECT * FROM sessions ORDER BY julianday(created_at) DESC, session_id"
             ).fetchall()
         return [{"origin": None, **dict(row)} for row in rows]
 

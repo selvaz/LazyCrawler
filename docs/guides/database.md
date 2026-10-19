@@ -149,6 +149,11 @@ sessions = db.get_sessions()  # full dicts including origin, newest first
 Production launchers must set `LAZYCRAWLER_SESSION_ORIGIN` to a lowercase `job:`
 label, for example `job:news`, `job:calendar`, or `job:committee-search`. Interactive
 research should use another prefix, for example `interactive:research`.
+The bundled writers `run_news_crawl.py`, `econ_calendar/agente_release.py` and
+`make_digest_delta_report.py` default to `job:lazycrawler-run_news_crawl`,
+`job:lazycrawler-agente_release` and `job:lazycrawler-make_digest_delta_report`,
+respectively, only when the environment variable is unset. Explicitly set values
+still win, including empty/invalid values that resolve to `unknown`.
 **The production contract is a case-sensitive lowercase `job:` prefix.** The
 exported helper returns `s.origin GLOB 'job:*'`; alias the sessions table as `s`.
 NULL historical origins, `unknown`, `JOB:` and `Job:` labels are excluded.
