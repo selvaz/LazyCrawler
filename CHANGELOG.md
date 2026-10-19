@@ -8,6 +8,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.7] — 2026-10-19
+
+Release set `ecosystem-2026.10.6`.
+
 ### Added
 - Session provenance in nullable `sessions.origin` (schema version 3, additive in-place migration).
   Crawl, async crawl and search APIs accept `origin=`; tools take the host label
