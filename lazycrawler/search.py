@@ -60,17 +60,20 @@ _NO_REGION = {"wt-wt", "wt", ""}
 
 
 def _is_ca_store_error(exc: BaseException) -> bool:
-    """True when ``exc`` (or its cause chain) is an SSL/cert-store failure."""
-    import ssl
+    """True only for a LOCAL CA-store load failure in ``exc``'s cause chain.
 
+    The Windows store on this machine fails to load with
+    ``[ASN1: NOT_ENOUGH_DATA]`` before any request is sent. A remote handshake
+    alert or a transient TLS error is a different SSLError and must not make
+    the process skip the OS store for good (it may hold a corporate root that
+    certifi lacks), so only the ASN1 load signature counts.
+    """
     seen: set = set()
     cur: Optional[BaseException] = exc
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
-        if isinstance(cur, ssl.SSLError):
-            return True
         msg = str(cur)
-        if "ASN1" in msg or "SSLError" in msg:
+        if "ASN1" in msg or "NOT_ENOUGH_DATA" in msg:
             return True
         cur = cur.__cause__ or cur.__context__
     return False
@@ -151,21 +154,26 @@ def search_ddg_urls(
     global _OS_CA_STORE_BROKEN
     if _OS_CA_STORE_BROKEN and len(_verify_chain) > 1:
         _verify_chain = _verify_chain[1:]
+    os_store_load_failed = False
     for _i, _verify in enumerate(_verify_chain):
         try:
             hits = _fetch(_verify)
+            if os_store_load_failed and _verify is not None:
+                # Cache the decision only once certifi has actually worked.
+                _OS_CA_STORE_BROKEN = True
+                log.warning(
+                    "DuckDuckGo: OS CA store failed to load and certifi works; "
+                    "later searches in this process skip the OS store"
+                )
             break
         except Exception as e:
             if _i < len(_verify_chain) - 1:
                 if _verify is None and _is_ca_store_error(e):
-                    _OS_CA_STORE_BROKEN = True
+                    os_store_load_failed = True
                 log.warning(
-                    "DuckDuckGo search failed (%s: %s); retrying with certifi CA bundle%s",
+                    "DuckDuckGo search failed (%s: %s); retrying with certifi CA bundle",
                     type(e).__name__,
                     e,
-                    " (OS store marked unusable; later searches skip it)"
-                    if _OS_CA_STORE_BROKEN
-                    else "",
                 )
                 continue
             log.warning("DuckDuckGo search failed (%s: %s)", type(e).__name__, e, exc_info=True)
