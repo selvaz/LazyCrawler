@@ -323,3 +323,129 @@ def test_websearch_tavily_wires_correctly(monkeypatch, stub_fetch, tmp_db):
     assert out["engine"] == "tavily"
     assert out["pages_found"] == 2
     assert {r.url for r in out["results"]} == {"https://e.org/t1", "https://e.org/t2"}
+
+
+def _install_fake_ddgs(monkeypatch, factory):
+    fake = types.ModuleType("ddgs")
+    fake.DDGS = factory
+    monkeypatch.setitem(sys.modules, "ddgs", fake)
+
+
+def test_ddg_no_region_code_is_not_forwarded(monkeypatch):
+    """'wt-wt' must not reach ddgs (it builds wt.wikipedia.org / hl=wt-WT)."""
+    seen = []
+
+    class FakeDDGS:
+        def __init__(self, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def text(self, query, **kwargs):
+            seen.append(kwargs)
+            return []
+
+    _install_fake_ddgs(monkeypatch, FakeDDGS)
+    search_ddg_urls("q", 3, region="wt-wt")
+    search_ddg_urls("q", 3, region="it-it")
+    assert "region" not in seen[0]
+    assert seen[1]["region"] == "it-it"
+
+
+def test_ddg_certifi_fallback_decided_once_per_process(monkeypatch):
+    """After one ASN1 SSLError on the OS store, later calls use certifi directly."""
+    import ssl
+
+    monkeypatch.setattr(search_mod, "_OS_CA_STORE_BROKEN", False)
+    verifies = []
+
+    class FakeDDGS:
+        def __init__(self, verify=None, **kw):
+            self.verify = verify
+            verifies.append(verify)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def text(self, query, **kwargs):
+            if self.verify is None:
+                raise ssl.SSLError("[ASN1: NOT_ENOUGH_DATA] not enough data (_ssl.c:4057)")
+            return [{"href": "https://example.com/a"}]
+
+    _install_fake_ddgs(monkeypatch, FakeDDGS)
+    assert search_ddg_urls("q", 3) == ["https://example.com/a"]
+    assert verifies[0] is None and verifies[1] is not None
+    verifies.clear()
+    assert search_ddg_urls("q", 3) == ["https://example.com/a"]
+    assert len(verifies) == 1 and verifies[0] is not None  # OS store skipped
+    assert search_mod._OS_CA_STORE_BROKEN is True
+
+
+def test_ddg_non_ssl_error_does_not_mark_store_broken(monkeypatch):
+    monkeypatch.setattr(search_mod, "_OS_CA_STORE_BROKEN", False)
+
+    class FakeDDGS:
+        def __init__(self, verify=None, **kw):
+            self.verify = verify
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def text(self, query, **kwargs):
+            if self.verify is None:
+                raise RuntimeError("rate limited")
+            return []
+
+    _install_fake_ddgs(monkeypatch, FakeDDGS)
+    search_ddg_urls("q", 3)
+    assert search_mod._OS_CA_STORE_BROKEN is False
+
+
+def _ddgs_failing_os_store(error, certifi_ok=True):
+    class FakeDDGS:
+        def __init__(self, verify=None, **kw):
+            self.verify = verify
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def text(self, query, **kwargs):
+            if self.verify is None or not certifi_ok:
+                raise error
+            return [{"href": "https://example.com/a"}]
+
+    return FakeDDGS
+
+
+def test_ddg_handshake_ssl_error_does_not_mark_store_broken(monkeypatch):
+    """A remote/transient TLS error is not a local store-load failure."""
+    import ssl
+
+    monkeypatch.setattr(search_mod, "_OS_CA_STORE_BROKEN", False)
+    err = ssl.SSLError("[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] sslv3 alert handshake failure")
+    _install_fake_ddgs(monkeypatch, _ddgs_failing_os_store(err))
+    assert search_ddg_urls("q", 3) == ["https://example.com/a"]
+    assert search_mod._OS_CA_STORE_BROKEN is False
+
+
+def test_ddg_store_not_marked_broken_when_certifi_also_fails(monkeypatch):
+    import ssl
+
+    monkeypatch.setattr(search_mod, "_OS_CA_STORE_BROKEN", False)
+    err = ssl.SSLError("[ASN1: NOT_ENOUGH_DATA] not enough data (_ssl.c:4057)")
+    _install_fake_ddgs(monkeypatch, _ddgs_failing_os_store(err, certifi_ok=False))
+    assert search_ddg_urls("q", 3) == []
+    assert search_mod._OS_CA_STORE_BROKEN is False
