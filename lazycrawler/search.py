@@ -51,6 +51,31 @@ from .http import is_blacklisted_domain, is_excluded_url, normalize_url, url_has
 # =============================================================================
 
 
+# Process-wide memo: once the OS trust store has failed to load (corrupt Windows
+# cert store -> ``SSLError: [ASN1: NOT_ENOUGH_DATA]``), every later ddgs call
+# goes straight to the certifi bundle instead of paying the failing OS-store
+# load (and a warning) on each search.
+_OS_CA_STORE_BROKEN = False
+_NO_REGION = {"wt-wt", "wt", ""}
+
+
+def _is_ca_store_error(exc: BaseException) -> bool:
+    """True when ``exc`` (or its cause chain) is an SSL/cert-store failure."""
+    import ssl
+
+    seen: set = set()
+    cur: Optional[BaseException] = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, ssl.SSLError):
+            return True
+        msg = str(cur)
+        if "ASN1" in msg or "SSLError" in msg:
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
 def search_ddg_urls(
     query: str,
     max_results: int,
@@ -83,11 +108,16 @@ def search_ddg_urls(
     fetch_n = min(max_results * 2, 50)
     text_kwargs = dict(
         max_results=fetch_n,
-        region=region,
         safesearch=safesearch,
         timelimit=timelimit,
         backend=backend,
     )
+    # "wt-wt" is the legacy duckduckgo_search "no region" code. ddgs splits the
+    # region into country/lang and builds per-engine hosts from it, so it would
+    # request ``wt.wikipedia.org`` and ``hl=wt-WT`` (DNS failure, ~seconds lost
+    # per search). Omit the kwarg and let ddgs use its default ("us-en").
+    if region and region.lower() not in _NO_REGION:
+        text_kwargs["region"] = region
 
     results: List[str] = []
     seen: set = set()
@@ -118,16 +148,24 @@ def search_ddg_urls(
         _verify_chain = (None, certifi.where())
     except ImportError:
         _verify_chain = (None,)
+    global _OS_CA_STORE_BROKEN
+    if _OS_CA_STORE_BROKEN and len(_verify_chain) > 1:
+        _verify_chain = _verify_chain[1:]
     for _i, _verify in enumerate(_verify_chain):
         try:
             hits = _fetch(_verify)
             break
         except Exception as e:
             if _i < len(_verify_chain) - 1:
+                if _verify is None and _is_ca_store_error(e):
+                    _OS_CA_STORE_BROKEN = True
                 log.warning(
-                    "DuckDuckGo search failed (%s: %s); retrying with certifi CA bundle",
+                    "DuckDuckGo search failed (%s: %s); retrying with certifi CA bundle%s",
                     type(e).__name__,
                     e,
+                    " (OS store marked unusable; later searches skip it)"
+                    if _OS_CA_STORE_BROKEN
+                    else "",
                 )
                 continue
             log.warning("DuckDuckGo search failed (%s: %s)", type(e).__name__, e, exc_info=True)

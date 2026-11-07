@@ -8,6 +8,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- DuckDuckGo search remembers, per process, that the OS CA store failed to load
+  (`SSLError: [ASN1: NOT_ENOUGH_DATA]`) and goes straight to the certifi bundle on
+  later calls; the warning is no longer repeated and each search no longer pays the
+  failing store load.
+- `search_ddg_urls` no longer forwards the legacy `wt-wt` "no region" code to ddgs,
+  which made engines request the non-existent `wt.wikipedia.org` host (and
+  `hl=wt-WT`). ddgs now uses its own default region; real locales pass through.
+
 ## [0.19.7] — 2026-10-19
 
 Release set `ecosystem-2026.10.6`.
