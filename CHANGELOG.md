@@ -8,7 +8,19 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.8] — 2026-11-22
+
 ### Fixed
+- `run_news_crawl.py` finishes inside its scheduled budget when single articles
+  stall (production News_USClose was killed at 2 h on 15-21/11 after 9-20 min
+  stalls on single articles). Article crawl+extraction and feed fetch/parse run in
+  one persistent worker process with a per-article deadline (default 90 s, counted
+  from item start), a per-feed deadline (30 s) and a wall-clock budget (100 min);
+  past the budget the run stops starting work and still writes metadata and prints
+  `SESSION_ID`, so the digest is built from what was fetched (`partial=true`,
+  timeout/error/skip counts in the run summary). Worker start failures are retried
+  (3 attempts) before the run ends as partial. Progress lines are unbuffered and
+  report fetch/extraction/total time per item (#75).
 - DuckDuckGo search remembers, per process, that the OS CA store failed to load
   (`SSLError: [ASN1: NOT_ENOUGH_DATA]`) and goes straight to the certifi bundle on
   later calls; the warning is no longer repeated and each search no longer pays the
