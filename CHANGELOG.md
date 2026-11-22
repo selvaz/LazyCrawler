@@ -8,6 +8,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.9] — 2026-11-22
+
+### Fixed
+- News crawl phase telemetry measures the fetch on the HTTP client each crawl path
+  really uses (best-first ML crawls built a separate client, so every item reported
+  `fetch=0.00s`). `WebCrawler.crawl()`/`crawl_many()` accept an optional
+  `fetch_observer`; behaviour without it is unchanged (#77).
+
 ## [0.19.8] — 2026-11-22
 
 ### Fixed
