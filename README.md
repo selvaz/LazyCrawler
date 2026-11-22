@@ -727,6 +727,14 @@ setup_scheduler.ps1                   registers the 3 daily Windows scheduled ta
 setup_first_run.ps1                   interactive bootstrap: installs deps, prompts for API keys, smoke-tests
 ```
 
+Each article runs in a disposable worker process. `run_news_crawl.py` kills and
+skips a worker after **90 seconds** (`--article-deadline-seconds`, or
+`LAZYCRAWLER_NEWS_ARTICLE_DEADLINE`) and stops starting articles after a
+**100-minute** wall-clock budget (`--wall-budget-minutes`, or
+`LAZYCRAWLER_NEWS_WALL_BUDGET`). A partial run still prints `SESSION_ID`, so the
+wrapper builds the digest from completed articles. Progress includes fetch,
+extraction, and total timings and is emitted unbuffered by the PowerShell job.
+
 ### First-run setup (new machine)
 
 ```powershell

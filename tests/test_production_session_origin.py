@@ -26,7 +26,10 @@ def deployment_origin(monkeypatch, request):
 @pytest.fixture
 def fake_bridge(monkeypatch):
     bridge = SimpleNamespace(
-        Agent=MagicMock(), ClaudeCodeEngine=MagicMock(), LLMEngine=MagicMock(), Tool=MagicMock()
+        Agent=MagicMock(),
+        ClaudeCodeEngine=MagicMock(),
+        LLMEngine=MagicMock(),
+        Tool=MagicMock(),
     )
     monkeypatch.setitem(sys.modules, "lazybridge", bridge)
     monkeypatch.setitem(
@@ -57,13 +60,15 @@ def test_news_crawl_labels_both_content_modes(
         "load_sources",
         lambda path: [
             SimpleNamespace(
-                name=mode, mode=mode, url="feed", category="macro", region="global", lang="en"
+                name=mode,
+                mode=mode,
+                url="feed",
+                category="macro",
+                region="global",
+                lang="en",
             )
             for mode in ("ml", "smart")
         ],
-    )
-    monkeypatch.setattr(
-        runner, "_feed_items", lambda *args: ([("Title", "https://e.example/news")], 0)
     )
     modes = []
 
@@ -76,6 +81,27 @@ def test_news_crawl_labels_both_content_modes(
         return SimpleNamespace(crawl=crawl)
 
     monkeypatch.setattr(runner, "WebCrawler", crawler_factory)
+
+    class InProcessWorker:
+        def __init__(self, config, **unused):
+            self.db = CrawlerDB(DBConfig(db_path=config.db_path, ttl_hours=6.0))
+            common = dict(db=self.db, crawler_cfg=runner.CrawlerConfig())
+            self.crawlers = {
+                "ml": crawler_factory(**common),
+                "smart": crawler_factory(**common),
+            }
+
+        def feed(self, *unused):
+            return [("Title", "https://e.example/news")], 0
+
+        def article(self, job, deadline):
+            messages = SimpleNamespace(put=lambda value: None)
+            return runner._crawl_item(job, messages, self.crawlers), "extraction"
+
+        def close(self):
+            self.db.close()
+
+    monkeypatch.setattr(runner, "PersistentWorker", InProcessWorker)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -90,11 +116,11 @@ def test_news_crawl_labels_both_content_modes(
         ],
     )
     assert runner.main() == 0
-    assert modes == ["ml", "smart"]
     with CrawlerDB(DBConfig(db_path=str(path), read_only=True)) as db:
         assert db.get_session("news-test")["origin"] == _expected(
             deployment_origin, "run_news_crawl"
         )
+    assert modes == ["ml", "smart"]
 
 
 def test_calendar_search_labels_sessions(tmp_db, monkeypatch, deployment_origin, fake_bridge):
@@ -139,7 +165,12 @@ def test_delta_report_labels_agent_searches(tmp_db, monkeypatch, deployment_orig
         return SimpleNamespace(as_tools=lambda: [], close=lambda: None)
 
     monkeypatch.setattr("lazycrawler.tools.CrawlerTools", tools_factory)
-    query = {"session_id": "news-test", "engine": "claude", "n_articles": 1, "text": "digest"}
+    query = {
+        "session_id": "news-test",
+        "engine": "claude",
+        "n_articles": 1,
+        "text": "digest",
+    }
     assert runner.build_delta_report([], query) == "delta report"
     assert tmp_db.get_session("delta-test")["origin"] == _expected(
         deployment_origin, "make_digest_delta_report"

@@ -24,6 +24,32 @@ ZERO_USAGE = {
 }
 
 
+class _SpawnCostCrawler:
+    """Picklable crawler used to verify the Windows-spawn production path."""
+
+    def __init__(self, *, llm_cfg=None, **unused):
+        self.session = llm_cfg.session if llm_cfg is not None else None
+
+    def crawl(self, url, **unused):
+        if self.session is not None:
+            from lazybridge.session import EventType
+
+            self.session.emit(
+                EventType.MODEL_RESPONSE,
+                {
+                    "agent_name": "extraction",
+                    "input_tokens": 10,
+                    "output_tokens": 10,
+                    "cost_usd": 0.1,
+                },
+            )
+        return [SimpleNamespace(status="done", url=url)]
+
+
+def _spawn_cost_crawler_factory(**kwargs):
+    return _SpawnCostCrawler(**kwargs)
+
+
 @pytest.mark.parametrize("override", [None, "", "custom/costs.db"])
 def test_cost_db_path(monkeypatch, tmp_path, override):
     monkeypatch.delenv("NEWS_COST_DB", raising=False)
@@ -149,6 +175,38 @@ def test_both_jobs_share_real_sessions_and_exclude_another_run(monkeypatch, tmp_
         return SimpleNamespace(crawl=do_crawl)
 
     monkeypatch.setattr(crawl, "WebCrawler", crawler_factory)
+
+    class InProcessWorker:
+        """Production-shaped adapter so this test's monkeypatches are effective."""
+
+        def __init__(self, config, **unused):
+            self.cost_session = bridge.Session(db=config.cost_db_path)
+            register_cost_session(
+                config.cost_db_path,
+                config.session_id,
+                self.cost_session.session_id,
+                "crawl",
+            )
+            common = {"db": db, "crawler_cfg": crawl.CrawlerConfig()}
+            self.crawlers = {
+                "ml": crawler_factory(**common),
+                "smart": crawler_factory(
+                    **common,
+                    llm_cfg=crawl.LLMConfig(model=crawl.DEEPSEEK_MODEL, session=self.cost_session),
+                ),
+            }
+
+        def feed(self, *args):
+            return crawl._feed_items(*args[:-1])
+
+        def article(self, job, deadline):
+            messages = SimpleNamespace(put=lambda value: None)
+            return crawl._crawl_item(job, messages, self.crawlers), "extraction"
+
+        def close(self):
+            self.cost_session.close()
+
+    monkeypatch.setattr(crawl, "PersistentWorker", InProcessWorker)
     monkeypatch.setattr(report, "_load_meta", lambda session_id: {})
     monkeypatch.setattr(report, "_enrich", lambda pages, meta: pages)
     monkeypatch.setattr(report, "_group_by_region", lambda pages: {})
@@ -194,3 +252,40 @@ def test_both_jobs_share_real_sessions_and_exclude_another_run(monkeypatch, tmp_
     )
     assert list(tmp_path.rglob("*_cost.db")) == []
     assert set(tmp_path.rglob("*.db")) == {path}
+
+
+def test_spawned_worker_cost_is_attributed_to_news_run(tmp_path):
+    """A real spawned worker maps its LazyBridge session to the parent run."""
+    pytest.importorskip("lazybridge.session")
+    import run_news_crawl as crawl
+
+    cost_db = tmp_path / "costs.db"
+    config = crawl.WorkerConfig(
+        str(tmp_path / "crawl.db"),
+        str(cost_db),
+        "spawn-news",
+        crawler_factory=_spawn_cost_crawler_factory,
+    )
+    worker = crawl.PersistentWorker(config, startup_timeout=30, mp_start_method="spawn")
+    try:
+        outcome, _ = worker.article(
+            crawl.ArticleJob(
+                "https://example.test/article",
+                "smart",
+                "topic",
+                "spawn-news",
+                "test",
+                config.db_path,
+                config.cost_db_path,
+            ),
+            10,
+        )
+    finally:
+        worker.close()
+
+    assert outcome is not None and outcome.status == "done"
+    assert report._usage_from_cost_db(cost_db, "spawn-news")["total"] == {
+        "input_tokens": 10,
+        "output_tokens": 10,
+        "cost_usd": pytest.approx(0.1),
+    }
