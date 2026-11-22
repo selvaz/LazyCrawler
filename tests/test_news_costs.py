@@ -192,9 +192,7 @@ def test_both_jobs_share_real_sessions_and_exclude_another_run(monkeypatch, tmp_
                 "ml": crawler_factory(**common),
                 "smart": crawler_factory(
                     **common,
-                    llm_cfg=crawl.LLMConfig(
-                        model=crawl.DEEPSEEK_MODEL, session=self.cost_session
-                    ),
+                    llm_cfg=crawl.LLMConfig(model=crawl.DEEPSEEK_MODEL, session=self.cost_session),
                 ),
             }
 
@@ -268,9 +266,7 @@ def test_spawned_worker_cost_is_attributed_to_news_run(tmp_path):
         "spawn-news",
         crawler_factory=_spawn_cost_crawler_factory,
     )
-    worker = crawl.PersistentWorker(
-        config, startup_timeout=30, mp_start_method="spawn"
-    )
+    worker = crawl.PersistentWorker(config, startup_timeout=30, mp_start_method="spawn")
     try:
         outcome, _ = worker.article(
             crawl.ArticleJob(

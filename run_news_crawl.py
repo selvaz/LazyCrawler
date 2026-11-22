@@ -20,14 +20,14 @@ from __future__ import annotations
 
 import argparse
 import calendar
-from dataclasses import dataclass
 import json
-import os
-import sys
-import time
 import multiprocessing as mp
+import os
 import queue
 import sqlite3
+import sys
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -254,9 +254,7 @@ class PersistentWorker:
         self.was_killed = False
 
     def _start(self):
-        ctx = mp.get_context(
-            self.mp_start_method or ("spawn" if os.name == "nt" else "fork")
-        )
+        ctx = mp.get_context(self.mp_start_method or ("spawn" if os.name == "nt" else "fork"))
         self.jobs, self.messages = ctx.Queue(), ctx.Queue()
         self.process = ctx.Process(
             target=_worker_loop,
@@ -511,10 +509,7 @@ def main() -> int:
     ):
         p.error("deadlines, wall budget, and worker recycle count must be positive")
 
-    session_id = (
-        args.session_id
-        or f"news_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-    )
+    session_id = args.session_id or f"news_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     run_started = time.monotonic()
     budget_seconds = args.wall_budget_minutes * 60.0
 
@@ -559,11 +554,7 @@ def main() -> int:
         for source_index, source in enumerate(sources):
             if time.monotonic() - run_started >= budget_seconds:
                 totals["skipped_budget"] += sum(
-                    (
-                        args.ml_max_items
-                        if remaining.mode == "ml"
-                        else args.smart_max_items
-                    )
+                    (args.ml_max_items if remaining.mode == "ml" else args.smart_max_items)
                     for remaining in sources[source_index:]
                 )
                 budget_exhausted = True
@@ -573,9 +564,7 @@ def main() -> int:
                     flush=True,
                 )
                 break
-            max_items = (
-                args.ml_max_items if source.mode == "ml" else args.smart_max_items
-            )
+            max_items = args.ml_max_items if source.mode == "ml" else args.smart_max_items
             try:
                 items, skipped_old = worker.feed(
                     source.url,
@@ -602,9 +591,7 @@ def main() -> int:
                     # their configured maximum as skipped work in the summary.
                     for remaining in sources[source_index + 1 :]:
                         totals["skipped_budget"] += (
-                            args.ml_max_items
-                            if remaining.mode == "ml"
-                            else args.smart_max_items
+                            args.ml_max_items if remaining.mode == "ml" else args.smart_max_items
                         )
                     budget_exhausted = True
                     print(
@@ -694,9 +681,7 @@ def main() -> int:
         "partial": budget_exhausted or worker_failed or totals["timeouts"] > 0,
         **totals,
     }
-    meta_path.write_text(
-        json.dumps(url_meta, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    meta_path.write_text(json.dumps(url_meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(
         f"\nSession {session_id}: ml={totals['ml']} smart={totals['smart']} "

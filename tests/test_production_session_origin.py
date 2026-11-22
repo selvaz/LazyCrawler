@@ -36,9 +36,7 @@ def fake_bridge(monkeypatch):
         sys.modules,
         "lazybridge.session",
         SimpleNamespace(
-            Session=lambda **kwargs: SimpleNamespace(
-                session_id="cost", close=lambda: None
-            )
+            Session=lambda **kwargs: SimpleNamespace(session_id="cost", close=lambda: None)
         ),
     )
     return bridge
@@ -55,9 +53,7 @@ def test_news_crawl_labels_both_content_modes(
 
     path = tmp_path / "news.db"
     monkeypatch.setattr(runner, "REPORT_DIR", tmp_path / "reports")
-    monkeypatch.setattr(
-        runner, "resolve_cost_db_path", lambda *args: tmp_path / "costs.db"
-    )
+    monkeypatch.setattr(runner, "resolve_cost_db_path", lambda *args: tmp_path / "costs.db")
     monkeypatch.setattr(runner, "register_cost_session", lambda *args: None)
     monkeypatch.setattr(
         runner,
@@ -79,9 +75,7 @@ def test_news_crawl_labels_both_content_modes(
     def crawler_factory(*, db, **config):
         def crawl(url, *, mode, topic, session_id, origin):
             modes.append(mode)
-            db.create_session(
-                session_id, mode=mode, topic=topic, seed=url, origin=origin
-            )
+            db.create_session(session_id, mode=mode, topic=topic, seed=url, origin=origin)
             return [SimpleNamespace(status="done", url=url)]
 
         return SimpleNamespace(crawl=crawl)
@@ -129,9 +123,7 @@ def test_news_crawl_labels_both_content_modes(
     assert modes == ["ml", "smart"]
 
 
-def test_calendar_search_labels_sessions(
-    tmp_db, monkeypatch, deployment_origin, fake_bridge
-):
+def test_calendar_search_labels_sessions(tmp_db, monkeypatch, deployment_origin, fake_bridge):
     # Load with a separate name so fake agents never replace a cached real
     # calendar module or leak into other offline tests.
     path = Path(__file__).resolve().parents[1] / "econ_calendar" / "agente_release.py"
@@ -160,14 +152,10 @@ def test_calendar_search_labels_sessions(
     )
 
 
-def test_delta_report_labels_agent_searches(
-    tmp_db, monkeypatch, deployment_origin, fake_bridge
-):
+def test_delta_report_labels_agent_searches(tmp_db, monkeypatch, deployment_origin, fake_bridge):
     import make_digest_delta_report as runner
 
-    fake_bridge.Agent.return_value = lambda prompt: SimpleNamespace(
-        text=lambda: "delta report"
-    )
+    fake_bridge.Agent.return_value = lambda prompt: SimpleNamespace(text=lambda: "delta report")
     monkeypatch.setattr("lazycrawler.CrawlerDB", lambda cfg: tmp_db)
 
     def tools_factory(*, db, origin):
