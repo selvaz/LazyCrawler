@@ -19,6 +19,7 @@ and are not mixed into the pipeline logic.
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
 
@@ -177,7 +178,12 @@ class PagePipeline:
 
         # FETCH
         self.rate.wait(url)
-        fr = res.http.fetch(url)
+        fetch_started = time.perf_counter()
+        self._observe_fetch(st, "start", 0.0)
+        try:
+            fr = res.http.fetch(url)
+        finally:
+            self._observe_fetch(st, "end", time.perf_counter() - fetch_started)
         log.debug(
             "  fetch: HTTP %s | html=%d chars | text=%d chars | pdf_bytes=%d",
             fr.status or "ERR",
@@ -191,6 +197,17 @@ class PagePipeline:
         # async engines stay feature-identical (PDF, canonical, dedup, ml/smart,
         # artifacts, markdown, persistence) with no divergence.
         return self.process_fetched(st, url, uh, depth, source_url, start_domain, res, fr)
+
+    @staticmethod
+    def _observe_fetch(st: Any, event: str, elapsed: float) -> None:
+        """Notify optional per-crawl instrumentation without changing crawl behavior."""
+        observer = getattr(st, "fetch_observer", None)
+        if observer is None:
+            return
+        try:
+            observer(event, elapsed)
+        except Exception:
+            log.debug("fetch observer failed", exc_info=True)
 
     def process_fetched(
         self,

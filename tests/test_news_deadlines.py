@@ -5,7 +5,11 @@ import sys
 import time
 from types import SimpleNamespace
 
+import pytest
+
 import run_news_crawl as runner
+from lazycrawler import CrawlerConfig, HTTPConfig, MLConfig, WebCrawler
+from lazycrawler.http import FetchResult, HTTPClient
 
 
 def _busy_or_complete(job, messages, crawlers):
@@ -34,7 +38,9 @@ def test_gil_holding_article_is_killed_and_next_article_completes():
     assert phase == "extraction"
     assert completed is not None and completed.status == "done"
     # Worker import/spawn is explicitly not part of either 0.5s item deadline.
-    assert time.monotonic() - started < 10.0
+    # Two spawns (initial + after the kill) cost ~5 s each on Windows; the bound
+    # only proves the run does not wait for the stalled item.
+    assert time.monotonic() - started < 30.0
 
 
 class _FakeWorker:
@@ -109,7 +115,11 @@ def test_reused_crawler_emits_one_extraction_phase_per_fetch():
             self._http = HTTP()
 
         def crawl(self, url, **kwargs):
+            observer = kwargs["fetch_observer"]
+            started = time.perf_counter()
+            observer("start", 0.0)
             self._http.fetch(url)
+            observer("end", time.perf_counter() - started)
             return [SimpleNamespace(status="done", url=url)]
 
     messages = queue.Queue()
@@ -126,6 +136,41 @@ def test_reused_crawler_emits_one_extraction_phase_per_fetch():
         phases.append(messages.get_nowait())
     assert [message[1] for message in phases].count("extraction") == 5
     assert crawler._http.fetch == original_fetch
+
+
+@pytest.mark.parametrize("best_first", [True, False])
+def test_ml_fetch_timing_uses_active_http_client(monkeypatch, best_first):
+    delay = 0.05
+
+    def sleeping_fetch(self, url):
+        time.sleep(delay)
+        return FetchResult(
+            html="<html><body><p>Markets rallied after the policy announcement.</p></body></html>",
+            text="Markets rallied after the policy announcement.",
+            status=200,
+            final_url=url,
+        )
+
+    monkeypatch.setattr(HTTPClient, "fetch", sleeping_fetch)
+    monkeypatch.setattr("lazycrawler.ml.get_embedder", lambda *args: None)
+    crawler = WebCrawler(
+        crawler_cfg=CrawlerConfig(max_depth=0, respect_robots=False),
+        http_cfg=HTTPConfig(allow_private_networks=True),
+        ml_cfg=MLConfig(best_first=best_first),
+    )
+    messages = queue.Queue()
+
+    outcome = runner._crawl_item(_job("https://example.test/article"), messages, {"ml": crawler})
+
+    phases = []
+    while not messages.empty():
+        phases.append(messages.get_nowait()[1])
+    assert outcome.status == "done"
+    assert outcome.fetch_seconds >= delay * 0.8
+    assert outcome.extraction_seconds == pytest.approx(
+        outcome.total_seconds - outcome.fetch_seconds
+    )
+    assert phases == ["fetch", "fetch", "extraction"]
 
 
 class _AlwaysFailingStartWorker(_FakeWorker):
