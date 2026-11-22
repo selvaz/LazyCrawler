@@ -87,6 +87,10 @@ class WorkerConfig:
     db_path: str
     cost_db_path: str
     session_id: str
+    # Primarily an integration seam: unlike monkeypatches, a module-level
+    # callable survives Windows ``spawn`` and lets the actual worker/session
+    # attribution path be exercised without making network requests.
+    crawler_factory: object | None = None
 
 
 def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
@@ -148,13 +152,14 @@ def _worker_loop(config: WorkerConfig, jobs, messages, work_item=_crawl_item) ->
         register_cost_session(
             config.cost_db_path, config.session_id, cost_session.session_id, "crawl"
         )
+        crawler_factory = config.crawler_factory or WebCrawler
         common = dict(
             crawler_cfg=CrawlerConfig(max_depth=0, respect_robots=True, strict=False),
             db=db,
         )
         crawlers = {
-            "ml": WebCrawler(**common),
-            "smart": WebCrawler(
+            "ml": crawler_factory(**common),
+            "smart": crawler_factory(
                 **common, llm_cfg=LLMConfig(model=DEEPSEEK_MODEL, session=cost_session)
             ),
         }
@@ -216,18 +221,27 @@ class PersistentWorker:
     """Spawn-safe worker whose per-item clock starts only at ``started``."""
 
     def __init__(
-        self, config, *, recycle_items=200, startup_timeout=60.0, work_item=_crawl_item
+        self,
+        config,
+        *,
+        recycle_items=200,
+        startup_timeout=60.0,
+        work_item=_crawl_item,
+        mp_start_method=None,
     ):
         self.config = config
         self.recycle_items = recycle_items
         self.startup_timeout = startup_timeout
         self.work_item = work_item
+        self.mp_start_method = mp_start_method
         self.process = self.jobs = self.messages = None
         self.completed = 0
         self.item_id = 0
 
     def _start(self):
-        ctx = mp.get_context("spawn" if os.name == "nt" else "fork")
+        ctx = mp.get_context(
+            self.mp_start_method or ("spawn" if os.name == "nt" else "fork")
+        )
         self.jobs, self.messages = ctx.Queue(), ctx.Queue()
         self.process = ctx.Process(
             target=_worker_loop,
