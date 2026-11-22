@@ -98,23 +98,17 @@ def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
     """Real worker-loop item function, separately callable for in-process tests."""
     started = time.perf_counter()
     fetch_elapsed = 0.0
-    crawler = None
-    original_fetch = None
     try:
         crawler = crawlers[job.mode]
-        original_fetch = getattr(getattr(crawler, "_http", None), "fetch", None)
 
-        def timed_fetch(url):
+        def observe_fetch(event, elapsed):
             nonlocal fetch_elapsed
-            fetch_started = time.perf_counter()
-            try:
-                return original_fetch(url)
-            finally:
-                fetch_elapsed += time.perf_counter() - fetch_started
+            if event == "start":
+                messages.put(("phase", "fetch", fetch_elapsed))
+            else:
+                fetch_elapsed += elapsed
                 messages.put(("phase", "extraction", fetch_elapsed))
 
-        if original_fetch is not None:
-            crawler._http.fetch = timed_fetch
         messages.put(("phase", "fetch", 0.0))
         results = crawler.crawl(
             job.url,
@@ -122,6 +116,7 @@ def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
             topic=job.topic,
             session_id=job.session_id,
             origin=job.origin,
+            fetch_observer=observe_fetch,
         )
         total = time.perf_counter() - started
         result = results[0] if results else None
@@ -142,12 +137,6 @@ def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
             total,
             repr(exc),
         )
-    finally:
-        # Crawlers live for many jobs.  Leaving the closure installed would make
-        # every subsequent job wrap the preceding wrapper, multiplying phase
-        # messages and queue traffic until the worker is recycled.
-        if crawler is not None and original_fetch is not None:
-            crawler._http.fetch = original_fetch
 
 
 def _worker_loop(config: WorkerConfig, jobs, messages, work_item=_crawl_item) -> None:

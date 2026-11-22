@@ -46,7 +46,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, List, Literal, Optional, Set, Tuple
+from typing import Any, Callable, List, Literal, Optional, Set, Tuple
 
 from ._log import log
 from ._pipeline import PagePipeline
@@ -87,6 +87,7 @@ class _State:
     cfg: Any = None
     ml_cfg: Any = None
     link_selector: Any = None
+    fetch_observer: Optional[Callable[[str, float], None]] = None
     visited: Set[str] = field(default_factory=set)
     results: List[PageResult] = field(default_factory=list)
     pages_done: int = 0
@@ -188,6 +189,7 @@ class WebCrawler:
         overrides: Optional[dict] = None,
         ml_overrides: Optional[dict] = None,
         refresh: bool = False,
+        fetch_observer: Optional[Callable[[str, float], None]] = None,
     ) -> List[PageResult]:
         """Crawl a single URL (and its links up to max_depth).
 
@@ -197,6 +199,8 @@ class WebCrawler:
         ``max_depth`` overrides ``CrawlerConfig.max_depth`` for this call only.
         ``overrides`` / ``ml_overrides`` apply per-call config without mutating
         the shared instance (the preset mechanism).
+        ``fetch_observer``, when provided, receives ``("start", 0.0)`` and
+        ``("end", elapsed_seconds)`` around each HTTP fetch used by this call.
 
         Traversal-time settings honored per call include ``max_workers`` (incl. the
         sequential-vs-parallel decision), ``strict``, ``max_pages``, ``max_depth``,
@@ -217,6 +221,7 @@ class WebCrawler:
             overrides=overrides,
             ml_overrides=ml_overrides,
             refresh=refresh,
+            fetch_observer=fetch_observer,
         )
 
     def crawl_many(
@@ -235,11 +240,14 @@ class WebCrawler:
         overrides: Optional[dict] = None,
         ml_overrides: Optional[dict] = None,
         refresh: bool = False,
+        fetch_observer: Optional[Callable[[str, float], None]] = None,
     ) -> List[PageResult]:
         """Crawl URLs sharing state (visited set, page counter).
 
         ``origin`` labels the session caller; if None, use
         LAZYCRAWLER_SESSION_ORIGIN or ``unknown``. Production labels start with ``job:``.
+        ``fetch_observer`` is scoped to this call and observes every active worker
+        client's fetch as ``(event, elapsed_seconds)``.
         """
         content_mode: Mode = content or mode
         link_mode: Mode = links or mode
@@ -257,6 +265,7 @@ class WebCrawler:
             max_depth=eff_depth,
             cfg=eff_cfg,
             ml_cfg=eff_ml_cfg,
+            fetch_observer=fetch_observer,
         )
 
         if self.db is not None:
