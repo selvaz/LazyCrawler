@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import time
+import queue
 from types import SimpleNamespace
 
 import run_news_crawl as runner
@@ -80,7 +81,7 @@ def test_wall_budget_skips_remaining_items_but_exposes_session_for_digest(
     )
     assert runner.main() == 0
     output = capsys.readouterr().out
-    assert "skipping 1 remaining" in output
+    assert "skipping 2 remaining" in output
     assert "SESSION_ID=budget-test" in output
 
 
@@ -101,3 +102,77 @@ def test_report_meta_reader_skips_run_summary(monkeypatch, tmp_path):
     assert report._load_meta("news") == {
         "https://example.test/article": {"name": "source"}
     }
+
+
+def test_reused_crawler_emits_one_extraction_phase_per_fetch():
+    class HTTP:
+        def fetch(self, url):
+            return url
+
+    class Crawler:
+        def __init__(self):
+            self._http = HTTP()
+
+        def crawl(self, url, **kwargs):
+            self._http.fetch(url)
+            return [SimpleNamespace(status="done", url=url)]
+
+    messages = queue.Queue()
+    crawler = Crawler()
+    original_fetch = crawler._http.fetch
+    for number in range(5):
+        outcome = runner._crawl_item(
+            _job(f"https://example.test/{number}"), messages, {"ml": crawler}
+        )
+        assert outcome.status == "done"
+
+    phases = []
+    while not messages.empty():
+        phases.append(messages.get_nowait())
+    assert [message[1] for message in phases].count("extraction") == 5
+    assert crawler._http.fetch == original_fetch
+
+
+class _AlwaysFailingStartWorker(_FakeWorker):
+    attempts = 0
+
+    def article(self, job, deadline):
+        type(self).attempts += 1
+        raise RuntimeError("injected worker startup failure")
+
+
+def test_repeated_worker_start_failure_still_writes_meta_and_session(
+    monkeypatch, tmp_path, capsys
+):
+    source = SimpleNamespace(
+        name="source", mode="ml", url="feed", category="macro", region="US", lang="en"
+    )
+    _AlwaysFailingStartWorker.attempts = 0
+    monkeypatch.setattr(runner, "REPORT_DIR", tmp_path)
+    monkeypatch.setattr(runner, "resolve_cost_db_path", lambda path: tmp_path / "cost.db")
+    monkeypatch.setattr(runner, "load_sources", lambda path: [source])
+    monkeypatch.setattr(runner, "PersistentWorker", _AlwaysFailingStartWorker)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_news_crawl.py",
+            "--sources-config",
+            "unused.yaml",
+            "--session-id",
+            "failed-start-test",
+            "--worker-start-attempts",
+            "3",
+            "--worker-restart-backoff-seconds",
+            "0",
+        ],
+    )
+
+    assert runner.main() == 0
+    captured = capsys.readouterr()
+    assert _AlwaysFailingStartWorker.attempts == 3
+    assert "SESSION_ID=failed-start-test" in captured.out
+    assert "ending partial run" in captured.err
+    meta = (tmp_path / "failed-start-test_meta.json").read_text(encoding="utf-8")
+    assert '"partial": true' in meta
+    assert '"errors": 1' in meta

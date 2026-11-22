@@ -27,6 +27,7 @@ import sys
 import time
 import multiprocessing as mp
 import queue
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -97,6 +98,8 @@ def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
     """Real worker-loop item function, separately callable for in-process tests."""
     started = time.perf_counter()
     fetch_elapsed = 0.0
+    crawler = None
+    original_fetch = None
     try:
         crawler = crawlers[job.mode]
         original_fetch = getattr(getattr(crawler, "_http", None), "fetch", None)
@@ -139,6 +142,12 @@ def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
             total,
             repr(exc),
         )
+    finally:
+        # Crawlers live for many jobs.  Leaving the closure installed would make
+        # every subsequent job wrap the preceding wrapper, multiplying phase
+        # messages and queue traffic until the worker is recycled.
+        if crawler is not None and original_fetch is not None:
+            crawler._http.fetch = original_fetch
 
 
 def _worker_loop(config: WorkerConfig, jobs, messages, work_item=_crawl_item) -> None:
@@ -198,12 +207,17 @@ def _stop_process(process, jobs, messages, *, terminate=False) -> None:
         if os.name == "nt":
             import subprocess
 
-            subprocess.run(
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=5.0,
+                )
+            except subprocess.TimeoutExpired:
+                # Fall through to multiprocessing's bounded kill below.
+                pass
         else:
             process.terminate()
     process.join(timeout=5.0)
@@ -237,6 +251,7 @@ class PersistentWorker:
         self.process = self.jobs = self.messages = None
         self.completed = 0
         self.item_id = 0
+        self.was_killed = False
 
     def _start(self):
         ctx = mp.get_context(
@@ -264,6 +279,7 @@ class PersistentWorker:
             raise RuntimeError(f"unexpected crawl worker startup message: {message!r}")
 
     def _discard(self):
+        self.was_killed = True
         _stop_process(self.process, self.jobs, self.messages, terminate=True)
         self.process = self.jobs = self.messages = None
         self.completed = 0
@@ -331,6 +347,16 @@ class PersistentWorker:
         _stop_process(self.process, self.jobs, self.messages)
         self.process = self.jobs = self.messages = None
         self.completed = 0
+
+    def checkpoint_if_killed(self):
+        """Checkpoint WAL left behind by a force-terminated worker, if any."""
+        if not self.was_killed:
+            return
+        db_path = Path(self.config.db_path)
+        if not db_path.exists():
+            return
+        with sqlite3.connect(db_path, timeout=5.0) as connection:
+            connection.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchall()
 
     def __enter__(self):
         return self
@@ -446,6 +472,24 @@ def main() -> int:
         help="Maximum wait for worker imports/initialization (not an item deadline)",
     )
     p.add_argument(
+        "--worker-start-attempts",
+        type=int,
+        default=int(os.environ.get("LAZYCRAWLER_NEWS_WORKER_START_ATTEMPTS", "3")),
+        help="Maximum worker start attempts for an article (default: 3)",
+    )
+    p.add_argument(
+        "--worker-restart-backoff-seconds",
+        type=float,
+        default=float(os.environ.get("LAZYCRAWLER_NEWS_WORKER_BACKOFF", "0.5")),
+        help="Pause between failed worker start attempts (default: 0.5)",
+    )
+    p.add_argument(
+        "--minimum-article-budget-seconds",
+        type=float,
+        default=5.0,
+        help="Do not start an article with less wall budget remaining (default: 5)",
+    )
+    p.add_argument(
         "--feed-deadline-seconds",
         type=float,
         default=30.0,
@@ -461,6 +505,9 @@ def main() -> int:
         or args.wall_budget_minutes <= 0
         or args.worker_recycle_items <= 0
         or args.feed_deadline_seconds <= 0
+        or args.worker_start_attempts <= 0
+        or args.worker_restart_backoff_seconds < 0
+        or args.minimum_article_budget_seconds <= 0
     ):
         p.error("deadlines, wall budget, and worker recycle count must be positive")
 
@@ -502,6 +549,7 @@ def main() -> int:
         "skipped_budget": 0,
     }
     budget_exhausted = False
+    worker_failed = False
     worker = PersistentWorker(
         WorkerConfig(str(args.db), str(cost_db_path), session_id),
         recycle_items=args.worker_recycle_items,
@@ -547,7 +595,8 @@ def main() -> int:
                 flush=True,
             )
             for item_index, (title, link) in enumerate(items):
-                if time.monotonic() - run_started >= budget_seconds:
+                remaining_budget = budget_seconds - (time.monotonic() - run_started)
+                if remaining_budget < args.minimum_article_budget_seconds:
                     totals["skipped_budget"] += len(items) - item_index
                     # Remaining feeds have not been fetched, so conservatively count
                     # their configured maximum as skipped work in the summary.
@@ -575,11 +624,33 @@ def main() -> int:
                     db_path=str(args.db),
                     cost_db_path=str(cost_db_path),
                 )
-                remaining_budget = budget_seconds - (time.monotonic() - run_started)
-                outcome, phase = worker.article(
-                    job,
-                    min(args.article_deadline_seconds, max(0.001, remaining_budget)),
-                )
+                for start_attempt in range(1, args.worker_start_attempts + 1):
+                    try:
+                        outcome, phase = worker.article(
+                            job,
+                            min(args.article_deadline_seconds, remaining_budget),
+                        )
+                        break
+                    except RuntimeError as exc:
+                        if start_attempt == args.worker_start_attempts:
+                            totals["errors"] += 1
+                            worker_failed = True
+                            print(
+                                "Crawl worker could not be restarted after "
+                                f"{start_attempt} attempt(s): {exc}; ending partial run.",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            break
+                        print(
+                            f"Crawl worker start failed (attempt {start_attempt}/"
+                            f"{args.worker_start_attempts}): {exc}; retrying.",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        time.sleep(args.worker_restart_backoff_seconds)
+                if worker_failed:
+                    break
                 if outcome is None:
                     totals["timeouts"] += 1
                     print(
@@ -607,14 +678,20 @@ def main() -> int:
                     + (f" error={outcome.error}" if outcome.error else ""),
                     flush=True,
                 )
-            if budget_exhausted:
+            if budget_exhausted or worker_failed:
                 break
     finally:
         worker.close()
+        try:
+            checkpoint = getattr(worker, "checkpoint_if_killed", None)
+            if checkpoint is not None:
+                checkpoint()
+        except (OSError, sqlite3.Error) as exc:
+            print(f"Warning: news DB WAL checkpoint failed: {exc}", file=sys.stderr)
 
     meta_path = REPORT_DIR / f"{session_id}_meta.json"
     url_meta["_run_summary"] = {
-        "partial": budget_exhausted or totals["timeouts"] > 0,
+        "partial": budget_exhausted or worker_failed or totals["timeouts"] > 0,
         **totals,
     }
     meta_path.write_text(
