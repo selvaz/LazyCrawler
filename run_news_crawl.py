@@ -26,6 +26,7 @@ import os
 import queue
 import sqlite3
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -101,13 +102,18 @@ def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
     try:
         crawler = crawlers[job.mode]
 
+        fetch_lock = threading.Lock()
+
         def observe_fetch(event, elapsed):
+            # Called from crawler worker threads when workers > 1; overlapping
+            # fetches are summed, so fetch time can exceed wall time there.
             nonlocal fetch_elapsed
-            if event == "start":
-                messages.put(("phase", "fetch", fetch_elapsed))
-            else:
-                fetch_elapsed += elapsed
-                messages.put(("phase", "extraction", fetch_elapsed))
+            with fetch_lock:
+                if event == "start":
+                    messages.put(("phase", "fetch", fetch_elapsed))
+                else:
+                    fetch_elapsed += elapsed
+                    messages.put(("phase", "extraction", fetch_elapsed))
 
         messages.put(("phase", "fetch", 0.0))
         results = crawler.crawl(

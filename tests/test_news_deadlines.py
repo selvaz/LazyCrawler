@@ -38,7 +38,9 @@ def test_gil_holding_article_is_killed_and_next_article_completes():
     assert phase == "extraction"
     assert completed is not None and completed.status == "done"
     # Worker import/spawn is explicitly not part of either 0.5s item deadline.
-    assert time.monotonic() - started < 10.0
+    # Two spawns (initial + after the kill) cost ~5 s each on Windows; the bound
+    # only proves the run does not wait for the stalled item.
+    assert time.monotonic() - started < 30.0
 
 
 class _FakeWorker:
