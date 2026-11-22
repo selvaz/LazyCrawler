@@ -429,8 +429,11 @@ def _load_meta(session_id: str) -> dict[str, dict]:
     UNKNOWN_REGION rather than crashing the report)."""
     meta_path = REPORT_DIR / f"{session_id}_meta.json"
     try:
-        return json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        raw = json.loads(meta_path.read_text(encoding="utf-8"))
+        # Reserved run-level records are not URL metadata and must never be
+        # treated as article/source entries by current or future readers.
+        return {url: value for url, value in raw.items() if not url.startswith("_")}
+    except (OSError, json.JSONDecodeError, AttributeError):
         return {}
 
 

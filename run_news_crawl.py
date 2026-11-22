@@ -59,7 +59,7 @@ _FEED_HTTP = HTTPClient()
 
 @dataclass(frozen=True)
 class ArticleJob:
-    """Picklable description of one article for a spawned worker."""
+    """Picklable description of one article handled by the crawl worker."""
 
     url: str
     mode: str
@@ -80,25 +80,21 @@ class ArticleOutcome:
     error: str | None = None
 
 
-def _article_worker(job: ArticleJob, messages) -> None:
-    """Crawl one article in an isolated process and report phase timings."""
+@dataclass(frozen=True)
+class WorkerConfig:
+    """Resources shared by every item handled during one worker lifetime."""
+
+    db_path: str
+    cost_db_path: str
+    session_id: str
+
+
+def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
+    """Real worker-loop item function, separately callable for in-process tests."""
     started = time.perf_counter()
-    db = cost_session = None
+    fetch_elapsed = 0.0
     try:
-        from lazybridge.session import Session
-
-        db = CrawlerDB(DBConfig(db_path=job.db_path, ttl_hours=6.0))
-        cost_session = Session(db=job.cost_db_path)
-        register_cost_session(job.cost_db_path, job.session_id, cost_session.session_id, "crawl")
-        kwargs = {
-            "crawler_cfg": CrawlerConfig(max_depth=0, respect_robots=True, strict=False),
-            "db": db,
-        }
-        if job.mode == "smart":
-            kwargs["llm_cfg"] = LLMConfig(model=DEEPSEEK_MODEL, session=cost_session)
-        crawler = WebCrawler(**kwargs)
-
-        fetch_elapsed = 0.0
+        crawler = crawlers[job.mode]
         original_fetch = getattr(getattr(crawler, "_http", None), "fetch", None)
 
         def timed_fetch(url):
@@ -122,69 +118,211 @@ def _article_worker(job: ArticleJob, messages) -> None:
         )
         total = time.perf_counter() - started
         result = results[0] if results else None
-        messages.put(
-            (
-                "outcome",
-                ArticleOutcome(
-                    status=result.status if result else "no_result",
-                    url=result.url if result else job.url,
-                    fetch_seconds=fetch_elapsed,
-                    extraction_seconds=max(0.0, total - fetch_elapsed),
-                    total_seconds=total,
-                ),
-            )
+        return ArticleOutcome(
+            result.status if result else "no_result",
+            result.url if result else job.url,
+            fetch_elapsed,
+            max(0.0, total - fetch_elapsed),
+            total,
         )
-    except BaseException as exc:  # child must turn every failure into a result
+    except BaseException as exc:
         total = time.perf_counter() - started
-        messages.put(
-            (
-                "outcome",
-                ArticleOutcome("error", job.url, 0.0, total, total, repr(exc)),
-            )
+        return ArticleOutcome(
+            "error",
+            job.url,
+            fetch_elapsed,
+            max(0.0, total - fetch_elapsed),
+            total,
+            repr(exc),
         )
+
+
+def _worker_loop(config: WorkerConfig, jobs, messages, work_item=_crawl_item) -> None:
+    """Own expensive imports/resources once, then service jobs until stopped."""
+    db = cost_session = None
+    if work_item is _crawl_item:
+        from lazybridge.session import Session
+
+        db = CrawlerDB(DBConfig(db_path=config.db_path, ttl_hours=6.0))
+        cost_session = Session(db=config.cost_db_path)
+        register_cost_session(
+            config.cost_db_path, config.session_id, cost_session.session_id, "crawl"
+        )
+        common = dict(
+            crawler_cfg=CrawlerConfig(max_depth=0, respect_robots=True, strict=False),
+            db=db,
+        )
+        crawlers = {
+            "ml": WebCrawler(**common),
+            "smart": WebCrawler(
+                **common, llm_cfg=LLMConfig(model=DEEPSEEK_MODEL, session=cost_session)
+            ),
+        }
+    else:
+        crawlers = {}  # injected test work still traverses the production queue loop
+    messages.put(("ready", os.getpid()))
+    try:
+        while True:
+            command = jobs.get()
+            if command is None:
+                break
+            kind, item_id, payload = command
+            messages.put(("started", item_id, kind))
+            if kind == "article":
+                outcome = work_item(payload, messages, crawlers)
+                messages.put(("outcome", item_id, outcome))
+            elif kind == "feed":
+                try:
+                    value = _feed_items(*payload)
+                    messages.put(("feed_outcome", item_id, value, None))
+                except BaseException as exc:
+                    messages.put(("feed_outcome", item_id, None, repr(exc)))
     finally:
+        # A timed-out smart call may already have emitted partial usage. Closing
+        # checkpoints all events known before the parent terminated this worker.
         if db is not None:
             db.close()
         if cost_session is not None:
             cost_session.close()
 
 
-def run_article_with_deadline(
-    job: ArticleJob, deadline_seconds: float, *, worker=_article_worker
-) -> tuple[ArticleOutcome | None, str]:
-    """Run a picklable worker in a killable process; return outcome and last phase."""
-    method = "spawn" if os.name == "nt" else "fork"
-    ctx = mp.get_context(method)
-    messages = ctx.Queue()
-    process = ctx.Process(target=worker, args=(job, messages))
-    process.start()
-    expires = time.monotonic() + deadline_seconds
-    phase = "worker startup"
-    outcome = None
-    while process.is_alive() and time.monotonic() < expires:
-        try:
-            message = messages.get(timeout=min(0.05, max(0.001, expires - time.monotonic())))
-        except queue.Empty:
-            continue
-        if message[0] == "phase":
-            phase = message[1]
+def _stop_process(process, jobs, messages, *, terminate=False) -> None:
+    if process is None:
+        return
+    if terminate and process.is_alive():
+        if os.name == "nt":
+            import subprocess
+
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
         else:
-            outcome = message[1]
-    process.join(timeout=0.05)
+            process.terminate()
+    process.join(timeout=5.0)
     if process.is_alive():
-        process.terminate()
+        process.kill()
         process.join(timeout=2.0)
-    while outcome is None:
-        try:
-            message = messages.get_nowait()
-        except queue.Empty:
-            break
-        if message[0] == "phase":
-            phase = message[1]
+    process.close()
+    for q in (jobs, messages):
+        if q is not None:
+            q.cancel_join_thread()
+            q.close()
+
+
+class PersistentWorker:
+    """Spawn-safe worker whose per-item clock starts only at ``started``."""
+
+    def __init__(
+        self, config, *, recycle_items=200, startup_timeout=60.0, work_item=_crawl_item
+    ):
+        self.config = config
+        self.recycle_items = recycle_items
+        self.startup_timeout = startup_timeout
+        self.work_item = work_item
+        self.process = self.jobs = self.messages = None
+        self.completed = 0
+        self.item_id = 0
+
+    def _start(self):
+        ctx = mp.get_context("spawn" if os.name == "nt" else "fork")
+        self.jobs, self.messages = ctx.Queue(), ctx.Queue()
+        self.process = ctx.Process(
+            target=_worker_loop,
+            args=(self.config, self.jobs, self.messages, self.work_item),
+        )
+        self.process.start()
+        startup_expires = time.monotonic() + self.startup_timeout
+        message = None
+        while self.process.is_alive() and time.monotonic() < startup_expires:
+            try:
+                message = self.messages.get(timeout=0.05)
+                break
+            except queue.Empty:
+                continue
+        if message is None:
+            self._discard()
+            raise RuntimeError("crawl worker exited or did not become ready")
+        if message[0] != "ready":
+            self._discard()
+            raise RuntimeError(f"unexpected crawl worker startup message: {message!r}")
+
+    def _discard(self):
+        _stop_process(self.process, self.jobs, self.messages, terminate=True)
+        self.process = self.jobs = self.messages = None
+        self.completed = 0
+
+    def _ensure(self):
+        if self.process is None or not self.process.is_alive():
+            if self.process is not None:
+                self._discard()
+            self._start()
+        elif self.completed >= self.recycle_items:
+            self.close()
+            self._start()
+
+    def run(self, kind, payload, deadline_seconds):
+        self._ensure()
+        self.item_id += 1
+        item_id = self.item_id
+        self.jobs.put((kind, item_id, payload))
+        # Startup/import time is deliberately outside the article/feed deadline.
+        startup_expires = time.monotonic() + self.startup_timeout
+        while self.process.is_alive() and time.monotonic() < startup_expires:
+            try:
+                message = self.messages.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if message[:2] == ("started", item_id):
+                break
         else:
-            outcome = message[1]
-    messages.close()
-    return outcome, phase
+            self._discard()
+            return None, "worker startup"
+        expires = time.monotonic() + deadline_seconds
+        phase = "fetch" if kind in ("article", "feed") else kind
+        while time.monotonic() < expires and self.process.is_alive():
+            try:
+                message = self.messages.get(
+                    timeout=min(0.05, max(0.001, expires - time.monotonic()))
+                )
+            except queue.Empty:
+                continue
+            if message[0] == "phase":
+                phase = message[1]
+            elif message[1] == item_id:
+                self.completed += 1
+                return message, phase
+        self._discard()
+        return None, phase
+
+    def article(self, job, deadline_seconds):
+        message, phase = self.run("article", job, deadline_seconds)
+        return (message[2] if message else None), phase
+
+    def feed(self, url, max_items, max_age_hours, deadline_seconds):
+        message, _ = self.run("feed", (url, max_items, max_age_hours), deadline_seconds)
+        if message is None:
+            raise TimeoutError(f"feed exceeded {deadline_seconds:.1f}s deadline")
+        if message[3] is not None:
+            raise RuntimeError(message[3])
+        return message[2]
+
+    def close(self):
+        if self.process is None:
+            return
+        if self.process.is_alive():
+            self.jobs.put(None)
+        _stop_process(self.process, self.jobs, self.messages)
+        self.process = self.jobs = self.messages = None
+        self.completed = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *unused):
+        self.close()
 
 
 def _console_safe(s: str) -> str:
@@ -282,14 +420,40 @@ def main() -> int:
         help="Stop starting articles after this many minutes (default: 100)",
     )
     p.add_argument(
+        "--worker-recycle-items",
+        type=int,
+        default=int(os.environ.get("LAZYCRAWLER_NEWS_WORKER_RECYCLE", "200")),
+        help="Recycle the persistent worker after this many completed items (default: 200)",
+    )
+    p.add_argument(
+        "--worker-startup-timeout-seconds",
+        type=float,
+        default=60.0,
+        help="Maximum wait for worker imports/initialization (not an item deadline)",
+    )
+    p.add_argument(
+        "--feed-deadline-seconds",
+        type=float,
+        default=30.0,
+        help="Kill and restart the worker when one feed exceeds this deadline",
+    )
+    p.add_argument(
         "--sources",
         help="Comma-separated case-insensitive name substrings to limit the run to (testing)",
     )
     args = p.parse_args()
-    if args.article_deadline_seconds <= 0 or args.wall_budget_minutes <= 0:
-        p.error("article deadline and wall budget must be positive")
+    if (
+        args.article_deadline_seconds <= 0
+        or args.wall_budget_minutes <= 0
+        or args.worker_recycle_items <= 0
+        or args.feed_deadline_seconds <= 0
+    ):
+        p.error("deadlines, wall budget, and worker recycle count must be positive")
 
-    session_id = args.session_id or f"news_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    session_id = (
+        args.session_id
+        or f"news_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    )
     run_started = time.monotonic()
     budget_seconds = args.wall_budget_minutes * 60.0
 
@@ -324,27 +488,22 @@ def main() -> int:
         "skipped_budget": 0,
     }
     budget_exhausted = False
-    for source_index, source in enumerate(sources):
-        max_items = args.ml_max_items if source.mode == "ml" else args.smart_max_items
-        try:
-            items, skipped_old = _feed_items(source.url, max_items, args.max_age_hours)
-        except Exception as exc:
-            print(f"[{source.name}] feed fetch failed: {exc}", file=sys.stderr)
-            totals["feeds_failed"] += 1
-            continue
-        totals["skipped_old"] += skipped_old
-
-        old_note = f", {skipped_old} skipped (too old)" if skipped_old else ""
-        print(f"[{source.name}] {len(items)} item(s){old_note}, mode={source.mode}", flush=True)
-        for item_index, (title, link) in enumerate(items):
+    worker = PersistentWorker(
+        WorkerConfig(str(args.db), str(cost_db_path), session_id),
+        recycle_items=args.worker_recycle_items,
+        startup_timeout=args.worker_startup_timeout_seconds,
+    )
+    try:
+        for source_index, source in enumerate(sources):
             if time.monotonic() - run_started >= budget_seconds:
-                totals["skipped_budget"] += len(items) - item_index
-                # Remaining feeds have not been fetched, so conservatively count
-                # their configured maximum as skipped work in the summary.
-                for remaining in sources[source_index + 1 :]:
-                    totals["skipped_budget"] += (
-                        args.ml_max_items if remaining.mode == "ml" else args.smart_max_items
+                totals["skipped_budget"] += sum(
+                    (
+                        args.ml_max_items
+                        if remaining.mode == "ml"
+                        else args.smart_max_items
                     )
+                    for remaining in sources[source_index:]
+                )
                 budget_exhausted = True
                 print(
                     f"Wall-clock budget exhausted; skipping {totals['skipped_budget']} "
@@ -352,58 +511,101 @@ def main() -> int:
                     flush=True,
                 )
                 break
-            job = ArticleJob(
-                url=link,
-                mode=source.mode,
-                topic=f"{source.category} | {source.region} | {source.name}",
-                session_id=session_id,
-                origin=os.environ.get(
-                    "LAZYCRAWLER_SESSION_ORIGIN", "job:lazycrawler-run_news_crawl"
-                ),
-                db_path=str(args.db),
-                cost_db_path=str(cost_db_path),
+            max_items = (
+                args.ml_max_items if source.mode == "ml" else args.smart_max_items
             )
-            remaining_budget = budget_seconds - (time.monotonic() - run_started)
-            outcome, phase = run_article_with_deadline(
-                job, min(args.article_deadline_seconds, max(0.001, remaining_budget))
-            )
-            if outcome is None:
-                totals["timeouts"] += 1
-                totals["errors"] += 1
-                print(
-                    f"    TIMEOUT url={link} phase={phase} "
-                    f"deadline={args.article_deadline_seconds:.1f}s {_console_safe(title[:80])}",
-                    file=sys.stderr,
-                    flush=True,
+            try:
+                items, skipped_old = worker.feed(
+                    source.url,
+                    max_items,
+                    args.max_age_hours,
+                    args.feed_deadline_seconds,
                 )
+            except Exception as exc:
+                print(f"[{source.name}] feed fetch failed: {exc}", file=sys.stderr)
+                totals["feeds_failed"] += 1
                 continue
-            status = outcome.status
-            if status == "done":
-                totals[source.mode] += 1
-                url_meta[outcome.url] = {
-                    "name": source.name,
-                    "category": source.category,
-                    "region": source.region,
-                    "lang": source.lang,
-                }
-            else:
-                totals["errors"] += 1
+            totals["skipped_old"] += skipped_old
+
+            old_note = f", {skipped_old} skipped (too old)" if skipped_old else ""
             print(
-                f"    {status:<14} fetch={outcome.fetch_seconds:.2f}s "
-                f"extraction={outcome.extraction_seconds:.2f}s total={outcome.total_seconds:.2f}s "
-                f"url={link} {_console_safe(title[:80])}"
-                + (f" error={outcome.error}" if outcome.error else ""),
+                f"[{source.name}] {len(items)} item(s){old_note}, mode={source.mode}",
                 flush=True,
             )
-        if budget_exhausted:
-            break
+            for item_index, (title, link) in enumerate(items):
+                if time.monotonic() - run_started >= budget_seconds:
+                    totals["skipped_budget"] += len(items) - item_index
+                    # Remaining feeds have not been fetched, so conservatively count
+                    # their configured maximum as skipped work in the summary.
+                    for remaining in sources[source_index + 1 :]:
+                        totals["skipped_budget"] += (
+                            args.ml_max_items
+                            if remaining.mode == "ml"
+                            else args.smart_max_items
+                        )
+                    budget_exhausted = True
+                    print(
+                        f"Wall-clock budget exhausted; skipping {totals['skipped_budget']} "
+                        "remaining item slot(s) and continuing to report stage.",
+                        flush=True,
+                    )
+                    break
+                job = ArticleJob(
+                    url=link,
+                    mode=source.mode,
+                    topic=f"{source.category} | {source.region} | {source.name}",
+                    session_id=session_id,
+                    origin=os.environ.get(
+                        "LAZYCRAWLER_SESSION_ORIGIN", "job:lazycrawler-run_news_crawl"
+                    ),
+                    db_path=str(args.db),
+                    cost_db_path=str(cost_db_path),
+                )
+                remaining_budget = budget_seconds - (time.monotonic() - run_started)
+                outcome, phase = worker.article(
+                    job,
+                    min(args.article_deadline_seconds, max(0.001, remaining_budget)),
+                )
+                if outcome is None:
+                    totals["timeouts"] += 1
+                    print(
+                        f"    TIMEOUT url={link} phase={phase} "
+                        f"deadline={args.article_deadline_seconds:.1f}s {_console_safe(title[:80])}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    continue
+                status = outcome.status
+                if status == "done":
+                    totals[source.mode] += 1
+                    url_meta[outcome.url] = {
+                        "name": source.name,
+                        "category": source.category,
+                        "region": source.region,
+                        "lang": source.lang,
+                    }
+                else:
+                    totals["errors"] += 1
+                print(
+                    f"    {status:<14} fetch={outcome.fetch_seconds:.2f}s "
+                    f"extraction={outcome.extraction_seconds:.2f}s total={outcome.total_seconds:.2f}s "
+                    f"url={link} {_console_safe(title[:80])}"
+                    + (f" error={outcome.error}" if outcome.error else ""),
+                    flush=True,
+                )
+            if budget_exhausted:
+                break
+    finally:
+        worker.close()
 
     meta_path = REPORT_DIR / f"{session_id}_meta.json"
     url_meta["_run_summary"] = {
         "partial": budget_exhausted or totals["timeouts"] > 0,
         **totals,
     }
-    meta_path.write_text(json.dumps(url_meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    meta_path.write_text(
+        json.dumps(url_meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     print(
         f"\nSession {session_id}: ml={totals['ml']} smart={totals['smart']} "
