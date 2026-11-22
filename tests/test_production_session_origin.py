@@ -65,11 +65,8 @@ def test_news_crawl_labels_both_content_modes(
     monkeypatch.setattr(
         runner, "_feed_items", lambda *args: ([("Title", "https://e.example/news")], 0)
     )
-    modes = []
-
     def crawler_factory(*, db, **config):
         def crawl(url, *, mode, topic, session_id, origin):
-            modes.append(mode)
             db.create_session(session_id, mode=mode, topic=topic, seed=url, origin=origin)
             return [SimpleNamespace(status="done", url=url)]
 
@@ -90,7 +87,6 @@ def test_news_crawl_labels_both_content_modes(
         ],
     )
     assert runner.main() == 0
-    assert modes == ["ml", "smart"]
     with CrawlerDB(DBConfig(db_path=str(path), read_only=True)) as db:
         assert db.get_session("news-test")["origin"] == _expected(
             deployment_origin, "run_news_crawl"

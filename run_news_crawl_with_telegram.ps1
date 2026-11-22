@@ -55,7 +55,7 @@ Import-PersistedEnvVar "DEEPSEEK_API_KEY"
 Import-PersistedEnvVar "CRAWLER_ARTIFACTS_DB"
 
 Write-Host "[$(Get-Date -Format s)] Starting news crawl: $($CrawlArgs -join ' ')"
-$crawlOutput = & $Python (Join-Path $Root 'run_news_crawl.py') --sources-config $SourcesConfig @CrawlArgs 2>&1 | Tee-Object -Variable crawlOutputVar
+$crawlOutput = & $Python -u (Join-Path $Root 'run_news_crawl.py') --sources-config $SourcesConfig @CrawlArgs 2>&1 | Tee-Object -Variable crawlOutputVar
 $crawlExit = $LASTEXITCODE
 Write-Host "[$(Get-Date -Format s)] run_news_crawl.py exit code: $crawlExit"
 
