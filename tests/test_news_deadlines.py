@@ -494,7 +494,7 @@ def test_wrapper_skip_report_only_runs_crawl_and_propagates_exit(tmp_path, crawl
     stub = tmp_path / "stub-python.cmd"
     stub.write_text(
         '@echo off\r\necho %*>>"%STUB_LOG%"\r\n'
-        'echo SESSION_ID=wrapper-test\r\nexit /b %STUB_CRAWL_EXIT%\r\n',
+        "echo SESSION_ID=wrapper-test\r\nexit /b %STUB_CRAWL_EXIT%\r\n",
         encoding="utf-8",
     )
     env = {
