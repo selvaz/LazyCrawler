@@ -42,6 +42,8 @@ Quick start
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
+
 from ._log import log, set_log_level
 from .artifacts import Artifact, extract_html_artifacts, extract_html_artifacts_anchored
 from .async_crawler import AsyncWebCrawler
@@ -62,7 +64,11 @@ from .search import WebSearch, search_brave_urls, search_ddg_urls, search_tavily
 from .session_origin import production_session_filter
 from .tools import CrawlerTools
 
-__version__ = "0.14.0"
+try:
+    __version__ = version("lazycrawler")
+except PackageNotFoundError:
+    # The package may be imported directly from an unpacked source tree.
+    __version__ = "0+unknown"
 
 __all__ = [
     "WebCrawler",
