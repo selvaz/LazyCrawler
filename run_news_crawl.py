@@ -79,6 +79,8 @@ class ArticleOutcome:
     fetch_seconds: float
     extraction_seconds: float
     total_seconds: float
+    new_page: bool = False
+    refetched_identical: bool = False
     error: str | None = None
 
 
@@ -93,6 +95,27 @@ class WorkerConfig:
     # callable survives Windows ``spawn`` and lets the actual worker/session
     # attribution path be exercised without making network requests.
     crawler_factory: object | None = None
+
+
+@dataclass
+class ConsecutiveTimeoutCircuit:
+    """Small, deterministic policy object used by the article scheduling loop."""
+
+    limit: int
+    consecutive: int = 0
+
+    def record(self, timed_out: bool) -> bool:
+        self.consecutive = self.consecutive + 1 if timed_out else 0
+        return self.consecutive >= self.limit
+
+
+def _partial_run_exit_code(
+    *, partial: bool, new_pages: int, attempted: int, minimum_new_pages: int, minimum_ratio: float
+) -> int:
+    """Return the public write-safety exit code for a completed crawl."""
+    ratio = new_pages / attempted if attempted else 0.0
+    insufficient = new_pages < minimum_new_pages or ratio < minimum_ratio
+    return 2 if partial and insufficient else 0
 
 
 def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
@@ -115,6 +138,9 @@ def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
                     fetch_elapsed += elapsed
                     messages.put(("phase", "extraction", fetch_elapsed))
 
+        def observe_phase(phase):
+            messages.put(("phase", phase, fetch_elapsed))
+
         messages.put(("phase", "fetch", 0.0))
         results = crawler.crawl(
             job.url,
@@ -123,15 +149,21 @@ def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
             session_id=job.session_id,
             origin=job.origin,
             fetch_observer=observe_fetch,
+            phase_observer=observe_phase,
         )
         total = time.perf_counter() - started
         result = results[0] if results else None
+        disposition = getattr(result, "write_disposition", None) if result else None
         return ArticleOutcome(
             result.status if result else "no_result",
             result.url if result else job.url,
             fetch_elapsed,
             max(0.0, total - fetch_elapsed),
             total,
+            new_page=(not bool(getattr(result, "from_cache", False)) or disposition == "new_page")
+            if result
+            else False,
+            refetched_identical=disposition == "refetched_identical",
         )
     except BaseException as exc:
         total = time.perf_counter() - started
@@ -141,7 +173,7 @@ def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
             fetch_elapsed,
             max(0.0, total - fetch_elapsed),
             total,
-            repr(exc),
+            error=repr(exc),
         )
 
 
@@ -489,6 +521,24 @@ def main() -> int:
         help="Kill and restart the worker when one feed exceeds this deadline",
     )
     p.add_argument(
+        "--max-consecutive-timeouts",
+        type=int,
+        default=int(os.environ.get("LAZYCRAWLER_NEWS_MAX_CONSECUTIVE_TIMEOUTS", "5")),
+        help="Stop starting articles after this many consecutive timeouts (default: 5)",
+    )
+    p.add_argument(
+        "--minimum-new-pages",
+        type=int,
+        default=int(os.environ.get("LAZYCRAWLER_NEWS_MINIMUM_NEW_PAGES", "1")),
+        help="Partial runs fail when fewer new pages are written (default: 1)",
+    )
+    p.add_argument(
+        "--minimum-new-page-ratio",
+        type=float,
+        default=float(os.environ.get("LAZYCRAWLER_NEWS_MINIMUM_NEW_PAGE_RATIO", "0.10")),
+        help="Partial runs fail below this new-pages/attempted ratio (default: 0.10)",
+    )
+    p.add_argument(
         "--sources",
         help="Comma-separated case-insensitive name substrings to limit the run to (testing)",
     )
@@ -501,6 +551,9 @@ def main() -> int:
         or args.worker_start_attempts <= 0
         or args.worker_restart_backoff_seconds < 0
         or args.minimum_article_budget_seconds <= 0
+        or args.max_consecutive_timeouts <= 0
+        or args.minimum_new_pages < 0
+        or not 0 <= args.minimum_new_page_ratio <= 1
     ):
         p.error("deadlines, wall budget, and worker recycle count must be positive")
 
@@ -537,9 +590,14 @@ def main() -> int:
         "feeds_failed": 0,
         "skipped_old": 0,
         "skipped_budget": 0,
+        "attempted": 0,
+        "new_pages": 0,
+        "refetched_identical": 0,
     }
     budget_exhausted = False
     worker_failed = False
+    circuit_open = False
+    timeout_circuit = ConsecutiveTimeoutCircuit(args.max_consecutive_timeouts)
     worker = PersistentWorker(
         WorkerConfig(str(args.db), str(cost_db_path), session_id),
         recycle_items=args.worker_recycle_items,
@@ -606,6 +664,7 @@ def main() -> int:
                     db_path=str(args.db),
                     cost_db_path=str(cost_db_path),
                 )
+                totals["attempted"] += 1
                 for start_attempt in range(1, args.worker_start_attempts + 1):
                     try:
                         outcome, phase = worker.article(
@@ -635,16 +694,29 @@ def main() -> int:
                     break
                 if outcome is None:
                     totals["timeouts"] += 1
+                    circuit_open = timeout_circuit.record(True)
                     print(
                         f"    TIMEOUT url={link} phase={phase} "
                         f"deadline={args.article_deadline_seconds:.1f}s {_console_safe(title[:80])}",
                         file=sys.stderr,
                         flush=True,
                     )
+                    if circuit_open:
+                        totals["skipped_budget"] += len(items) - item_index - 1
+                        print(
+                            "Article circuit breaker opened after "
+                            f"{timeout_circuit.consecutive} consecutive timeouts; ending partial run.",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        break
                     continue
+                timeout_circuit.record(False)
                 status = outcome.status
                 if status == "done":
                     totals[source.mode] += 1
+                    totals["new_pages"] += int(outcome.new_page)
+                    totals["refetched_identical"] += int(outcome.refetched_identical)
                     url_meta[outcome.url] = {
                         "name": source.name,
                         "category": source.category,
@@ -660,7 +732,7 @@ def main() -> int:
                     + (f" error={outcome.error}" if outcome.error else ""),
                     flush=True,
                 )
-            if budget_exhausted or worker_failed:
+            if budget_exhausted or worker_failed or circuit_open:
                 break
     finally:
         worker.close()
@@ -672,22 +744,42 @@ def main() -> int:
             print(f"Warning: news DB WAL checkpoint failed: {exc}", file=sys.stderr)
 
     meta_path = REPORT_DIR / f"{session_id}_meta.json"
+    partial = (
+        budget_exhausted
+        or worker_failed
+        or circuit_open
+        or totals["timeouts"] > 0
+        or totals["errors"] > 0
+    )
+    reasons = []
+    if budget_exhausted:
+        reasons.append("wall_budget")
+    if worker_failed:
+        reasons.append("worker_failure")
+    if circuit_open:
+        reasons.append("consecutive_timeouts")
+    elif totals["timeouts"]:
+        reasons.append("article_timeouts")
+    if totals["errors"] and not worker_failed:
+        reasons.append("article_errors")
+    new_page_ratio = totals["new_pages"] / totals["attempted"] if totals["attempted"] else 0.0
     url_meta["_run_summary"] = {
-        "partial": budget_exhausted or worker_failed or totals["timeouts"] > 0,
+        "partial": partial,
+        "reason": reasons[0] if len(reasons) == 1 else reasons,
+        "new_page_ratio": new_page_ratio,
         **totals,
     }
     meta_path.write_text(json.dumps(url_meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(
-        f"\nSession {session_id}: ml={totals['ml']} smart={totals['smart']} "
-        f"errors={totals['errors']} feeds_failed={totals['feeds_failed']} "
-        f"timeouts={totals['timeouts']} skipped_budget={totals['skipped_budget']} "
-        f"partial={str(url_meta['_run_summary']['partial']).lower()} "
-        f"skipped_old={totals['skipped_old']} (max_age_hours={args.max_age_hours})",
-        flush=True,
-    )
+    print("_run_summary=" + json.dumps(url_meta["_run_summary"], separators=(",", ":")), flush=True)
     print(f"SESSION_ID={session_id}", flush=True)
-    return 0
+    return _partial_run_exit_code(
+        partial=partial,
+        new_pages=totals["new_pages"],
+        attempted=totals["attempted"],
+        minimum_new_pages=args.minimum_new_pages,
+        minimum_ratio=args.minimum_new_page_ratio,
+    )
 
 
 if __name__ == "__main__":

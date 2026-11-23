@@ -73,7 +73,9 @@ def test_news_crawl_labels_both_content_modes(
     modes = []
 
     def crawler_factory(*, db, **config):
-        def crawl(url, *, mode, topic, session_id, origin, fetch_observer=None):
+        def crawl(
+            url, *, mode, topic, session_id, origin, fetch_observer=None, phase_observer=None
+        ):
             modes.append(mode)
             db.create_session(session_id, mode=mode, topic=topic, seed=url, origin=origin)
             return [SimpleNamespace(status="done", url=url)]

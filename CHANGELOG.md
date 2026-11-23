@@ -8,6 +8,16 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.10] — 2026-11-22
+
+### Added
+- News crawl output now streams through the PowerShell job log, and partial runs
+  with no meaningful new-page writes exit 2 after emitting a machine-readable
+  summary. A consecutive-timeout circuit breaker stops doomed article work and
+  timeout messages identify fetch, extraction, or database-write stalls.
+- The scheduled wrapper suppresses normal digest generation after exit 2 and
+  sends a short Telegram failure notice instead.
+
 ## [0.19.9] — 2026-11-22
 
 ### Fixed

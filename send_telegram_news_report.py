@@ -98,7 +98,28 @@ def main() -> int:
     p.add_argument(
         "--dry-run", action="store_true", help="Resolve files and print, but do not send"
     )
+    p.add_argument(
+        "--failure-message",
+        help="Send this short crawl-failure notice instead of resolving report files",
+    )
     args = p.parse_args()
+
+    if args.failure_message:
+        if args.dry_run:
+            print(f"Would send failure notice: {args.failure_message}")
+            return 0
+        token = os.environ.get("TELEGRAM_BOT_TOKEN")
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+        if not token or not chat_id:
+            print(
+                "Telegram not configured: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.",
+                file=sys.stderr,
+            )
+            return 2
+        with TelegramClient.from_token(token) as client:
+            client.send_message(chat_id=chat_id, text=args.failure_message[:4000])
+        print("Sent Telegram crawl failure notice")
+        return 0
 
     session_id = args.session_id or _latest_session_id()
     if not session_id:

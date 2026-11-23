@@ -55,7 +55,7 @@ Import-PersistedEnvVar "DEEPSEEK_API_KEY"
 Import-PersistedEnvVar "CRAWLER_ARTIFACTS_DB"
 
 Write-Host "[$(Get-Date -Format s)] Starting news crawl: $($CrawlArgs -join ' ')"
-$crawlOutput = & $Python -u (Join-Path $Root 'run_news_crawl.py') --sources-config $SourcesConfig @CrawlArgs 2>&1 | Tee-Object -Variable crawlOutputVar
+$crawlOutput = & $Python -u (Join-Path $Root 'run_news_crawl.py') --sources-config $SourcesConfig @CrawlArgs 2>&1 | Tee-Object -Variable crawlOutputVar | Out-Host
 $crawlExit = $LASTEXITCODE
 Write-Host "[$(Get-Date -Format s)] run_news_crawl.py exit code: $crawlExit"
 
@@ -65,7 +65,16 @@ if ($sessionLine) {
     $sessionId = $sessionLine.ToString().Split('=')[1].Trim()
 }
 
-if ($crawlExit -eq 0 -and $sessionId) {
+if ($crawlExit -eq 2) {
+    $failureNotice = "News crawl failed its write-safety check (exit 2)"
+    if ($sessionId) {
+        $failureNotice += ": session $sessionId"
+    }
+    Write-Warning $failureNotice
+    & $Python (Join-Path $Root 'send_telegram_news_report.py') --failure-message $failureNotice
+    $telegramExit = $LASTEXITCODE
+    Write-Host "[$(Get-Date -Format s)] Telegram failure notice exit code: $telegramExit"
+} elseif ($crawlExit -eq 0 -and $sessionId) {
     $reportArgs = @('--session-id', $sessionId, '--digest-engines', $DigestEngines)
     if ($Cycle) {
         $reportArgs += @('--cycle', $Cycle)

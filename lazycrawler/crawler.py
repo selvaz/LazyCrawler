@@ -88,6 +88,7 @@ class _State:
     ml_cfg: Any = None
     link_selector: Any = None
     fetch_observer: Optional[Callable[[str, float], None]] = None
+    phase_observer: Optional[Callable[[str], None]] = None
     visited: Set[str] = field(default_factory=set)
     results: List[PageResult] = field(default_factory=list)
     pages_done: int = 0
@@ -190,6 +191,7 @@ class WebCrawler:
         ml_overrides: Optional[dict] = None,
         refresh: bool = False,
         fetch_observer: Optional[Callable[[str, float], None]] = None,
+        phase_observer: Optional[Callable[[str], None]] = None,
     ) -> List[PageResult]:
         """Crawl a single URL (and its links up to max_depth).
 
@@ -222,6 +224,7 @@ class WebCrawler:
             ml_overrides=ml_overrides,
             refresh=refresh,
             fetch_observer=fetch_observer,
+            phase_observer=phase_observer,
         )
 
     def crawl_many(
@@ -241,6 +244,7 @@ class WebCrawler:
         ml_overrides: Optional[dict] = None,
         refresh: bool = False,
         fetch_observer: Optional[Callable[[str, float], None]] = None,
+        phase_observer: Optional[Callable[[str], None]] = None,
     ) -> List[PageResult]:
         """Crawl URLs sharing state (visited set, page counter).
 
@@ -266,6 +270,7 @@ class WebCrawler:
             cfg=eff_cfg,
             ml_cfg=eff_ml_cfg,
             fetch_observer=fetch_observer,
+            phase_observer=phase_observer,
         )
 
         if self.db is not None:

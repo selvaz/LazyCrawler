@@ -81,7 +81,7 @@ def test_wall_budget_skips_remaining_items_but_exposes_session_for_digest(
             "0.0001",
         ],
     )
-    assert runner.main() == 0
+    assert runner.main() == 2
     output = capsys.readouterr().out
     assert "skipping 2 remaining" in output
     assert "SESSION_ID=budget-test" in output
@@ -206,7 +206,7 @@ def test_repeated_worker_start_failure_still_writes_meta_and_session(monkeypatch
         ],
     )
 
-    assert runner.main() == 0
+    assert runner.main() == 2
     captured = capsys.readouterr()
     assert _AlwaysFailingStartWorker.attempts == 3
     assert "SESSION_ID=failed-start-test" in captured.out
@@ -214,3 +214,80 @@ def test_repeated_worker_start_failure_still_writes_meta_and_session(monkeypatch
     meta = (tmp_path / "failed-start-test_meta.json").read_text(encoding="utf-8")
     assert '"partial": true' in meta
     assert '"errors": 1' in meta
+
+
+def test_partial_write_safety_exit_code_contract():
+    assert (
+        runner._partial_run_exit_code(
+            partial=True, new_pages=0, attempted=18, minimum_new_pages=1, minimum_ratio=0.1
+        )
+        == 2
+    )
+    assert (
+        runner._partial_run_exit_code(
+            partial=True, new_pages=1, attempted=20, minimum_new_pages=1, minimum_ratio=0.1
+        )
+        == 2
+    )
+    assert (
+        runner._partial_run_exit_code(
+            partial=True, new_pages=2, attempted=20, minimum_new_pages=1, minimum_ratio=0.1
+        )
+        == 0
+    )
+    assert (
+        runner._partial_run_exit_code(
+            partial=False, new_pages=0, attempted=20, minimum_new_pages=1, minimum_ratio=0.1
+        )
+        == 0
+    )
+
+
+def test_consecutive_timeout_circuit_resets_and_opens_at_limit():
+    circuit = runner.ConsecutiveTimeoutCircuit(3)
+    assert not circuit.record(True)
+    assert not circuit.record(True)
+    assert not circuit.record(False)
+    assert not circuit.record(True)
+    assert not circuit.record(True)
+    assert circuit.record(True)
+
+
+@pytest.mark.parametrize(
+    ("from_cache", "disposition", "new_page", "refetched_identical"),
+    [(False, None, True, False), (True, "refetched_identical", False, True)],
+)
+def test_article_outcome_separates_new_writes_from_identical_reuse(
+    from_cache, disposition, new_page, refetched_identical
+):
+    class Crawler:
+        def crawl(self, url, **kwargs):
+            kwargs["fetch_observer"]("start", 0.0)
+            kwargs["fetch_observer"]("end", 0.01)
+            kwargs["phase_observer"]("db_write")
+            return [
+                SimpleNamespace(
+                    status="done",
+                    url=url,
+                    from_cache=from_cache,
+                    write_disposition=disposition,
+                )
+            ]
+
+    messages = queue.Queue()
+    outcome = runner._crawl_item(_job("https://example.test/page"), messages, {"ml": Crawler()})
+    phases = []
+    while not messages.empty():
+        phases.append(messages.get_nowait()[1])
+    assert "db_write" in phases
+    assert outcome.new_page is new_page
+    assert outcome.refetched_identical is refetched_identical
+
+
+def test_wrapper_streams_output_and_routes_exit_two_to_failure_notice():
+    wrapper = (runner.ROOT / "run_news_crawl_with_telegram.ps1").read_text(encoding="utf-8")
+    assert "Tee-Object -Variable crawlOutputVar | Out-Host" in wrapper
+    exit_two = wrapper.index("if ($crawlExit -eq 2)")
+    normal_report = wrapper.index("make_news_report.py", exit_two)
+    assert exit_two < normal_report
+    assert "--failure-message $failureNotice" in wrapper
