@@ -50,6 +50,7 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_DB = Path(os.environ.get("LAZYCRAWLER_NEWS_DB") or ROOT / "news.db")
 REPORT_DIR = ROOT / "reports" / "news"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
+WRITE_SAFETY_EXIT = 4
 
 # feedparser's own urllib fetch chokes on this VPS's SSL setup (OS cert store
 # issue -- see README "Environments with SSL inspection"); fetch the raw feed
@@ -81,6 +82,7 @@ class ArticleOutcome:
     total_seconds: float
     new_page: bool = False
     refetched_identical: bool = False
+    cache_hit: bool = False
     error: str | None = None
 
 
@@ -115,7 +117,7 @@ def _partial_run_exit_code(
     """Return the public write-safety exit code for a completed crawl."""
     ratio = new_pages / attempted if attempted else 0.0
     insufficient = new_pages < minimum_new_pages or ratio < minimum_ratio
-    return 2 if partial and insufficient else 0
+    return WRITE_SAFETY_EXIT if partial and insufficient else 0
 
 
 def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
@@ -154,16 +156,19 @@ def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
         total = time.perf_counter() - started
         result = results[0] if results else None
         disposition = getattr(result, "write_disposition", None) if result else None
+        from_cache = bool(getattr(result, "from_cache", False)) if result else False
         return ArticleOutcome(
             result.status if result else "no_result",
             result.url if result else job.url,
             fetch_elapsed,
             max(0.0, total - fetch_elapsed),
             total,
-            new_page=(not bool(getattr(result, "from_cache", False)) or disposition == "new_page")
-            if result
-            else False,
+            new_page=(not from_cache or disposition == "new_page") if result else False,
             refetched_identical=disposition == "refetched_identical",
+            # Older/custom PageResult producers may not yet label URL-cache
+            # reuse. Treat the only otherwise-unclassified successful cached
+            # result as a cache hit, keeping the accounting exhaustive.
+            cache_hit=from_cache and disposition not in ("new_page", "refetched_identical"),
         )
     except BaseException as exc:
         total = time.perf_counter() - started
@@ -439,7 +444,17 @@ def _feed_items(
     return items, skipped_old
 
 
-def main() -> int:
+def main(
+    argv=None,
+    *,
+    worker_factory=None,
+    sources_loader=None,
+    report_dir: Path | None = None,
+    cost_db_resolver=None,
+) -> int:
+    worker_factory = PersistentWorker if worker_factory is None else worker_factory
+    sources_loader = load_sources if sources_loader is None else sources_loader
+    cost_db_resolver = resolve_cost_db_path if cost_db_resolver is None else cost_db_resolver
     p = argparse.ArgumentParser(description="Crawl the news-monitor source list")
     p.add_argument(
         "--sources-config",
@@ -542,7 +557,7 @@ def main() -> int:
         "--sources",
         help="Comma-separated case-insensitive name substrings to limit the run to (testing)",
     )
-    args = p.parse_args()
+    args = p.parse_args(argv)
     if (
         args.article_deadline_seconds <= 0
         or args.wall_budget_minutes <= 0
@@ -567,11 +582,12 @@ def main() -> int:
     # the only way to recover what a run actually spent; make_news_report.py
     # reopens the shared DB to add the digest call's cost. The side table
     # links both processes' LazyBridge UUIDs to this news session_id.
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    cost_db_path = resolve_cost_db_path(REPORT_DIR)
+    active_report_dir = REPORT_DIR if report_dir is None else report_dir
+    active_report_dir.mkdir(parents=True, exist_ok=True)
+    cost_db_path = cost_db_resolver(active_report_dir)
     cost_db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    sources = list(load_sources(args.sources_config))
+    sources = list(sources_loader(args.sources_config))
     if args.sources:
         needles = [s.strip().lower() for s in args.sources.split(",")]
         sources = [s for s in sources if any(n in s.name.lower() for n in needles)]
@@ -593,12 +609,13 @@ def main() -> int:
         "attempted": 0,
         "new_pages": 0,
         "refetched_identical": 0,
+        "cache_hits": 0,
     }
     budget_exhausted = False
     worker_failed = False
     circuit_open = False
     timeout_circuit = ConsecutiveTimeoutCircuit(args.max_consecutive_timeouts)
-    worker = PersistentWorker(
+    worker = worker_factory(
         WorkerConfig(str(args.db), str(cost_db_path), session_id),
         recycle_items=args.worker_recycle_items,
         startup_timeout=args.worker_startup_timeout_seconds,
@@ -717,6 +734,7 @@ def main() -> int:
                     totals[source.mode] += 1
                     totals["new_pages"] += int(outcome.new_page)
                     totals["refetched_identical"] += int(outcome.refetched_identical)
+                    totals["cache_hits"] += int(outcome.cache_hit)
                     url_meta[outcome.url] = {
                         "name": source.name,
                         "category": source.category,
@@ -743,7 +761,7 @@ def main() -> int:
         except (OSError, sqlite3.Error) as exc:
             print(f"Warning: news DB WAL checkpoint failed: {exc}", file=sys.stderr)
 
-    meta_path = REPORT_DIR / f"{session_id}_meta.json"
+    meta_path = active_report_dir / f"{session_id}_meta.json"
     partial = (
         budget_exhausted
         or worker_failed

@@ -65,8 +65,8 @@ if ($sessionLine) {
     $sessionId = $sessionLine.ToString().Split('=')[1].Trim()
 }
 
-if ($crawlExit -eq 2) {
-    $failureNotice = "News crawl failed its write-safety check (exit 2)"
+if ($crawlExit -eq 4) {
+    $failureNotice = "News crawl failed its write-safety check (exit 4)"
     if ($sessionId) {
         $failureNotice += ": session $sessionId"
     }

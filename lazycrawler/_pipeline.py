@@ -517,7 +517,9 @@ class PagePipeline:
 
         if self._satisfies(row, st.content_mode):
             log.debug("  cache hit (fresh, content=%s) - skipping fetch", st.content_mode)
-            result = self._result_from_row(st, row, depth, source_url, from_cache=True)
+            result = self._result_from_row(
+                st, row, depth, source_url, from_cache=True, write_disposition="cache_hit"
+            )
             self._add_counted(st, result)
             if self.db:
                 if st.phase_observer is not None:
