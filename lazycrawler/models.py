@@ -42,5 +42,7 @@ class PageResult(BaseModel):
     requested_url: Optional[str] = None  # original URL when a redirect was adopted
     error: Optional[str] = None
     from_cache: bool = False
+    # Transient crawl accounting used by scheduled jobs; never persisted.
+    write_disposition: Optional[str] = None
     markdown: Optional[str] = None  # optional HTML->Markdown render (emit_markdown)
     artifacts: List = Field(default_factory=list)  # tables/images/charts (Artifact)

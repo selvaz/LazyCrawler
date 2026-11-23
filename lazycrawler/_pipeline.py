@@ -377,11 +377,18 @@ class PagePipeline:
         if self.db is not None:
             existing = self.db.find_by_content_hash(chash)
             if existing and self._can_reuse(existing, st.content_mode):
+                if st.phase_observer is not None:
+                    st.phase_observer("db_write")
                 if existing.get("url_hash") != uh:
                     self._copy_content(existing, url, uh, candidates)
                 self.db.add_edge(st.session_id, uh, source_url=source_url, depth=depth)
                 reused = self.db.get_page(uh) or existing
-                result = self._result_from_row(st, reused, depth, source_url, from_cache=True)
+                disposition = (
+                    "new_page" if existing.get("url_hash") != uh else "refetched_identical"
+                )
+                result = self._result_from_row(
+                    st, reused, depth, source_url, True, write_disposition=disposition
+                )
                 self._add_counted(st, result)
                 log.debug("  content-hash dedup - reused stored content, skipped extraction")
                 return self._select_next(st, candidates, reused.get("clean_text") or "", res)
@@ -510,9 +517,13 @@ class PagePipeline:
 
         if self._satisfies(row, st.content_mode):
             log.debug("  cache hit (fresh, content=%s) - skipping fetch", st.content_mode)
-            result = self._result_from_row(st, row, depth, source_url, from_cache=True)
+            result = self._result_from_row(
+                st, row, depth, source_url, from_cache=True, write_disposition="cache_hit"
+            )
             self._add_counted(st, result)
             if self.db:
+                if st.phase_observer is not None:
+                    st.phase_observer("db_write")
                 self.db.add_edge(st.session_id, uh, source_url=source_url, depth=depth)
             if st.cfg.recurse_from_cache and depth < st.max_depth:
                 stored = [(a, u) for a, u in (row.get("links") or []) if u]
@@ -836,6 +847,15 @@ class PagePipeline:
                 st.pages_done += 1
         if self.db is None:
             return
+        # The result is added to ``st.results`` before persistence because the
+        # executor may swallow a worker exception and still return the results
+        # collected so far.  Until upsert_page returns, make that incomplete
+        # state explicit rather than allowing callers to infer a successful new
+        # page merely because the result did not come from cache.
+        if result.status == "done":
+            result.write_disposition = "write_failed"
+        if st.phase_observer is not None:
+            st.phase_observer("db_write")
         self.db.upsert_page(
             {
                 "url": result.url,
@@ -861,6 +881,8 @@ class PagePipeline:
                 "requested_url": result.requested_url,
             }
         )
+        if result.status == "done":
+            result.write_disposition = "new_page"
         if st.session_id:
             self.db.add_edge(
                 st.session_id,
@@ -908,7 +930,13 @@ class PagePipeline:
             return []
 
     def _result_from_row(
-        self, st, row: dict, depth: int, source_url: Optional[str], from_cache: bool
+        self,
+        st,
+        row: dict,
+        depth: int,
+        source_url: Optional[str],
+        from_cache: bool,
+        write_disposition: Optional[str] = None,
     ) -> PageResult:
         return PageResult(
             artifacts=self._load_artifacts(st, row.get("url_hash", "")),
@@ -931,5 +959,6 @@ class PagePipeline:
             requested_url=row.get("requested_url"),
             error=row.get("error"),
             from_cache=from_cache,
+            write_disposition=write_disposition,
             markdown=row.get("markdown"),
         )

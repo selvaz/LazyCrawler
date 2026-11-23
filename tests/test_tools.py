@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 
 import pytest
@@ -119,8 +120,13 @@ class TestDbResolution:
 
     def test_no_db_and_no_env_warns_and_falls_back_to_memory(self, monkeypatch, caplog):
         monkeypatch.delenv("LAZYCRAWLER_NEWS_DB", raising=False)
-        with caplog.at_level("WARNING"):
-            ct = CrawlerTools(content="pure")
+        logger = logging.getLogger("lazycrawler")
+        logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level("WARNING", logger="lazycrawler"):
+                ct = CrawlerTools(content="pure")
+        finally:
+            logger.removeHandler(caplog.handler)
         assert ct.db.cfg.db_path == ":memory:"
         assert any("always-empty" in r.message for r in caplog.records)
         ct.close()

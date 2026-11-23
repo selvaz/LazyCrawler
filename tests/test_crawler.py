@@ -19,6 +19,7 @@ def test_url_cache_hit_skips_fetch(stub_fetch, tmp_db, make_crawler):
     assert state["n"] == 1 and r1[0].status == "done" and r1[0].from_cache is False
     r2 = c.crawl(U, mode="pure", session_id="s1")
     assert state["n"] == 1 and r2[0].from_cache is True
+    assert r2[0].write_disposition == "cache_hit"
 
 
 def test_ttl_zero_refetches(stub_fetch, db_factory, make_crawler):
