@@ -738,6 +738,11 @@ extraction, and total timings and is emitted unbuffered by the PowerShell job.
 `run_news_crawl.py` and its PowerShell wrapper use the following complete exit-code
 contract. The wrapper returns the crawl code unchanged.
 
+Pass `-SkipReport` to `run_news_crawl_with_telegram.ps1` for crawl-only runs. The
+wrapper still streams crawl output to the job log and returns the crawl exit code,
+but does not build the LLM digest or send either a report or failure notice to
+Telegram.
+
 | Code | Meaning |
 | ---: | --- |
 | 0 | Crawl completed, or a partial crawl still met the configured write threshold. |

@@ -8,6 +8,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `run_news_crawl_with_telegram.ps1 -SkipReport` runs only the durable news crawl,
+  preserving its exit code while skipping digest generation and Telegram sends.
+
 ## [0.19.10] — 2026-11-22
 
 ### Added
