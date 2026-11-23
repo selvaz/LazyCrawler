@@ -847,6 +847,13 @@ class PagePipeline:
                 st.pages_done += 1
         if self.db is None:
             return
+        # The result is added to ``st.results`` before persistence because the
+        # executor may swallow a worker exception and still return the results
+        # collected so far.  Until upsert_page returns, make that incomplete
+        # state explicit rather than allowing callers to infer a successful new
+        # page merely because the result did not come from cache.
+        if result.status == "done":
+            result.write_disposition = "write_failed"
         if st.phase_observer is not None:
             st.phase_observer("db_write")
         self.db.upsert_page(
@@ -874,6 +881,8 @@ class PagePipeline:
                 "requested_url": result.requested_url,
             }
         )
+        if result.status == "done":
+            result.write_disposition = "new_page"
         if st.session_id:
             self.db.add_edge(
                 st.session_id,

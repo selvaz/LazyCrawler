@@ -742,7 +742,7 @@ contract. The wrapper returns the crawl code unchanged.
 | ---: | --- |
 | 0 | Crawl completed, or a partial crawl still met the configured write threshold. |
 | 2 | Command-line/configuration error from `argparse`; no crawl was run. |
-| 4 | A partial crawl wrote fewer new pages than `--minimum-new-pages` or `--minimum-new-page-ratio` requires; the circuit breaker and other partial-run causes can produce this code. |
+| 4 | The consecutive-timeout circuit breaker opened, or a partial crawl wrote fewer new pages than `--minimum-new-pages` or `--minimum-new-page-ratio` requires. |
 
 Every successfully finished article has exactly one disposition in `_run_summary`:
 `new_pages`, `refetched_identical`, or `cache_hits`. Their sum therefore equals the

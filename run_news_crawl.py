@@ -83,6 +83,7 @@ class ArticleOutcome:
     new_page: bool = False
     refetched_identical: bool = False
     cache_hit: bool = False
+    write_failed: bool = False
     error: str | None = None
 
 
@@ -157,18 +158,25 @@ def _crawl_item(job, messages, crawlers) -> ArticleOutcome:
         result = results[0] if results else None
         disposition = getattr(result, "write_disposition", None) if result else None
         from_cache = bool(getattr(result, "from_cache", False)) if result else False
+        write_failed = disposition == "write_failed"
         return ArticleOutcome(
-            result.status if result else "no_result",
+            "write_failed" if write_failed else (result.status if result else "no_result"),
             result.url if result else job.url,
             fetch_elapsed,
             max(0.0, total - fetch_elapsed),
             total,
-            new_page=(not from_cache or disposition == "new_page") if result else False,
+            # A current producer labels a page only after upsert_page returns.
+            # Preserve the legacy fallback, except for an explicitly failed
+            # write: extracted is not the same thing as persisted.
+            new_page=(disposition == "new_page" or (not from_cache and disposition is None))
+            if result
+            else False,
             refetched_identical=disposition == "refetched_identical",
             # Older/custom PageResult producers may not yet label URL-cache
             # reuse. Treat the only otherwise-unclassified successful cached
             # result as a cache hit, keeping the accounting exhaustive.
             cache_hit=from_cache and disposition not in ("new_page", "refetched_identical"),
+            write_failed=write_failed,
         )
     except BaseException as exc:
         total = time.perf_counter() - started
@@ -610,6 +618,7 @@ def main(
         "new_pages": 0,
         "refetched_identical": 0,
         "cache_hits": 0,
+        "write_failed": 0,
     }
     budget_exhausted = False
     worker_failed = False
@@ -743,6 +752,7 @@ def main(
                     }
                 else:
                     totals["errors"] += 1
+                    totals["write_failed"] += int(outcome.write_failed)
                 print(
                     f"    {status:<14} fetch={outcome.fetch_seconds:.2f}s "
                     f"extraction={outcome.extraction_seconds:.2f}s total={outcome.total_seconds:.2f}s "
@@ -768,6 +778,7 @@ def main(
         or circuit_open
         or totals["timeouts"] > 0
         or totals["errors"] > 0
+        or totals["write_failed"] > 0
     )
     reasons = []
     if budget_exhausted:
@@ -791,6 +802,8 @@ def main(
 
     print("_run_summary=" + json.dumps(url_meta["_run_summary"], separators=(",", ":")), flush=True)
     print(f"SESSION_ID={session_id}", flush=True)
+    if circuit_open:
+        return WRITE_SAFETY_EXIT
     return _partial_run_exit_code(
         partial=partial,
         new_pages=totals["new_pages"],

@@ -215,6 +215,23 @@ class _TimeoutWorker(_FakeWorker):
         return None, "db_write"
 
 
+class _WritesThenTimeoutsWorker(_FakeWorker):
+    def __init__(self, *args, **kwargs):
+        self.calls = 0
+
+    def feed(self, *args):
+        return ([(str(i), f"https://e/{i}") for i in range(4)], 0)
+
+    def article(self, job, deadline):
+        self.calls += 1
+        if self.calls <= 2:
+            return (
+                runner.ArticleOutcome("done", job.url, 0.01, 0.01, 0.02, new_page=True),
+                "db_write",
+            )
+        return None, "db_write"
+
+
 def test_main_drives_timeout_circuit_and_emits_one_summary_line(tmp_path, capsys):
     source = SimpleNamespace(
         name="source", mode="ml", url="feed", category="macro", region="US", lang="en"
@@ -244,6 +261,41 @@ def test_main_drives_timeout_circuit_and_emits_one_summary_line(tmp_path, capsys
     summary = __import__("json").loads(summaries[0].removeprefix("_run_summary="))
     assert summary["reason"] == "consecutive_timeouts"
     assert summary["timeouts"] == summary["attempted"] == 2
+
+
+def test_open_circuit_fails_after_enough_pages_were_persisted(tmp_path, capsys):
+    source = SimpleNamespace(
+        name="source", mode="ml", url="feed", category="macro", region="US", lang="en"
+    )
+    exit_code = runner.main(
+        [
+            "--sources-config",
+            "unused.yaml",
+            "--session-id",
+            "circuit-after-writes",
+            "--max-consecutive-timeouts",
+            "2",
+            "--minimum-new-pages",
+            "1",
+            "--minimum-new-page-ratio",
+            "0.1",
+        ],
+        worker_factory=_WritesThenTimeoutsWorker,
+        sources_loader=lambda path: [source],
+        report_dir=tmp_path,
+        cost_db_resolver=lambda path: tmp_path / "cost.db",
+    )
+
+    captured = capsys.readouterr()
+    summary_line = next(
+        line for line in captured.out.splitlines() if line.startswith("_run_summary=")
+    )
+    summary = __import__("json").loads(summary_line.removeprefix("_run_summary="))
+    assert exit_code == 4
+    assert summary["new_pages"] == 2
+    assert summary["new_page_ratio"] == 0.5
+    assert summary["reason"] == "consecutive_timeouts"
+    assert "Article circuit breaker opened" in captured.err
 
 
 class _TimeoutThenCacheWorker(_FakeWorker):
@@ -354,6 +406,30 @@ def test_article_outcome_separates_new_writes_from_identical_reuse(
     assert outcome.new_page is new_page
     assert outcome.refetched_identical is refetched_identical
     assert outcome.cache_hit is cache_hit
+
+
+def test_failed_page_write_is_not_counted_as_new(stub_fetch, make_crawler, tmp_db):
+    class FailingStore:
+        def __getattr__(self, name):
+            return getattr(tmp_db, name)
+
+        def upsert_page(self, page):
+            raise OSError("injected page write failure")
+
+    stub_fetch()
+    # The production news crawler uses multiple workers.  That traversal logs
+    # and swallows an individual worker exception, while returning results the
+    # worker appended before the failed persistence call.
+    crawler = make_crawler(db=FailingStore(), max_workers=2)
+    messages = queue.Queue()
+
+    outcome = runner._crawl_item(
+        _job("https://example.test/write-failure"), messages, {"ml": crawler}
+    )
+
+    assert outcome.status == "write_failed", outcome.error
+    assert outcome.write_failed is True
+    assert outcome.new_page is False
 
 
 def test_wrapper_runs_stub_python_and_propagates_write_safety_exit(tmp_path):
