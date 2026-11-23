@@ -478,3 +478,59 @@ def test_wrapper_runs_stub_python_and_propagates_write_safety_exit(tmp_path):
     assert "send_telegram_news_report.py" in invocations
     assert "--failure-message" in invocations
     assert "make_news_report.py" not in invocations
+
+
+@pytest.mark.parametrize("crawl_exit", [0, 4])
+def test_wrapper_skip_report_only_runs_crawl_and_propagates_exit(tmp_path, crawl_exit):
+    import os
+    import shutil
+    import subprocess
+
+    powershell = shutil.which("powershell.exe")
+    if powershell is None:
+        pytest.skip("powershell.exe is absent; wrapper execution is covered on Windows")
+
+    log = tmp_path / "python-invocations.txt"
+    stub = tmp_path / "stub-python.cmd"
+    stub.write_text(
+        '@echo off\r\necho %*>>"%STUB_LOG%"\r\n'
+        'echo SESSION_ID=wrapper-test\r\nexit /b %STUB_CRAWL_EXIT%\r\n',
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "STUB_LOG": str(log),
+        "STUB_CRAWL_EXIT": str(crawl_exit),
+    }
+    completed = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(runner.ROOT / "run_news_crawl_with_telegram.ps1"),
+            "-SourcesConfig",
+            "unused.yaml",
+            "-DigestEngines",
+            "stub",
+            "-Cycle",
+            "stub",
+            "-Python",
+            str(stub),
+            "-SkipReport",
+        ],
+        cwd=runner.ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    invocations = log.read_text(encoding="utf-8")
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == crawl_exit, output
+    assert "run_news_crawl.py" in invocations
+    assert "make_news_report.py" not in invocations
+    assert "send_telegram_news_report.py" not in invocations
+    assert "report skipped (-SkipReport)" in output

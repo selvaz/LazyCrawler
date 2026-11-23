@@ -27,7 +27,8 @@ param(
     # it crawls against a different set of installed packages and reports
     # success.
     [Parameter(Mandatory)] [string]   $Python,
-    [string[]]$CrawlArgs = @()
+    [string[]]$CrawlArgs = @(),
+    [switch]$SkipReport
 )
 
 $ErrorActionPreference = 'Continue'
@@ -58,6 +59,11 @@ Write-Host "[$(Get-Date -Format s)] Starting news crawl: $($CrawlArgs -join ' ')
 $crawlOutput = & $Python -u (Join-Path $Root 'run_news_crawl.py') --sources-config $SourcesConfig @CrawlArgs 2>&1 | Tee-Object -Variable crawlOutputVar | Out-Host
 $crawlExit = $LASTEXITCODE
 Write-Host "[$(Get-Date -Format s)] run_news_crawl.py exit code: $crawlExit"
+
+if ($SkipReport) {
+    Write-Host "[$(Get-Date -Format s)] report skipped (-SkipReport)"
+    exit $crawlExit
+}
 
 $sessionLine = $crawlOutputVar | Select-String -Pattern '^SESSION_ID=' | Select-Object -Last 1
 $sessionId = $null
