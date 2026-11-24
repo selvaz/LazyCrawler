@@ -137,9 +137,8 @@ class DomainTimeoutCircuits:
         Requiring two tripped domains ensures a single broken site can never end
         the crawl before another site's first article is attempted.
         """
-        return (
-            len(self.tripped_domains) >= 2
-            and len(self.tripped_domains) * 2 > len(self.attempted_domains)
+        return len(self.tripped_domains) >= 2 and len(self.tripped_domains) * 2 > len(
+            self.attempted_domains
         )
 
 
@@ -773,6 +772,13 @@ def main(
                         )
                         circuit_open = timeout_circuits.global_bound_open()
                         if circuit_open:
+                            totals["skipped_budget"] += len(items) - item_index - 1
+                            for remaining in sources[source_index + 1 :]:
+                                totals["skipped_budget"] += (
+                                    args.ml_max_items
+                                    if remaining.mode == "ml"
+                                    else args.smart_max_items
+                                )
                             print(
                                 "Global article circuit breaker opened because more than half "
                                 "of attempted domains tripped; ending partial run.",
@@ -847,8 +853,6 @@ def main(
 
     print("_run_summary=" + json.dumps(url_meta["_run_summary"], separators=(",", ":")), flush=True)
     print(f"SESSION_ID={session_id}", flush=True)
-    if timeout_circuits.tripped_domains:
-        return WRITE_SAFETY_EXIT
     return _partial_run_exit_code(
         partial=partial,
         new_pages=totals["new_pages"],
