@@ -747,11 +747,14 @@ Telegram.
 | ---: | --- |
 | 0 | Crawl completed, or a partial crawl still met the configured write threshold. |
 | 2 | Command-line/configuration error from `argparse`; no crawl was run. |
-| 4 | The consecutive-timeout circuit breaker opened, or a partial crawl wrote fewer new pages than `--minimum-new-pages` or `--minimum-new-page-ratio` requires. |
+| 4 | A per-domain consecutive-timeout circuit breaker opened, or a partial crawl wrote fewer new pages than `--minimum-new-pages` or `--minimum-new-page-ratio` requires. |
 
 Every successfully finished article has exactly one disposition in `_run_summary`:
 `new_pages`, `refetched_identical`, or `cache_hits`. Their sum therefore equals the
 number completed (`ml + smart`).
+The summary's `tripped_domains` list contains registrable domains whose independent
+timeout streak reached `--max-consecutive-timeouts`; their remaining articles are
+skipped without preventing healthy domains from continuing.
 
 ### First-run setup (new machine)
 

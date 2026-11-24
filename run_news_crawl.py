@@ -35,7 +35,7 @@ from pathlib import Path
 import feedparser
 
 from lazycrawler import CrawlerConfig, CrawlerDB, DBConfig, LLMConfig, WebCrawler
-from lazycrawler.http import HTTPClient
+from lazycrawler.http import HTTPClient, registrable_domain
 from news_costs import register_cost_session, resolve_cost_db_path
 from news_sources import load_sources
 
@@ -110,6 +110,37 @@ class ConsecutiveTimeoutCircuit:
     def record(self, timed_out: bool) -> bool:
         self.consecutive = self.consecutive + 1 if timed_out else 0
         return self.consecutive >= self.limit
+
+
+class DomainTimeoutCircuits:
+    """Track independent timeout streaks and a conservative global bound."""
+
+    def __init__(self, limit: int):
+        self.limit = limit
+        self._circuits: dict[str, ConsecutiveTimeoutCircuit] = {}
+        self.attempted_domains: set[str] = set()
+        self.tripped_domains: set[str] = set()
+
+    def is_tripped(self, domain: str) -> bool:
+        return domain in self.tripped_domains
+
+    def record(self, domain: str, timed_out: bool) -> bool:
+        self.attempted_domains.add(domain)
+        circuit = self._circuits.setdefault(domain, ConsecutiveTimeoutCircuit(self.limit))
+        if circuit.record(timed_out):
+            self.tripped_domains.add(domain)
+        return domain in self.tripped_domains
+
+    def global_bound_open(self) -> bool:
+        """Stop pathological runs once multiple domains and a majority have tripped.
+
+        Requiring two tripped domains ensures a single broken site can never end
+        the crawl before another site's first article is attempted.
+        """
+        return (
+            len(self.tripped_domains) >= 2
+            and len(self.tripped_domains) * 2 > len(self.attempted_domains)
+        )
 
 
 def _partial_run_exit_code(
@@ -547,7 +578,7 @@ def main(
         "--max-consecutive-timeouts",
         type=int,
         default=int(os.environ.get("LAZYCRAWLER_NEWS_MAX_CONSECUTIVE_TIMEOUTS", "5")),
-        help="Stop starting articles after this many consecutive timeouts (default: 5)",
+        help="Skip a domain after this many consecutive timeouts (default: 5)",
     )
     p.add_argument(
         "--minimum-new-pages",
@@ -623,7 +654,7 @@ def main(
     budget_exhausted = False
     worker_failed = False
     circuit_open = False
-    timeout_circuit = ConsecutiveTimeoutCircuit(args.max_consecutive_timeouts)
+    timeout_circuits = DomainTimeoutCircuits(args.max_consecutive_timeouts)
     worker = worker_factory(
         WorkerConfig(str(args.db), str(cost_db_path), session_id),
         recycle_items=args.worker_recycle_items,
@@ -663,6 +694,11 @@ def main(
                 flush=True,
             )
             for item_index, (title, link) in enumerate(items):
+                domain = registrable_domain(link) or link
+                if timeout_circuits.is_tripped(domain):
+                    totals["skipped_budget"] += 1
+                    print(f"    SKIPPED tripped_domain={domain} url={link}", flush=True)
+                    continue
                 remaining_budget = budget_seconds - (time.monotonic() - run_started)
                 if remaining_budget < args.minimum_article_budget_seconds:
                     totals["skipped_budget"] += len(items) - item_index
@@ -720,24 +756,32 @@ def main(
                     break
                 if outcome is None:
                     totals["timeouts"] += 1
-                    circuit_open = timeout_circuit.record(True)
+                    domain_tripped = timeout_circuits.record(domain, True)
                     print(
                         f"    TIMEOUT url={link} phase={phase} "
                         f"deadline={args.article_deadline_seconds:.1f}s {_console_safe(title[:80])}",
                         file=sys.stderr,
                         flush=True,
                     )
-                    if circuit_open:
-                        totals["skipped_budget"] += len(items) - item_index - 1
+                    if domain_tripped:
                         print(
-                            "Article circuit breaker opened after "
-                            f"{timeout_circuit.consecutive} consecutive timeouts; ending partial run.",
+                            f"Article circuit breaker opened for {domain} after "
+                            f"{args.max_consecutive_timeouts} consecutive timeouts; "
+                            "skipping that domain.",
                             file=sys.stderr,
                             flush=True,
                         )
-                        break
+                        circuit_open = timeout_circuits.global_bound_open()
+                        if circuit_open:
+                            print(
+                                "Global article circuit breaker opened because more than half "
+                                "of attempted domains tripped; ending partial run.",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            break
                     continue
-                timeout_circuit.record(False)
+                timeout_circuits.record(domain, False)
                 status = outcome.status
                 if status == "done":
                     totals[source.mode] += 1
@@ -775,7 +819,7 @@ def main(
     partial = (
         budget_exhausted
         or worker_failed
-        or circuit_open
+        or bool(timeout_circuits.tripped_domains)
         or totals["timeouts"] > 0
         or totals["errors"] > 0
         or totals["write_failed"] > 0
@@ -785,7 +829,7 @@ def main(
         reasons.append("wall_budget")
     if worker_failed:
         reasons.append("worker_failure")
-    if circuit_open:
+    if timeout_circuits.tripped_domains:
         reasons.append("consecutive_timeouts")
     elif totals["timeouts"]:
         reasons.append("article_timeouts")
@@ -795,6 +839,7 @@ def main(
     url_meta["_run_summary"] = {
         "partial": partial,
         "reason": reasons[0] if len(reasons) == 1 else reasons,
+        "tripped_domains": sorted(timeout_circuits.tripped_domains),
         "new_page_ratio": new_page_ratio,
         **totals,
     }
@@ -802,7 +847,7 @@ def main(
 
     print("_run_summary=" + json.dumps(url_meta["_run_summary"], separators=(",", ":")), flush=True)
     print(f"SESSION_ID={session_id}", flush=True)
-    if circuit_open:
+    if timeout_circuits.tripped_domains:
         return WRITE_SAFETY_EXIT
     return _partial_run_exit_code(
         partial=partial,

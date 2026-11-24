@@ -261,6 +261,7 @@ def test_main_drives_timeout_circuit_and_emits_one_summary_line(tmp_path, capsys
     summary = __import__("json").loads(summaries[0].removeprefix("_run_summary="))
     assert summary["reason"] == "consecutive_timeouts"
     assert summary["timeouts"] == summary["attempted"] == 2
+    assert summary["tripped_domains"] == ["e"]
 
 
 def test_open_circuit_fails_after_enough_pages_were_persisted(tmp_path, capsys):
@@ -296,6 +297,72 @@ def test_open_circuit_fails_after_enough_pages_were_persisted(tmp_path, capsys):
     assert summary["new_page_ratio"] == 0.5
     assert summary["reason"] == "consecutive_timeouts"
     assert "Article circuit breaker opened" in captured.err
+
+
+class _PerDomainWorker(_FakeWorker):
+    def feed(self, *args):
+        return (
+            [
+                ("bad-1", "https://news.bad.example/1"),
+                ("bad-2", "https://www.bad.example/2"),
+                ("bad-skipped", "https://news.bad.example/3"),
+                ("good", "https://good.example/1"),
+            ],
+            0,
+        )
+
+    def article(self, job, deadline):
+        if "bad.example" in job.url:
+            return None, "fetch"
+        return runner.ArticleOutcome("done", job.url, 0.01, 0.01, 0.02, new_page=True), "db_write"
+
+
+def test_tripped_domain_is_skipped_while_other_domain_continues(tmp_path, capsys):
+    source = SimpleNamespace(
+        name="mixed", mode="ml", url="feed", category="macro", region="US", lang="en"
+    )
+    exit_code = runner.main(
+        ["--sources-config", "unused.yaml", "--session-id", "domains", "--max-consecutive-timeouts", "2"],
+        worker_factory=_PerDomainWorker,
+        sources_loader=lambda path: [source],
+        report_dir=tmp_path,
+        cost_db_resolver=lambda path: tmp_path / "cost.db",
+    )
+    captured = capsys.readouterr()
+    summary = __import__("json").loads(
+        next(line for line in captured.out.splitlines() if line.startswith("_run_summary=")).split("=", 1)[1]
+    )
+    assert exit_code == 4
+    assert summary["attempted"] == 3
+    assert summary["new_pages"] == 1
+    assert summary["tripped_domains"] == ["bad.example"]
+    assert "SKIPPED tripped_domain=bad.example" in captured.out
+
+
+def test_global_domain_bound_ends_run(tmp_path, capsys):
+    class Worker(_FakeWorker):
+        def feed(self, *args):
+            return ([("a1", "https://a.example/1"), ("a2", "https://a.example/2"),
+                     ("b1", "https://b.example/1"), ("b2", "https://b.example/2"),
+                     ("never", "https://c.example/1")], 0)
+
+        def article(self, job, deadline):
+            return None, "fetch"
+
+    source = SimpleNamespace(name="mixed", mode="ml", url="feed", category="x", region="US", lang="en")
+    exit_code = runner.main(
+        ["--sources-config", "unused.yaml", "--session-id", "global", "--max-consecutive-timeouts", "2"],
+        worker_factory=Worker, sources_loader=lambda path: [source], report_dir=tmp_path,
+        cost_db_resolver=lambda path: tmp_path / "cost.db",
+    )
+    captured = capsys.readouterr()
+    summary = __import__("json").loads(
+        next(line for line in captured.out.splitlines() if line.startswith("_run_summary=")).split("=", 1)[1]
+    )
+    assert exit_code == 4
+    assert summary["attempted"] == 4
+    assert summary["tripped_domains"] == ["a.example", "b.example"]
+    assert "Global article circuit breaker opened" in captured.err
 
 
 class _TimeoutThenCacheWorker(_FakeWorker):
