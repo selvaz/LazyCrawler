@@ -8,9 +8,21 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.12] — 2026-11-24
+
+### Changed
+- The news crawl uses a per-domain circuit breaker: repeated timeouts from one
+  source stop that source only, instead of skipping every remaining article (#84).
+- `__version__` is read from package metadata (#82).
+
+### Added
+- Process and component cards for the daily news crawl (#81, #83).
+
+## [0.19.11] — 2026-11-23
+
 ### Added
 - `run_news_crawl_with_telegram.ps1 -SkipReport` runs only the durable news crawl,
-  preserving its exit code while skipping digest generation and Telegram sends.
+  preserving its exit code while skipping digest generation and Telegram sends (#80).
 
 ## [0.19.10] — 2026-11-22
 
